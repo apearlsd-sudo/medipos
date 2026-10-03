@@ -1,0 +1,166 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  medicines   Medicine[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Supplier {
+  id            String         @id @default(cuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  medicines     Medicine[]
+  purchases     Purchase[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model Medicine {
+  id                   String          @id @default(cuid())
+  name                 String
+  genericName          String?
+  brand                String?
+  sku                  String          @unique
+  barcode              String?
+  categoryId           String
+  category             Category        @relation(fields: [categoryId], references: [id])
+  supplierId           String?
+  supplier             Supplier?       @relation(fields: [supplierId], references: [id])
+  unit                 String          @default("Box")
+  batchNumber          String?
+  expiryDate           DateTime?
+  stockQty             Int             @default(0)
+  reorderLevel         Int             @default(20)
+  costPrice            Float           @default(0)
+  sellingPrice         Float           @default(0)
+  prescriptionRequired Boolean         @default(false)
+  location             String?
+  status               String          @default("active")
+  saleItems            SaleItem[]
+  purchaseItems        PurchaseItem[]
+  logs                 InventoryLog[]
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  note      String?
+  sales     Sale[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Sale {
+  id            String     @id @default(cuid())
+  invoiceNo     String     @unique
+  customerId    String?
+  customer      Customer?  @relation(fields: [customerId], references: [id])
+  subtotal      Float      @default(0)
+  discount      Float      @default(0)
+  tax           Float      @default(0)
+  total         Float      @default(0)
+  paidAmount    Float      @default(0)
+  changeAmount  Float      @default(0)
+  paymentMethod String     @default("cash")
+  paymentStatus String     @default("paid")
+  saleStatus    String     @default("completed")
+  cashierName   String     @default("Admin User")
+  note          String?
+  items         SaleItem[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model SaleItem {
+  id         String    @id @default(cuid())
+  saleId     String
+  sale       Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  medicineId String?
+  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+  name       String
+  sku        String?
+  qty        Int
+  unitPrice  Float
+  discount   Float     @default(0)
+  total      Float
+}
+
+model Purchase {
+  id           String         @id @default(cuid())
+  referenceNo  String         @unique
+  supplierId   String?
+  supplier     Supplier?      @relation(fields: [supplierId], references: [id])
+  purchaseDate DateTime       @default(now())
+  subtotal     Float          @default(0)
+  tax          Float          @default(0)
+  totalAmount  Float          @default(0)
+  paidAmount   Float          @default(0)
+  status       String         @default("pending")
+  note         String?
+  items        PurchaseItem[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model PurchaseItem {
+  id         String    @id @default(cuid())
+  purchaseId String
+  purchase   Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  medicineId String?
+  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+  name       String
+  qty        Int
+  unitCost   Float
+  batchNumber String?
+  expiryDate DateTime?
+  total      Float
+}
+
+model Prescription {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  patientName String
+  doctorName  String?
+  phone       String?
+  itemsText   String?
+  notes       String?
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InventoryLog {
+  id         String    @id @default(cuid())
+  medicineId String?
+  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+  type       String
+  quantity   Int
+  reason     String?
+  reference  String?
+  createdAt  DateTime  @default(now())
+}
+
+model StoreSetting {
+  id       String @id @default(cuid())
+  key      String @unique
+  value    String
+}
