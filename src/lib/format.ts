@@ -1,8 +1,118 @@
-export const fmtMoney = (n: number | null | undefined, currency = '$') => {
-  const v = Number(n ?? 0)
-  const sign = v < 0 ? '-' : ''
-  return `${sign}${currency}${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+// ---------------------------------------------------------------------------
+// Currency & locale configuration (mutable at runtime, hydrated from settings)
+// ---------------------------------------------------------------------------
+
+export interface CurrencyDef {
+  code: string
+  symbol: string
+  name: string
+  locale: string
 }
+
+export const CURRENCIES: CurrencyDef[] = [
+  { code: 'USD', symbol: '$', name: 'US Dollar', locale: 'en-US' },
+  { code: 'EUR', symbol: '€', name: 'Euro', locale: 'de-DE' },
+  { code: 'GBP', symbol: '£', name: 'British Pound', locale: 'en-GB' },
+  { code: 'GHS', symbol: 'GH₵', name: 'Ghanaian Cedi', locale: 'en-GH' },
+  { code: 'NGN', symbol: '₦', name: 'Nigerian Naira', locale: 'en-NG' },
+  { code: 'KES', symbol: 'KSh', name: 'Kenyan Shilling', locale: 'en-KE' },
+  { code: 'ZAR', symbol: 'R', name: 'South African Rand', locale: 'en-ZA' },
+  { code: 'XOF', symbol: 'CFA', name: 'West African CFA Franc', locale: 'fr-FR' },
+  { code: 'INR', symbol: '₹', name: 'Indian Rupee', locale: 'en-IN' },
+  { code: 'AED', symbol: 'AED', name: 'UAE Dirham', locale: 'ar-AE' },
+  { code: 'CAD', symbol: 'CA$', name: 'Canadian Dollar', locale: 'en-CA' },
+  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar', locale: 'en-AU' },
+  { code: 'JPY', symbol: '¥', name: 'Japanese Yen', locale: 'ja-JP' },
+  { code: 'CNY', symbol: 'CN¥', name: 'Chinese Yuan', locale: 'zh-CN' },
+  { code: 'PHP', symbol: '₱', name: 'Philippine Peso', locale: 'en-PH' },
+  { code: 'BRL', symbol: 'R$', name: 'Brazilian Real', locale: 'pt-BR' },
+]
+
+export const LOCALES = [
+  { code: 'en-US', label: 'English (US)' },
+  { code: 'en-GB', label: 'English (UK)' },
+  { code: 'en-GH', label: 'English (Ghana)' },
+  { code: 'en-NG', label: 'English (Nigeria)' },
+  { code: 'en-ZA', label: 'English (South Africa)' },
+  { code: 'en-IN', label: 'English (India)' },
+  { code: 'fr-FR', label: 'Français (France)' },
+  { code: 'es-ES', label: 'Español (España)' },
+  { code: 'de-DE', label: 'Deutsch (Deutschland)' },
+  { code: 'pt-BR', label: 'Português (Brasil)' },
+  { code: 'ar-AE', label: 'العربية (الإمارات)' },
+  { code: 'hi-IN', label: 'हिन्दी (भारत)' },
+  { code: 'zh-CN', label: '中文（中国）' },
+  { code: 'ja-JP', label: '日本語（日本）' },
+]
+
+interface CurrencyConfig {
+  code: string
+  locale: string
+  symbol: string
+}
+
+let currencyConfig: CurrencyConfig = { code: 'USD', locale: 'en-US', symbol: '$' }
+let formatterCache: { key: string; fmt: Intl.NumberFormat } | null = null
+
+export function getCurrencyConfig(): CurrencyConfig {
+  return { ...currencyConfig }
+}
+
+export function setCurrencyConfig(code: string, locale: string) {
+  const def = CURRENCIES.find((c) => c.code === code.toUpperCase()) ?? CURRENCIES[0]
+  currencyConfig = {
+    code: def.code,
+    locale: locale || def.locale,
+    symbol: def.symbol,
+  }
+  formatterCache = null
+}
+
+function getFormatter(): Intl.NumberFormat {
+  const key = `${currencyConfig.code}|${currencyConfig.locale}`
+  if (!formatterCache || formatterCache.key !== key) {
+    let fmt: Intl.NumberFormat
+    try {
+      fmt = new Intl.NumberFormat(currencyConfig.locale, { style: 'currency', currency: currencyConfig.code, minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      // Sanity check: Intl may fall back to code instead of a symbol; if the
+      // output contains no symbol char, use custom symbol formatting.
+      const probe = fmt.format(1)
+      const hasLetter = /[A-Za-z]{2,}/.test(probe.replace(/[.,\s]/g, '').replace(/^0+$/, ''))
+      if (hasLetter && probe.replace(/[\d.,\s]/g, '').trim().length === 0) {
+        fmt = new Intl.NumberFormat(currencyConfig.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      }
+    } catch {
+      fmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    }
+    formatterCache = { key, fmt }
+  }
+  return formatterCache.fmt
+}
+
+// ---------------------------------------------------------------------------
+// Formatters
+// ---------------------------------------------------------------------------
+
+export const fmtMoney = (n: number | null | undefined) => {
+  const v = Number(n ?? 0)
+  const fmt = getFormatter()
+  const symbol = currencyConfig.symbol
+  // Use the Intl currency format when it renders a real symbol; otherwise
+  // prepend our own symbol. Detect by formatting 0 and checking non-digit prefix.
+  try {
+    const zero = fmt.format(0)
+    const stripped = zero.replace(/[\d.,\s]/g, '')
+    if (stripped.length > 0) return fmt.format(v)
+  } catch {
+    /* fall through */
+  }
+  const sign = v < 0 ? '-' : ''
+  return `${sign}${symbol}${Math.abs(v).toLocaleString(currencyConfig.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+export const currencySymbol = () => currencyConfig.symbol
+
+export const currencyCode = () => currencyConfig.code
 
 export const fmtCompact = (n: number | null | undefined) => {
   const v = Number(n ?? 0)
@@ -13,12 +123,20 @@ export const fmtCompact = (n: number | null | undefined) => {
 
 export const fmtDate = (d: string | Date | null | undefined) => {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
+  try {
+    return new Date(d).toLocaleDateString(currencyConfig.locale, { day: '2-digit', month: 'short', year: 'numeric' })
+  } catch {
+    return new Date(d).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
+  }
 }
 
 export const fmtDateTime = (d: string | Date | null | undefined) => {
   if (!d) return '—'
-  return new Date(d).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+  try {
+    return new Date(d).toLocaleString(currencyConfig.locale, { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+  } catch {
+    return new Date(d).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+  }
 }
 
 export const fmtRelative = (d: string | Date | null | undefined) => {

@@ -7,6 +7,20 @@ datasource db {
   url      = "file:./dev.db"
 }
 
+model User {
+  id          String    @id @default(cuid())
+  username    String    @unique
+  passwordHash String
+  name        String
+  email       String?
+  phone       String?
+  role        String    @default("cashier") // admin | pharmacist | cashier
+  status      String    @default("active") // active | suspended
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
 model Category {
   id          String     @id @default(cuid())
   name        String     @unique

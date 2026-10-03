@@ -14,8 +14,14 @@ import { Inventory } from '@/components/pos/inventory'
 import { Prescriptions } from '@/components/pos/prescriptions'
 import { Reports } from '@/components/pos/reports'
 import { Settings } from '@/components/pos/settings'
-import { NAV_GROUPS, type ViewKey } from '@/components/pos/nav-config'
-import { useCallback, useEffect, useState } from 'react'
+import { Users } from '@/components/pos/users'
+import { Login } from '@/components/pos/login'
+import { UserProvider, type AuthUser } from '@/components/pos/user-context'
+import { canAccessView, type ViewKey } from '@/components/pos/nav-config'
+import { setCurrencyConfig } from '@/lib/format'
+import { loadStoreSettings, type StoreSettingsMap } from '@/lib/store-settings'
+import { Activity, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 const VIEW_TITLES: Record<ViewKey, string> = {
   dashboard: 'Dashboard',
@@ -29,6 +35,7 @@ const VIEW_TITLES: Record<ViewKey, string> = {
   suppliers: 'Suppliers',
   prescriptions: 'Prescriptions',
   reports: 'Reports',
+  users: 'Users & Roles',
   settings: 'Settings',
 }
 
@@ -40,12 +47,62 @@ interface AlertItem {
 }
 
 export default function Home() {
+  const [user, setUser] = useState<AuthUser | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [settings, setSettings] = useState<StoreSettingsMap | null>(null)
   const [view, setView] = useState<ViewKey>('dashboard')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [quickSearch, setQuickSearch] = useState('')
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [posKey, setPosKey] = useState(0)
+  const userRef = useRef<AuthUser | null>(null)
+  useEffect(() => {
+    userRef.current = user
+  }, [user])
+
+  const logout = useCallback(async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' })
+    } catch {
+      /* ignore */
+    }
+    setUser(null)
+  }, [])
+
+  // Global 401 interceptor: any API auth failure bounces back to the login screen.
+  useEffect(() => {
+    const rawFetch = window.fetch.bind(window)
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await rawFetch(input, init)
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
+      if (res.status === 401 && !url.includes('/api/auth/') && userRef.current) {
+        setUser(null)
+      }
+      return res
+    }
+    return () => {
+      window.fetch = rawFetch
+    }
+  }, [])
+
+  // Bootstrap: session + settings (currency/locale hydration)
+  useEffect(() => {
+    let alive = true
+    Promise.all([
+      fetch('/api/auth/me', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : { user: null })).catch(() => ({ user: null })),
+      loadStoreSettings().catch(() => ({})),
+    ]).then(([me, store]) => {
+      if (!alive) return
+      if (me.user) setUser(me.user)
+      setSettings(store)
+      setCurrencyConfig(store.currencyCode ?? 'USD', store.currencyLocale ?? 'en-US')
+      setAuthReady(true)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const navigate = useCallback((v: ViewKey) => {
     setView(v)
@@ -56,6 +113,7 @@ export default function Home() {
   const loadAlerts = useCallback(async () => {
     try {
       const res = await fetch('/api/dashboard', { cache: 'no-store' })
+      if (!res.ok) return
       const json = await res.json()
       const items: AlertItem[] = []
       for (const m of json.lowStock ?? []) {
@@ -71,53 +129,95 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    if (!user) return
     const t = setTimeout(loadAlerts, 0)
     return () => clearTimeout(t)
-  }, [loadAlerts])
+  }, [loadAlerts, user])
 
-  const alertCount = alerts.filter((a) => a.type === 'low_stock' || a.daysLeft === undefined).length
+  // Loading splash while checking session
+  if (!authReady) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-400 to-teal-600 shadow-lg shadow-teal-500/25">
+          <Activity className="h-7 w-7 text-white" />
+        </div>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" /> Loading MediPOS Pro…
+        </div>
+      </div>
+    )
+  }
+
+  // Unauthenticated → login screen
+  if (!user) {
+    return (
+      <Login
+        onLogin={(u) => {
+          setUser(u)
+          setView('dashboard')
+          loadStoreSettings(true).then((s) => {
+            setSettings(s)
+            setCurrencyConfig(s.currencyCode ?? 'USD', s.currencyLocale ?? 'en-US')
+          })
+          loadAlerts()
+        }}
+      />
+    )
+  }
+
+  // View guard: clamp to dashboard when role lacks access
+  const activeView: ViewKey = canAccessView(user.role, view) ? view : 'dashboard'
 
   return (
-    <div className="min-h-screen">
-      <Sidebar
-        view={view}
-        onNavigate={navigate}
-        collapsed={collapsed}
-        onToggleCollapse={() => setCollapsed((c) => !c)}
-        alertCount={alerts.length}
-        mobileOpen={mobileOpen}
-        onMobileClose={() => setMobileOpen(false)}
-      />
-
-      <div className={`flex min-h-screen flex-col transition-all duration-200 ${collapsed ? 'lg:pl-[72px]' : 'lg:pl-64'}`}>
-        <Header
-          title={VIEW_TITLES[view]}
-          onMenuClick={() => setMobileOpen(true)}
-          onQuickSearch={(q) => { setQuickSearch(q); navigate('medicines') }}
-          onGotoPOS={() => navigate('pos')}
-          alerts={alerts}
-          onAlertClick={() => navigate('inventory')}
+    <UserProvider user={user} logout={logout}>
+      <div className="min-h-screen">
+        <Sidebar
+          view={activeView}
+          onNavigate={navigate}
+          collapsed={collapsed}
+          onToggleCollapse={() => setCollapsed((c) => !c)}
+          alertCount={alerts.length}
+          mobileOpen={mobileOpen}
+          onMobileClose={() => setMobileOpen(false)}
+          role={user.role}
+          userName={user.name}
         />
 
-        <main className="flex-1 p-4 sm:p-6">
-          {view === 'dashboard' && <Dashboard onNavigate={navigate} />}
-          {view === 'pos' && <POSTerminal key={posKey} onSalesRecorded={loadAlerts} />}
-          {view === 'medicines' && <Medicines />}
-          {view === 'categories' && <Categories onGotoMedicines={() => navigate('medicines')} />}
-          {view === 'inventory' && <Inventory onGotoPurchases={() => navigate('purchases')} />}
-          {view === 'purchases' && <Purchases onPurchasesChanged={loadAlerts} />}
-          {view === 'sales' && <Sales onSalesChanged={loadAlerts} />}
-          {view === 'customers' && <Customers />}
-          {view === 'suppliers' && <Suppliers />}
-          {view === 'prescriptions' && <Prescriptions />}
-          {view === 'reports' && <Reports />}
-          {view === 'settings' && <Settings />}
-        </main>
+        <div className={`flex min-h-screen flex-col transition-all duration-200 ${collapsed ? 'lg:pl-[72px]' : 'lg:pl-64'}`}>
+          <Header
+            title={VIEW_TITLES[activeView]}
+            onMenuClick={() => setMobileOpen(true)}
+            onQuickSearch={(q) => { setQuickSearch(q); navigate('medicines') }}
+            onGotoPOS={() => navigate('pos')}
+            alerts={alerts}
+            onAlertClick={() => navigate(canAccessView(user.role, 'inventory') ? 'inventory' : 'medicines')}
+          />
 
-        <footer className="mt-auto border-t px-6 py-3 text-center text-xs text-muted-foreground">
-          MediPOS Pro — Professional Pharmacy Management Suite · © {new Date().getFullYear()} MediPOS. All rights reserved.
-        </footer>
+          <main className="flex-1 p-4 sm:p-6">
+            {activeView === 'dashboard' && <Dashboard onNavigate={navigate} />}
+            {activeView === 'pos' && <POSTerminal key={posKey} onSalesRecorded={loadAlerts} storeSettings={settings} />}
+            {activeView === 'medicines' && <Medicines />}
+            {activeView === 'categories' && <Categories onGotoMedicines={() => navigate('medicines')} />}
+            {activeView === 'inventory' && <Inventory onGotoPurchases={() => navigate('purchases')} />}
+            {activeView === 'purchases' && <Purchases onPurchasesChanged={loadAlerts} />}
+            {activeView === 'sales' && <Sales onSalesChanged={loadAlerts} storeSettings={settings} />}
+            {activeView === 'customers' && <Customers />}
+            {activeView === 'suppliers' && <Suppliers />}
+            {activeView === 'prescriptions' && <Prescriptions />}
+            {activeView === 'reports' && <Reports storeSettings={settings} />}
+            {activeView === 'users' && <Users />}
+            {activeView === 'settings' && <Settings onSettingsSaved={async () => {
+              const s = await loadStoreSettings(true)
+              setSettings(s)
+              setCurrencyConfig(s.currencyCode ?? 'USD', s.currencyLocale ?? 'en-US')
+            }} />}
+          </main>
+
+          <footer className="mt-auto border-t px-6 py-3 text-center text-xs text-muted-foreground">
+            MediPOS Pro — Professional Pharmacy Management Suite · © {new Date().getFullYear()} MediPOS. All rights reserved.
+          </footer>
+        </div>
       </div>
-    </div>
+    </UserProvider>
   )
 }

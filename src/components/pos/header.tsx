@@ -4,7 +4,12 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
-import { Bell, Menu, Moon, PackageX, Search, ShoppingCart, Sun, TimerReset } from 'lucide-react'
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { ROLE_BADGE, ROLE_LABEL, useUser } from '@/components/pos/user-context'
+import { Bell, LogOut, Menu, Moon, PackageX, Search, Settings, ShoppingCart, Sun, TimerReset, UserRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useState } from 'react'
 
@@ -27,6 +32,9 @@ interface HeaderProps {
 export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, alerts, onAlertClick }: HeaderProps) {
   const { resolvedTheme, setTheme } = useTheme()
   const [q, setQ] = useState('')
+  const { user, logout } = useUser()
+
+  const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -113,6 +121,48 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, alerts, o
             </div>
           </PopoverContent>
         </Popover>
+
+        {/* User menu */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              className="flex items-center gap-2 rounded-full border p-1 pr-2.5 transition hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500"
+              aria-label="User menu"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-teal-500 to-teal-700 text-xs font-bold text-white">
+                {initials}
+              </span>
+              <span className="hidden text-sm font-medium xl:inline">{user.name.split(' ')[0]}</span>
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-64">
+            <DropdownMenuLabel>
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-teal-500 to-teal-700 text-sm font-bold text-white">
+                  {initials}
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold">{user.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">@{user.username}</p>
+                </div>
+              </div>
+              <span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${ROLE_BADGE[user.role]}`}>
+                <UserRound className="h-3 w-3" /> {ROLE_LABEL[user.role]}
+              </span>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {user.email && (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">{user.email}</div>
+            )}
+            <DropdownMenuItem onClick={() => (window.location.hash = '#settings')} className="gap-2">
+              <Settings className="h-4 w-4" /> Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={logout} className="gap-2 text-red-600 focus:text-red-600 dark:text-red-400">
+              <LogOut className="h-4 w-4" /> Sign out
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {/* Mobile search trigger */}
         <Sheet>

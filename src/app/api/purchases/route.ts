@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireUser, requireRole } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
+  const gate = await requireUser(req)
+  if (gate.response) return gate.response
   try {
     const { searchParams } = new URL(req.url)
     const search = searchParams.get('search')?.trim()
@@ -43,6 +46,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  if (gate.response) return gate.response
   try {
     const body = await req.json()
     const items: Array<{ medicineId: string; qty: number; unitCost?: number; batchNumber?: string; expiryDate?: string }> = body.items ?? []

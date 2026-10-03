@@ -3,15 +3,15 @@
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
-import { NAV_GROUPS, type ViewKey } from '@/components/pos/nav-config'
+import { NAV_GROUPS, type Role, type ViewKey } from '@/components/pos/nav-config'
+import { ROLE_LABEL } from '@/components/pos/user-context'
 import {
   Boxes, ChartNoAxesColumn, ChevronLeft, ClipboardList, FileHeart, LayoutDashboard, LayoutGrid,
-  Pill, ReceiptText, Settings, ShoppingCart, Truck, Users, Activity,
+  Pill, ReceiptText, Settings, ShieldCheck, ShoppingCart, Truck, Users, Activity,
 } from 'lucide-react'
-import { useState } from 'react'
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  LayoutDashboard, ShoppingCart, Pill, LayoutGrid, Boxes, ReceiptText, ClipboardList, Truck, Users, FileHeart, ChartNoAxesColumn, Settings,
+  LayoutDashboard, ShoppingCart, Pill, LayoutGrid, Boxes, ReceiptText, ClipboardList, Truck, Users, FileHeart, ChartNoAxesColumn, Settings, ShieldCheck,
 }
 
 interface SidebarProps {
@@ -22,9 +22,16 @@ interface SidebarProps {
   alertCount?: number
   mobileOpen: boolean
   onMobileClose: () => void
+  role?: Role | string
+  userName?: string
 }
 
-function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount }: Omit<SidebarProps, 'mobileOpen' | 'onMobileClose'>) {
+function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount, role, userName }: Omit<SidebarProps, 'mobileOpen' | 'onMobileClose'>) {
+  const groups = NAV_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((i) => !role || (i.roles as string[]).includes(role)) }))
+    .filter((g) => g.items.length > 0)
+  const initials = (userName ?? 'User').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
+
   return (
     <div className="flex h-full flex-col bg-[var(--sidebar)] text-[var(--sidebar-foreground)]">
       {/* Logo */}
@@ -56,7 +63,7 @@ function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount 
       {/* Navigation */}
       <ScrollArea className="flex-1 py-3">
         <nav className={collapsed ? 'px-2' : 'px-3'} aria-label="Main navigation">
-          {NAV_GROUPS.map((group) => (
+          {groups.map((group) => (
             <div key={group.title} className="mb-4">
               {!collapsed && (
                 <p className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-widest text-teal-500/70">{group.title}</p>
@@ -103,12 +110,12 @@ function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount 
       <div className={`shrink-0 border-t border-[var(--sidebar-border)] p-3 ${collapsed ? 'flex justify-center' : ''}`}>
         <div className={`flex items-center gap-2.5 rounded-lg p-1.5 ${collapsed ? '' : 'hover:bg-[var(--sidebar-accent)]'}`}>
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-teal-500 to-teal-700 text-sm font-bold text-white">
-            AU
+            {initials}
           </span>
           {!collapsed && (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-white">Admin User</p>
-              <p className="truncate text-xs text-teal-500/80">Pharmacist</p>
+              <p className="truncate text-sm font-semibold text-white">{userName ?? 'User'}</p>
+              <p className="truncate text-xs text-teal-500/80">{role ? (ROLE_LABEL[role] ?? role) : ''}</p>
             </div>
           )}
         </div>

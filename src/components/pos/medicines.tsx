@@ -15,8 +15,12 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, ExpiryBadge, PageHeader, StockBadge, TableSkeleton } from '@/components/pos/shared'
-import { fmtDate, fmtMoney, UNITS } from '@/lib/format'
-import { Download, MoreHorizontal, Pencil, Pill, Plus, Search, Trash2, Upload } from 'lucide-react'
+import { BarcodeSVG } from '@/components/pos/barcode'
+import { useUser } from '@/components/pos/user-context'
+import { fmtDate, fmtMoney, currencySymbol, UNITS } from '@/lib/format'
+import { LABEL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
+import { useStoreSettings } from '@/lib/store-settings'
+import { Barcode, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, Tag, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -52,7 +56,18 @@ const emptyForm = {
   prescriptionRequired: false, location: '', status: 'active',
 }
 
+const LABEL_SIZES = {
+  small: { label: '30 × 20 mm', w: 30, h: 20 },
+  medium: { label: '38 × 25 mm', w: 38, h: 25 },
+  large: { label: '50 × 30 mm', w: 50, h: 30 },
+} as const
+
+type LabelSize = keyof typeof LABEL_SIZES
+
 export function Medicines() {
+  const { user } = useUser()
+  const storeSettings = useStoreSettings()
+  const canManage = user.role === 'admin' || user.role === 'pharmacist'
   const [meds, setMeds] = useState<Med[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
@@ -66,6 +81,11 @@ export function Medicines() {
   const [editing, setEditing] = useState<Med | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
+  // Barcode label printing state
+  const [labelOpen, setLabelOpen] = useState(false)
+  const [labelSearch, setLabelSearch] = useState('')
+  const [labelItems, setLabelItems] = useState<Array<{ med: Med; qty: number }>>([])
+  const [labelSize, setLabelSize] = useState<LabelSize>('medium')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -167,6 +187,23 @@ export function Medicines() {
 
   const set = (k: keyof typeof emptyForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }))
 
+  // ---------- Barcode label printing ----------
+  const openLabels = (med?: Med) => {
+    if (med) {
+      setLabelItems((prev) => (prev.some((p) => p.med.id === med.id) ? prev : [...prev, { med, qty: 12 }]))
+    }
+    setLabelSearch('')
+    setLabelOpen(true)
+  }
+
+  const labelMatches = useMemo(() => {
+    const q = labelSearch.trim().toLowerCase()
+    if (!q) return meds.slice(0, 8)
+    return meds.filter((m) => m.name.toLowerCase().includes(q) || m.sku.toLowerCase().includes(q) || (m.barcode ?? '').includes(q)).slice(0, 8)
+  }, [meds, labelSearch])
+
+  const totalLabels = labelItems.reduce((n, l) => n + l.qty, 0)
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -174,8 +211,11 @@ export function Medicines() {
         breadcrumb="Medicines"
         actions={
           <>
+            <Button variant="outline" onClick={() => openLabels()} className="rounded-full"><Barcode className="h-4 w-4" /> Print Labels</Button>
             <Button variant="outline" onClick={exportCSV} className="rounded-full"><Download className="h-4 w-4" /> Export</Button>
-            <Button onClick={openCreate} className="rounded-full bg-teal-600 hover:bg-teal-700"><Plus className="h-4 w-4" /> Add Medicine</Button>
+            {canManage && (
+              <Button onClick={openCreate} className="rounded-full bg-teal-600 hover:bg-teal-700"><Plus className="h-4 w-4" /> Add Medicine</Button>
+            )}
           </>
         }
       />
@@ -282,8 +322,9 @@ export function Medicines() {
                             <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Row actions"><MoreHorizontal className="h-4 w-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEdit(m)}><Pencil className="h-4 w-4" /> Edit</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => remove(m)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openLabels(m)}><Tag className="h-4 w-4" /> Print Labels</DropdownMenuItem>
+                            {canManage && <DropdownMenuItem onClick={() => openEdit(m)}><Pencil className="h-4 w-4" /> Edit</DropdownMenuItem>}
+                            {canManage && <DropdownMenuItem onClick={() => remove(m)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </TableCell>
@@ -379,11 +420,11 @@ export function Medicines() {
               <Input type="number" min={0} value={form.reorderLevel} onChange={(e) => set('reorderLevel', e.target.value)} className="tabular-nums" />
             </div>
             <div className="space-y-1.5">
-              <Label>Cost Price ($)</Label>
+              <Label>Cost Price ({currencySymbol()})</Label>
               <Input type="number" min={0} step="0.01" value={form.costPrice} onChange={(e) => set('costPrice', e.target.value)} className="tabular-nums" />
             </div>
             <div className="space-y-1.5">
-              <Label>Selling Price ($)</Label>
+              <Label>Selling Price ({currencySymbol()})</Label>
               <Input type="number" min={0} step="0.01" value={form.sellingPrice} onChange={(e) => set('sellingPrice', e.target.value)} className="tabular-nums" />
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 sm:col-span-2">
@@ -413,6 +454,136 @@ export function Medicines() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Barcode label printing dialog */}
+      <Dialog open={labelOpen} onOpenChange={setLabelOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Barcode className="h-5 w-5 text-teal-500" /> Print Barcode Labels</DialogTitle>
+            <DialogDescription>
+              Pick products and label copies, then print scannable Code128 shelf labels.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 sm:grid-cols-[1fr_1.2fr]">
+            {/* Picker */}
+            <div className="space-y-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input value={labelSearch} onChange={(e) => setLabelSearch(e.target.value)} placeholder="Search product or SKU…" className="pl-9" />
+              </div>
+              <div className="max-h-44 space-y-1 overflow-y-auto rounded-lg border p-1.5">
+                {labelMatches.map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => setLabelItems((prev) => (prev.some((p) => p.med.id === m.id) ? prev : [...prev, { med: m, qty: 12 }]))}
+                    className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition hover:bg-muted"
+                  >
+                    <span className="min-w-0 truncate">{m.name}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums">{fmtMoney(m.sellingPrice)}</span>
+                  </button>
+                ))}
+                {labelMatches.length === 0 && <p className="px-2 py-6 text-center text-sm text-muted-foreground">No match.</p>}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Label Size</Label>
+                <Select value={labelSize} onValueChange={(v) => setLabelSize(v as LabelSize)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(LABEL_SIZES).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Selected list */}
+              <div className="max-h-52 space-y-1.5 overflow-y-auto">
+                {labelItems.map((l) => (
+                  <div key={l.med.id} className="flex items-center gap-2 rounded-lg border p-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{l.med.name}</p>
+                      <p className="text-xs text-muted-foreground">{l.med.sku}</p>
+                    </div>
+                    <Button variant="outline" size="icon" className="h-7 w-7 rounded-md" onClick={() => setLabelItems((prev) => prev.map((p) => (p.med.id === l.med.id ? { ...p, qty: Math.max(1, p.qty - 1) } : p)))} aria-label="Fewer labels">
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="w-8 text-center text-sm font-bold tabular-nums">{l.qty}</span>
+                    <Button variant="outline" size="icon" className="h-7 w-7 rounded-md" onClick={() => setLabelItems((prev) => prev.map((p) => (p.med.id === l.med.id ? { ...p, qty: p.qty + 1 } : p)))} aria-label="More labels">
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="h-7 w-7 rounded-md text-muted-foreground hover:text-red-500" onClick={() => setLabelItems((prev) => prev.filter((p) => p.med.id !== l.med.id))} aria-label="Remove">
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+                {labelItems.length === 0 && (
+                  <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+                    Add products from the list above.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Preview */}
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Label Preview · {totalLabels} label(s)</p>
+              <div className="flex max-h-64 flex-wrap gap-2 overflow-y-auto rounded-lg border bg-muted/30 p-3">
+                {labelItems.slice(0, 1).flatMap((l) =>
+                  Array.from({ length: Math.min(l.qty, 2) }).map((_, i) => (
+                    <BarcodeLabel key={`${l.med.id}-${i}`} med={l.med} size={labelSize} storeName={storeSettings?.storeName ?? 'MediPOS Pharmacy'} />
+                  ))
+                )}
+                {labelItems.length > 0 && (
+                  <div className="flex h-full min-h-20 w-full items-center justify-center text-xs text-muted-foreground">
+                    + {Math.max(0, totalLabels - Math.min(labelItems[0]?.qty ?? 0, 2))} more when printed
+                  </div>
+                )}
+                {labelItems.length === 0 && <p className="text-sm text-muted-foreground">No preview yet.</p>}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setLabelOpen(false)}>Close</Button>
+            <Button onClick={() => printWithPageStyle(LABEL_PAGE_CSS)} disabled={labelItems.length === 0} className="rounded-full bg-teal-600 hover:bg-teal-700 print:hidden">
+              <Printer className="h-4 w-4" /> Print {totalLabels} Label{totalLabels === 1 ? '' : 's'}
+            </Button>
+          </div>
+
+          {/* Hidden print sheet */}
+          <div className="hidden print:block">
+            <div className="print-area flex flex-wrap content-start gap-[2mm]">
+              {labelItems.flatMap((l) =>
+                Array.from({ length: l.qty }).map((_, i) => (
+                  <BarcodeLabel key={`${l.med.id}-p-${i}`} med={l.med} size={labelSize} storeName={storeSettings?.storeName ?? 'MediPOS Pharmacy'} />
+                ))
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}
+
+function BarcodeLabel({ med, size, storeName }: { med: Med; size: LabelSize; storeName: string }) {
+  const s = LABEL_SIZES[size]
+  return (
+    <div
+      className="flex flex-col items-center justify-between overflow-hidden border border-black bg-white p-[1.2mm] text-black"
+      style={{ width: `${s.w}mm`, height: `${s.h}mm` }}
+    >
+      <div className="w-full text-center leading-tight">
+        <p className="truncate text-[6px] uppercase tracking-wide text-neutral-600">{storeName}</p>
+        <p className="truncate text-[7.5px] font-bold">{med.name}</p>
+      </div>
+      <BarcodeSVG value={med.sku} height={size === 'small' ? 16 : size === 'medium' ? 22 : 28} className="w-[85%]" />
+      <div className="flex w-full items-center justify-between px-[0.5mm] text-[7.5px] font-bold leading-none">
+        <span className="truncate font-mono">{med.sku}</span>
+        <span>{fmtMoney(med.sellingPrice)}</span>
+      </div>
     </div>
   )
 }

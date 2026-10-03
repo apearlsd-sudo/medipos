@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireRole } from '@/lib/auth'
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  if (gate.response) return gate.response
   try {
     const { id } = await params
     const body = await req.json()
@@ -23,7 +26,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const gate = await requireRole(req, ['admin'])
+  if (gate.response) return gate.response
   try {
     const { id } = await params
     await db.prescription.delete({ where: { id } })

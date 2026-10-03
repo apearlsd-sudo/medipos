@@ -159,18 +159,30 @@
   background: oklch(1 0 0 / 0.18);
 }
 
-/* Printing: only receipt area */
+/* Printing: only the active print area (thermal receipt or barcode labels) */
 @media print {
   body * {
     visibility: hidden;
   }
-  .receipt-print-area,
-  .receipt-print-area * {
+  .print-area,
+  .print-area * {
     visibility: visible;
   }
-  .receipt-print-area {
+  .print-area {
     position: fixed;
     inset: 0;
     overflow: visible;
+  }
+  /* Screen-only chrome that must never print even inside print areas */
+  .print-area .no-print,
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+  }
+  .print-area * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

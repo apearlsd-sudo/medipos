@@ -1,9 +1,12 @@
-import { NextResponse } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireUser } from '@/lib/auth'
 
 const DAY = 24 * 60 * 60 * 1000
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const gate = await requireUser(req)
+  if (gate.response) return gate.response
   try {
     const now = new Date()
     const monthAgo = new Date(now.getTime() - 30 * DAY)

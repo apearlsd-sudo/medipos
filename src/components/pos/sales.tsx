@@ -10,7 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AvatarInitials, PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
+import { ThermalReceipt } from '@/components/pos/receipt'
 import { fmtDateTime, fmtMoney, paymentMethodLabel, PAYMENT_METHODS } from '@/lib/format'
+import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
+import type { StoreSettingsMap } from '@/lib/store-settings'
 import { Banknote, Eye, Printer, ReceiptText, Search, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -39,13 +42,14 @@ interface SaleDetail extends SaleRow {
   items: Array<{ id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number }>
 }
 
-export function Sales({ onSalesChanged }: { onSalesChanged?: () => void }) {
+export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () => void; storeSettings?: StoreSettingsMap | null }) {
   const [sales, setSales] = useState<SaleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [methodFilter, setMethodFilter] = useState('all')
   const [detail, setDetail] = useState<SaleDetail | null>(null)
+  const [printSale, setPrintSale] = useState<SaleDetail | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -249,8 +253,46 @@ export function Sales({ onSalesChanged }: { onSalesChanged?: () => void }) {
               {detail.note && <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground">Note: {detail.note}</p>}
 
               <div className="flex gap-2 print:hidden">
-                <Button variant="outline" className="flex-1 rounded-full" onClick={() => window.print()}><Printer className="h-4 w-4" /> Print Invoice</Button>
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => setPrintSale(detail)}><Printer className="h-4 w-4" /> Thermal Receipt</Button>
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setDetail(null)}>Close</Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Thermal receipt print dialog */}
+      <Dialog open={!!printSale} onOpenChange={(o) => !o && setPrintSale(null)}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Receipt — #{printSale?.invoiceNo}</DialogTitle>
+          </DialogHeader>
+          {printSale && (
+            <div className="space-y-3">
+              <div className="max-h-[50vh] overflow-y-auto rounded-lg border bg-white">
+                <ThermalReceipt
+                  sale={{
+                    invoiceNo: printSale.invoiceNo,
+                    createdAt: printSale.createdAt,
+                    subtotal: printSale.subtotal,
+                    discount: printSale.discount,
+                    tax: printSale.tax,
+                    total: printSale.total,
+                    paidAmount: printSale.paidAmount,
+                    changeAmount: printSale.changeAmount,
+                    paymentMethod: printSale.paymentMethod,
+                    cashierName: printSale.cashierName,
+                    customerName: printSale.customer,
+                    items: printSale.items.map((it) => ({ name: it.name, qty: it.qty, unitPrice: it.unitPrice, total: it.total })),
+                  }}
+                  settings={storeSettings ?? null}
+                />
+              </div>
+              <div className="flex gap-2 print:hidden">
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => printWithPageStyle(THERMAL_PAGE_CSS)}>
+                  <Printer className="h-4 w-4" /> Print 80mm Receipt
+                </Button>
+                <Button className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setPrintSale(null)}>Close</Button>
               </div>
             </div>
           )}

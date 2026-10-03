@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AvatarInitials, StatCard, StatusBadge } from '@/components/pos/shared'
+import { useUser } from '@/components/pos/user-context'
 import { fmtCompact, fmtMoney, fmtRelative, paymentMethodLabel } from '@/lib/format'
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -39,6 +40,7 @@ const DONUT_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8
 export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' | 'inventory' | 'sales' | 'purchases' | 'customers') => void }) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const { user } = useUser()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -71,6 +73,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
   }
 
   const { stats } = data
+  const firstName = user.name.split(' ')[0]
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
 
   return (
@@ -78,7 +81,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
       {/* Welcome */}
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome back, Admin 👋</h1>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome back, {firstName} 👋</h1>
           <p className="mt-1 text-sm text-muted-foreground">Here is your pharmacy performance summary · {today}</p>
         </div>
         <div className="flex flex-wrap gap-2">

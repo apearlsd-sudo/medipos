@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireUser, requireRole } from '@/lib/auth'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const gate = await requireUser(req)
+  if (gate.response) return gate.response
   try {
     const categories = await db.category.findMany({
       include: { _count: { select: { medicines: true } } },
@@ -15,6 +18,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  if (gate.response) return gate.response
   try {
     const body = await req.json()
     const name = String(body.name ?? '').trim()

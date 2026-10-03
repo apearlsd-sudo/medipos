@@ -4,11 +4,15 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/pos/shared'
+import { ROLE_BADGE, ROLE_LABEL, useUser } from '@/components/pos/user-context'
+import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
-import { Moon, Save, Store, Sun } from 'lucide-react'
+import { BadgeCheck, Loader2, Moon, Printer, Save, Store, Sun, Wallet } from 'lucide-react'
 
 interface StoreSettings {
   storeName: string
@@ -16,9 +20,14 @@ interface StoreSettings {
   storeEmail: string
   storeAddress: string
   currency: string
+  currencyCode: string
+  currencyLocale: string
   taxRate: string
   lowStockThreshold: string
   expiryAlertDays: string
+  receiptHeader: string
+  receiptFooter: string
+  receiptShowBarcode: string
 }
 
 const DEFAULTS: StoreSettings = {
@@ -27,76 +36,182 @@ const DEFAULTS: StoreSettings = {
   storeEmail: 'contact@medipos.com',
   storeAddress: '25 Liberation Road, Airport Residential Area, Accra',
   currency: 'USD',
+  currencyCode: 'USD',
+  currencyLocale: 'en-US',
   taxRate: '2.5',
   lowStockThreshold: '20',
   expiryAlertDays: '90',
+  receiptHeader: 'Thank you for choosing MediPOS Pharmacy — get well soon!',
+  receiptFooter: 'Returns accepted within 14 days with this receipt.',
+  receiptShowBarcode: 'true',
 }
 
-export function Settings() {
+export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
   const [settings, setSettings] = useState<StoreSettings>(DEFAULTS)
+  const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
+  const { user } = useUser()
+  const isAdmin = user.role === 'admin'
 
   useEffect(() => {
     fetch('/api/settings', { cache: 'no-store' })
       .then((r) => r.json())
       .then((j) => setSettings({ ...DEFAULTS, ...j.settings }))
+      .finally(() => setLoaded(true))
   }, [])
 
   const set = (k: keyof StoreSettings, v: string) => setSettings((s) => ({ ...s, [k]: v }))
 
   const save = async () => {
+    if (!isAdmin) {
+      toast({ title: 'Permission denied', description: 'Only administrators can change store settings.', variant: 'destructive' })
+      return
+    }
     setSaving(true)
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({ ...settings, currency: settings.currencyCode }),
       })
-      if (res.ok) toast({ title: 'Settings saved', description: 'Store preferences updated successfully.' })
-      else toast({ title: 'Save failed', variant: 'destructive' })
+      if (res.ok) {
+        toast({ title: 'Settings saved', description: 'Store preferences, currency and receipt updated successfully.' })
+        onSettingsSaved?.()
+      } else {
+        const j = await res.json().catch(() => ({}))
+        toast({ title: 'Save failed', description: j.error ?? 'Please try again.', variant: 'destructive' })
+      }
     } finally {
       setSaving(false)
     }
   }
+
+  const selectedCurrency = CURRENCIES.find((c) => c.code === settings.currencyCode)
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="Settings"
         breadcrumb="Settings"
-        actions={<Button onClick={save} disabled={saving} className="rounded-full bg-teal-600 hover:bg-teal-700"><Save className="h-4 w-4" /> {saving ? 'Saving…' : 'Save Changes'}</Button>}
+        actions={
+          isAdmin ? (
+            <Button onClick={save} disabled={saving} className="rounded-full bg-teal-600 hover:bg-teal-700">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              {saving ? 'Saving…' : 'Save Changes'}
+            </Button>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+              <BadgeCheck className="h-3.5 w-3.5" /> View only — admin access required
+            </span>
+          )
+        }
       />
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base"><Store className="h-4 w-4 text-teal-500" /> Store Information</CardTitle>
-            <CardDescription>Appears on receipts and invoices.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-1.5"><Label>Store Name</Label><Input value={settings.storeName} onChange={(e) => set('storeName', e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5"><Label>Phone</Label><Input value={settings.storePhone} onChange={(e) => set('storePhone', e.target.value)} /></div>
-              <div className="space-y-1.5"><Label>Email</Label><Input value={settings.storeEmail} onChange={(e) => set('storeEmail', e.target.value)} /></div>
-            </div>
-            <div className="space-y-1.5"><Label>Address</Label><Input value={settings.storeAddress} onChange={(e) => set('storeAddress', e.target.value)} /></div>
-          </CardContent>
-        </Card>
-
         <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Store className="h-4 w-4 text-teal-500" /> Store Information</CardTitle>
+              <CardDescription>Appears on receipts and invoices.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5"><Label>Store Name</Label><Input disabled={!isAdmin} value={settings.storeName} onChange={(e) => set('storeName', e.target.value)} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5"><Label>Phone</Label><Input disabled={!isAdmin} value={settings.storePhone} onChange={(e) => set('storePhone', e.target.value)} /></div>
+                <div className="space-y-1.5"><Label>Email</Label><Input disabled={!isAdmin} value={settings.storeEmail} onChange={(e) => set('storeEmail', e.target.value)} /></div>
+              </div>
+              <div className="space-y-1.5"><Label>Address</Label><Input disabled={!isAdmin} value={settings.storeAddress} onChange={(e) => set('storeAddress', e.target.value)} /></div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Wallet className="h-4 w-4 text-teal-500" /> Currency & Locale</CardTitle>
+              <CardDescription>Formats every price and date across the system.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Currency</Label>
+                  <Select value={settings.currencyCode} onValueChange={(v) => { set('currencyCode', v); set('currency', v) }} disabled={!isAdmin}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {CURRENCIES.map((c) => (
+                        <SelectItem key={c.code} value={c.code}>
+                          {c.code} — {c.name} ({c.symbol})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Locale / Region</Label>
+                  <Select value={settings.currencyLocale} onValueChange={(v) => set('currencyLocale', v)} disabled={!isAdmin}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {LOCALES.map((l) => (
+                        <SelectItem key={l.code} value={l.code}>{l.code} — {l.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="rounded-xl border bg-muted/40 p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preview</p>
+                <div className="grid gap-1.5 text-sm">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Price</span><span className="font-semibold tabular-nums">{fmtMoney(1234.5)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Large amount</span><span className="font-semibold tabular-nums">{fmtMoney(1250000)}</span></div>
+                  <div className="flex justify-between"><span className="text-muted-foreground">Date format</span><span className="font-medium">{fmtDate(new Date())}</span></div>
+                </div>
+                {selectedCurrency && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    {selectedCurrency.name} · symbol “{selectedCurrency.symbol}” · locale {settings.currencyLocale}
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Sales & Inventory Rules</CardTitle>
               <CardDescription>Defaults applied across the system.</CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label>Currency</Label>
-                <Input value={settings.currency} onChange={(e) => set('currency', e.target.value)} placeholder="USD" />
+              <div className="space-y-1.5"><Label>Tax Rate (%)</Label><Input disabled={!isAdmin} type="number" step="0.1" value={settings.taxRate} onChange={(e) => set('taxRate', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Low Stock Threshold</Label><Input disabled={!isAdmin} type="number" value={settings.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input disabled={!isAdmin} type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Printer className="h-4 w-4 text-teal-500" /> Thermal Receipt</CardTitle>
+              <CardDescription>Customize the 80mm receipt printed at checkout.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Header Message</Label>
+                <Input disabled={!isAdmin} value={settings.receiptHeader} onChange={(e) => set('receiptHeader', e.target.value)} placeholder="Thank you message" />
               </div>
-              <div className="space-y-1.5"><Label>Tax Rate (%)</Label><Input type="number" step="0.1" value={settings.taxRate} onChange={(e) => set('taxRate', e.target.value)} /></div>
-              <div className="space-y-1.5"><Label>Low Stock Threshold</Label><Input type="number" value={settings.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} /></div>
-              <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
+              <div className="space-y-1.5">
+                <Label>Footer / Return Policy</Label>
+                <Input disabled={!isAdmin} value={settings.receiptFooter} onChange={(e) => set('receiptFooter', e.target.value)} placeholder="Return policy" />
+              </div>
+              <div className="flex items-center justify-between rounded-xl border p-3">
+                <div>
+                  <Label>Print Invoice Barcode</Label>
+                  <p className="text-xs text-muted-foreground">Scannable Code128 barcode of the invoice number.</p>
+                </div>
+                <Switch
+                  checked={settings.receiptShowBarcode !== 'false'}
+                  disabled={!isAdmin}
+                  onCheckedChange={(v) => set('receiptShowBarcode', String(v))}
+                />
+              </div>
             </CardContent>
           </Card>
 
@@ -118,8 +233,27 @@ export function Settings() {
               ))}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Your Session</CardTitle>
+              <CardDescription>Signed-in identity and permission level.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between rounded-xl border p-4">
+                <div>
+                  <p className="font-semibold">{user.name}</p>
+                  <p className="text-xs text-muted-foreground">@{user.username} · {user.email ?? 'no email'}</p>
+                </div>
+                <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${ROLE_BADGE[user.role]}`}>
+                  {ROLE_LABEL[user.role]}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
+      {!loaded && <p className="text-center text-xs text-muted-foreground">Loading settings…</p>}
     </div>
   )
 }

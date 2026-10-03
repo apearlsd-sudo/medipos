@@ -1,6 +1,12 @@
 import { PrismaClient } from '@prisma/client'
+import crypto from 'crypto'
 
 const db = new PrismaClient()
+
+const hashPassword = (password: string) => {
+  const salt = crypto.randomBytes(16).toString('hex')
+  return `${salt}:${crypto.scryptSync(password, salt, 64).toString('hex')}`
+}
 
 const day = (n: number) => new Date(Date.now() + n * 24 * 60 * 60 * 1000)
 const ago = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000)
@@ -18,6 +24,7 @@ async function main() {
   await db.category.deleteMany()
   await db.supplier.deleteMany()
   await db.customer.deleteMany()
+  await db.user.deleteMany()
   await db.storeSetting.deleteMany()
 
   // ---------- Categories ----------
@@ -246,6 +253,20 @@ async function main() {
     )
   )
 
+  // ---------- Users ----------
+  await Promise.all(
+    [
+      { username: 'admin', password: 'admin123', name: 'Alex Mensah', role: 'admin', email: 'admin@medipos.com', phone: '+233 24 000 1001' },
+      { username: 'pharmacist', password: 'pharm123', name: 'Dr. Abena Owusu', role: 'pharmacist', email: 'pharmacist@medipos.com', phone: '+233 24 000 1002' },
+      { username: 'cashier', password: 'cash123', name: 'Kofi Boateng', role: 'cashier', email: 'cashier@medipos.com', phone: '+233 24 000 1003' },
+      { username: 'linda', password: 'linda123', name: 'Linda Asare', role: 'cashier', email: 'linda@medipos.com', phone: '+233 24 000 1004' },
+    ].map((u) =>
+      db.user.create({
+        data: { username: u.username, passwordHash: hashPassword(u.password), name: u.name, role: u.role, email: u.email, phone: u.phone, lastLoginAt: ago(1) },
+      })
+    )
+  )
+
   // ---------- Store Settings ----------
   const settings: Array<[string, string]> = [
     ['storeName', 'MediPOS Pharmacy'],
@@ -256,6 +277,11 @@ async function main() {
     ['taxRate', '2.5'],
     ['lowStockThreshold', '20'],
     ['expiryAlertDays', '90'],
+    ['currencyCode', 'USD'],
+    ['currencyLocale', 'en-US'],
+    ['receiptHeader', 'Thank you for choosing MediPOS Pharmacy — get well soon!'],
+    ['receiptFooter', 'Returns accepted within 14 days with this receipt.'],
+    ['receiptShowBarcode', 'true'],
   ]
   await Promise.all(settings.map(([key, value]) => db.storeSetting.create({ data: { key, value } })))
 

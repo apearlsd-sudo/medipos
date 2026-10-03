@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { requireUser, requireRole } from '@/lib/auth'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const gate = await requireUser(req)
+  if (gate.response) return gate.response
   try {
     const rows = await db.storeSetting.findMany()
     const settings: Record<string, string> = {}
@@ -14,6 +17,8 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
+  const gate = await requireRole(req, ['admin'])
+  if (gate.response) return gate.response
   try {
     const body = await req.json()
     const entries: Array<[string, string]> = Object.entries(body as Record<string, string>)

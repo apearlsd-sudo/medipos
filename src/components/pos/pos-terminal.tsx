@@ -11,12 +11,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/pos/shared'
-import { fmtMoney, PAYMENT_METHODS, paymentMethodLabel } from '@/lib/format'
+import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
+import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
+import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
+import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
   Banknote, Barcode, CheckCircle2, CreditCard, Minus, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Trash2, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
+
+type SaleResult = ReceiptSale
 
 interface Medicine {
   id: string
@@ -48,22 +53,7 @@ interface CartLine {
 
 interface CustomerOption { id: string; name: string }
 
-interface SaleResult {
-  id: string
-  invoiceNo: string
-  subtotal: number
-  discount: number
-  tax: number
-  total: number
-  paidAmount: number
-  changeAmount: number
-  paymentMethod: string
-  items: Array<{ name: string; qty: number; unitPrice: number; total: number }>
-  createdAt: string
-  cashierName: string
-}
-
-export function POSTerminal({ quickSearch, onSalesRecorded }: { quickSearch?: string; onSalesRecorded?: () => void }) {
+export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { quickSearch?: string; onSalesRecorded?: () => void; storeSettings?: StoreSettingsMap | null }) {
   const [meds, setMeds] = useState<Medicine[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [customers, setCustomers] = useState<CustomerOption[]>([])
@@ -200,7 +190,10 @@ export function POSTerminal({ quickSearch, onSalesRecorded }: { quickSearch?: st
         toast({ title: 'Sale failed', description: json.error ?? 'Unknown error', variant: 'destructive' })
         return
       }
-      setReceipt(json.sale)
+      setReceipt({
+        ...json.sale,
+        customerName: json.sale?.customer?.name ?? null,
+      })
       setCart([])
       setOrderDiscount(0)
       setTendered('')
@@ -480,44 +473,13 @@ export function POSTerminal({ quickSearch, onSalesRecorded }: { quickSearch?: st
             </DialogTitle>
           </DialogHeader>
           {receipt && (
-            <div className="receipt-print-area space-y-3 text-sm">
-              <div className="text-center">
-                <p className="text-lg font-bold">MediPOS Pharmacy</p>
-                <p className="text-xs text-muted-foreground">25 Liberation Road, Accra · +233 30 222 5500</p>
+            <div className="space-y-3">
+              <div className="max-h-[50vh] overflow-y-auto rounded-lg border bg-white">
+                <ThermalReceipt sale={receipt} settings={storeSettings ?? null} />
               </div>
-              <Separator />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>Invoice: <span className="font-semibold text-foreground">{receipt.invoiceNo}</span></span>
-                <span>{new Date(receipt.createdAt).toLocaleString('en-US', { day: '2-digit', month: 'short', hour: 'numeric', minute: '2-digit' })}</span>
-              </div>
-              <div className="max-h-48 overflow-y-auto rounded-lg border">
-                <table className="w-full text-xs">
-                  <tbody className="divide-y">
-                    {receipt.items.map((it, i) => (
-                      <tr key={i} className="px-2">
-                        <td className="p-2">{it.name}<span className="text-muted-foreground"> ×{it.qty}</span></td>
-                        <td className="p-2 text-right font-medium tabular-nums">{fmtMoney(it.total)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="space-y-1">
-                <div className="flex justify-between text-muted-foreground"><span>Subtotal</span><span className="tabular-nums">{fmtMoney(receipt.subtotal)}</span></div>
-                {receipt.discount > 0 && <div className="flex justify-between text-muted-foreground"><span>Discount</span><span className="tabular-nums">-{fmtMoney(receipt.discount)}</span></div>}
-                <div className="flex justify-between text-muted-foreground"><span>Tax</span><span className="tabular-nums">{fmtMoney(receipt.tax)}</span></div>
-                <Separator />
-                <div className="flex justify-between text-base font-bold"><span>Total</span><span className="tabular-nums">{fmtMoney(receipt.total)}</span></div>
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Paid ({paymentMethodLabel(receipt.paymentMethod)})</span><span className="tabular-nums">{fmtMoney(receipt.paidAmount)}</span>
-                </div>
-                {receipt.changeAmount > 0 && <div className="flex justify-between font-semibold text-emerald-600"><span>Change</span><span className="tabular-nums">{fmtMoney(receipt.changeAmount)}</span></div>}
-              </div>
-              <Separator />
-              <p className="text-center text-xs text-muted-foreground">Thank you for your visit — get well soon! 💚</p>
               <div className="flex gap-2 print:hidden">
-                <Button variant="outline" className="flex-1 rounded-full" onClick={() => window.print()}>
-                  <Printer className="h-4 w-4" /> Print
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => printWithPageStyle(THERMAL_PAGE_CSS)}>
+                  <Printer className="h-4 w-4" /> Print 80mm Receipt
                 </Button>
                 <Button className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setReceipt(null)}>
                   New Sale

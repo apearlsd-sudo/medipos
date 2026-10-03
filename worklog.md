@@ -22,3 +22,27 @@ Stage Summary:
 - Deliverable: complete Pharmacy POS SPA at src/app/page.tsx (state-based views, only / route) + 16 API routes + Prisma SQLite db (db/dev.db).
 - Key files: prisma/schema.prisma, scripts/seed.ts, src/app/api/**, src/components/pos/** (sidebar, header, shared, dashboard, pos-terminal, medicines, purchases, sales, customers, suppliers, categories, inventory, prescriptions, reports, settings, nav-config), src/app/globals.css (theme), src/app/layout.tsx (ThemeProvider).
 - Verified: lint clean, all APIs 200, browser-verified interactivity end-to-end.
+
+---
+Task ID: 2
+Agent: Main Agent (Super Z)
+Task: Implement 4 advanced features on MediPOS Pro: (1) authentication with roles (cashier/pharmacist/admin), (2) thermal-receipt formatting + barcode label printing, (3) more report types + PDF export, (4) currency/locale changes.
+
+Work Log:
+- Added User model to Prisma (username, scrypt passwordHash, name, role admin|pharmacist|cashier, status, lastLoginAt) and pushed to SQLite; re-seeded 4 users (admin/admin123, pharmacist/pharm123, cashier/cash123, linda/linda123) + new settings keys (currencyCode, currencyLocale, receiptHeader, receiptFooter, receiptShowBarcode).
+- Built src/lib/auth.ts: scrypt hashing, HMAC-SHA256 signed session tokens (7d, httpOnly cookie medipos_session), getSessionUser/requireUser/requireRole helpers, sanitizeUser.
+- Created APIs: /api/auth/login|logout|me, /api/users CRUD (admin-only, self-protection guards for role change/suspend/delete).
+- Applied role guards to ALL 20 existing route handlers: cashier = read+sell only (403 on reports/users/settings PUT/inventory/medicines write); pharmacist = mgmt (no users/settings write); admin = all. Sale POST now attributes cashierName from session user.
+- Built login screen (split-panel branding + demo account chips), auth bootstrap in page.tsx with global 401 fetch interceptor -> auto logout, loading splash, UserProvider context.
+- Role-based UI: nav-config roles per item + canAccessView; sidebar filters nav by role and shows real user; header user dropdown (initials, role badge, email, sign out); dashboard greeting personalized; view guard clamps to dashboard; Users & Roles admin module (role summary cards, table, create/edit dialog, password reset, suspend/activate, delete).
+- Currency/locale system in lib/format.ts: 16-currency catalog + 14 locales, module-level config with setCurrencyConfig, Intl.NumberFormat-based fmtMoney/fmtDate/fmtDateTime with symbol fallback; hydrated from settings at bootstrap + after save (whole-app re-render). Settings page: currency/locale selects with live preview block.
+- Thermal receipt: src/components/pos/receipt.tsx (80mm monospace layout, store info from settings, items/totals/change, header+footer messages, Code128 barcode of invoice no), lib/print.ts printWithPageStyle injecting @page 80mm rule, .print-area print CSS in globals.css; used in POS checkout success dialog AND Sales module reprint dialog; receipts configurable in Settings (header/footer/barcode toggle).
+- Barcode label printing: lib/barcode.ts pure-TS Code128B encoder (validated: 107 patterns, module sums, checksum math), barcode.tsx SVG renderer; Medicines "Print Labels" dialog (search picker, qty steppers, 3 label sizes 30x20/38x25/50x30mm, live preview, hidden print sheet, A4 @page rule).
+- Reports: API extended with cashierStats, productStats, stockValuation, expiryReport, purchaseStats; Reports UI rebuilt with 6 tabs (Overview charts, Product Performance, Staff Performance w/ share bars, Inventory Valuation, Expiry Report w/ status chips, Purchases); CSV export generalized per tab; PDF export via jspdf + jspdf-autotable (teal header band, store name, period, page numbers) - pipeline unit-tested.
+- Fixed: Users function name collision with lucide Users icon (UsersIcon alias), userRef render-write -> useEffect, setState-in-effect lint in store-settings hook, dashboard hardcoded "Admin" greeting -> session user, Rules-of-hooks (useUser moved above conditional return).
+- Browser E2E verified: login screen, admin login -> all nav incl. Users & Roles page, POS sale ($7.17) -> thermal receipt w/ barcode + session cashier name, Sales reprint receipt, Reports tabs with live data + PDF export (no console errors), label dialog preview w/ scannable barcodes, currency switch USD->GHS propagated app-wide then reverted, cashier login -> filtered nav (no Purchases/Reports/Users), view-only settings, personalized greeting; mobile 390px receipt dialog. Lint clean, all APIs 200/401/403 as designed.
+
+Stage Summary:
+- Deliverable: MediPOS Pro with multi-role auth, thermal receipt + barcode label printing, 6 report types with PDF/CSV export, and 16-currency/14-locale support.
+- Key new files: src/lib/auth.ts, src/lib/barcode.ts, src/lib/print.ts, src/lib/store-settings.ts, src/components/pos/{login,users,receipt,barcode,user-context}.tsx; APIs auth/* + users/*.
+- Demo credentials: admin/admin123 (full), pharmacist/pharm123 (mgmt), cashier/cash123 (POS only).
