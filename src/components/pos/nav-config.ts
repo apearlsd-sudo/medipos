@@ -5,6 +5,7 @@ export type ViewKey =
   | 'medicines'
   | 'categories'
   | 'inventory'
+  | 'stock-take'
   | 'purchases'
   | 'sales'
   | 'customers'
@@ -47,6 +48,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: 'medicines', label: 'Medicines', icon: 'Pill', roles: ALL },
       { key: 'categories', label: 'Categories', icon: 'LayoutGrid', roles: MGMT },
       { key: 'inventory', label: 'Stock Control', icon: 'Boxes', roles: MGMT, badge: 'alerts' },
+      { key: 'stock-take', label: 'Stock Take', icon: 'ClipboardCheck', roles: MGMT },
     ],
   },
   {

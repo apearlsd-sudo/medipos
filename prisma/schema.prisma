@@ -212,3 +212,55 @@ model CashMovement {
   userName  String
   createdAt DateTime @default(now())
 }
+
+model StockTake {
+  id              String          @id @default(cuid())
+  stockTakeNo     String          @unique // ST-2026-0001
+  title           String
+  scope           String          @default("all") // all | category
+  scopeCategory   String?
+  status          String          @default("in_progress") // in_progress | completed | cancelled
+  startedById     String
+  startedByName   String
+  completedById   String?
+  completedByName String?
+  note            String?
+  completeNote    String?
+  applyToStock    Boolean         @default(false)
+  totalItems      Int             @default(0) // count lines in session
+  countedItems    Int             @default(0) // lines with a count entered
+  systemQty       Int             @default(0) // snapshot units at session start
+  countedQty      Int             @default(0) // total counted units (live)
+  varianceQty     Int             @default(0) // counted - system (live/final)
+  varianceValue   Float           @default(0) // sum(variance * unitCost)
+  positiveLines   Int             @default(0) // surplus lines
+  negativeLines   Int             @default(0) // shortage lines
+  matchedLines    Int             @default(0)
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  items           StockTakeItem[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model StockTakeItem {
+  id            String    @id @default(cuid())
+  stockTakeId   String
+  stockTake     StockTake @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+  medicineId    String
+  medicineName  String
+  sku           String
+  unit          String    @default("Box")
+  category      String?
+  location      String?
+  systemQty     Int // snapshot at session start
+  countedQty    Int? // null = not counted yet
+  varianceQty   Int? // counted - system
+  unitCost      Float     @default(0) // snapshot cost for valuation
+  varianceValue Float?
+  countedById   String?
+  countedByName String?
+  countedAt     DateTime?
+  note          String?
+  createdAt     DateTime  @default(now())
+}

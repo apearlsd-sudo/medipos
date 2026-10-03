@@ -12,6 +12,7 @@ import { Customers } from '@/components/pos/customers'
 import { Suppliers } from '@/components/pos/suppliers'
 import { Categories } from '@/components/pos/categories'
 import { Inventory } from '@/components/pos/inventory'
+import { StockTake } from '@/components/pos/stock-take'
 import { Prescriptions } from '@/components/pos/prescriptions'
 import { Reports } from '@/components/pos/reports'
 import { Settings } from '@/components/pos/settings'
@@ -31,6 +32,7 @@ const VIEW_TITLES: Record<ViewKey, string> = {
   medicines: 'Medicines',
   categories: 'Categories',
   inventory: 'Stock Control',
+  'stock-take': 'Stock Take',
   purchases: 'Purchases',
   sales: 'Sales & Invoices',
   customers: 'Customers',
@@ -203,6 +205,7 @@ export default function Home() {
             {activeView === 'medicines' && <Medicines />}
             {activeView === 'categories' && <Categories onGotoMedicines={() => navigate('medicines')} />}
             {activeView === 'inventory' && <Inventory onGotoPurchases={() => navigate('purchases')} />}
+            {activeView === 'stock-take' && <StockTake storeSettings={settings} />}
             {activeView === 'purchases' && <Purchases onPurchasesChanged={loadAlerts} />}
             {activeView === 'sales' && <Sales onSalesChanged={loadAlerts} storeSettings={settings} />}
             {activeView === 'customers' && <Customers />}
