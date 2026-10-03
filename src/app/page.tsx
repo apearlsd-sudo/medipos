@@ -4,6 +4,7 @@ import { Dashboard } from '@/components/pos/dashboard'
 import { Header } from '@/components/pos/header'
 import { Sidebar } from '@/components/pos/sidebar'
 import { POSTerminal } from '@/components/pos/pos-terminal'
+import { Shifts } from '@/components/pos/shifts'
 import { Medicines } from '@/components/pos/medicines'
 import { Purchases } from '@/components/pos/purchases'
 import { Sales } from '@/components/pos/sales'
@@ -26,6 +27,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const VIEW_TITLES: Record<ViewKey, string> = {
   dashboard: 'Dashboard',
   pos: 'POS Terminal',
+  shifts: 'Shift Management',
   medicines: 'Medicines',
   categories: 'Categories',
   inventory: 'Stock Control',
@@ -189,6 +191,7 @@ export default function Home() {
             onMenuClick={() => setMobileOpen(true)}
             onQuickSearch={(q) => { setQuickSearch(q); navigate('medicines') }}
             onGotoPOS={() => navigate('pos')}
+            onGotoShifts={() => navigate('shifts')}
             alerts={alerts}
             onAlertClick={() => navigate(canAccessView(user.role, 'inventory') ? 'inventory' : 'medicines')}
           />
@@ -196,6 +199,7 @@ export default function Home() {
           <main className="flex-1 p-4 sm:p-6">
             {activeView === 'dashboard' && <Dashboard onNavigate={navigate} />}
             {activeView === 'pos' && <POSTerminal key={posKey} onSalesRecorded={loadAlerts} storeSettings={settings} />}
+            {activeView === 'shifts' && <Shifts storeSettings={settings} />}
             {activeView === 'medicines' && <Medicines />}
             {activeView === 'categories' && <Categories onGotoMedicines={() => navigate('medicines')} />}
             {activeView === 'inventory' && <Inventory onGotoPurchases={() => navigate('purchases')} />}

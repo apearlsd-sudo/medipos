@@ -139,6 +139,15 @@ export const fmtDateTime = (d: string | Date | null | undefined) => {
   }
 }
 
+export const fmtTime = (d: string | Date | null | undefined) => {
+  if (!d) return '—'
+  try {
+    return new Date(d).toLocaleTimeString(currencyConfig.locale, { hour: 'numeric', minute: '2-digit', hour12: true })
+  } catch {
+    return new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  }
+}
+
 export const fmtRelative = (d: string | Date | null | undefined) => {
   if (!d) return '—'
   const diff = Date.now() - new Date(d).getTime()

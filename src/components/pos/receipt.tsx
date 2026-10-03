@@ -16,6 +16,7 @@ export interface ReceiptSale {
   paymentMethod: string
   cashierName?: string
   customerName?: string | null
+  shiftNo?: string | null
   items: Array<{ name: string; qty: number; unitPrice: number; total: number }>
 }
 
@@ -63,6 +64,11 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
         <span>Customer: {sale.customerName || 'Walk-in'}</span>
         <span>Cashier: {sale.cashierName || '—'}</span>
       </div>
+      {sale.shiftNo && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+          <span>Shift: {sale.shiftNo}</span>
+        </div>
+      )}
 
       <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
 

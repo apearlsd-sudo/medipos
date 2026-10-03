@@ -12,11 +12,13 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/pos/shared'
 import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
+import { StartShiftDialog } from '@/components/pos/shift-dialogs'
+import type { ShiftRecord } from '@/components/pos/shift-report'
 import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, Barcode, CheckCircle2, CreditCard, Minus, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Trash2, Wallet, X,
+  Banknote, Barcode, CheckCircle2, CreditCard, Minus, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -66,6 +68,10 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const [receipt, setReceipt] = useState<SaleResult | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  // Shift state: sales are recorded on the cashier's open shift
+  const [shift, setShift] = useState<ShiftRecord | null>(null)
+  const [startShiftOpen, setStartShiftOpen] = useState(false)
+
   // Checkout state
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [customerId, setCustomerId] = useState<string>('walkin')
@@ -91,6 +97,19 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }, [])
 
   useEffect(() => { loadProducts() }, [loadProducts])
+
+  const loadCurrentShift = useCallback(async () => {
+    try {
+      const res = await fetch('/api/shifts/current', { cache: 'no-store' })
+      if (!res.ok) return
+      const json = await res.json()
+      setShift(json.shift ?? null)
+    } catch {
+      /* non-fatal */
+    }
+  }, [])
+
+  useEffect(() => { loadCurrentShift() }, [loadCurrentShift])
 
   useEffect(() => {
     if (quickSearch) setSearch(quickSearch)
@@ -193,6 +212,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       setReceipt({
         ...json.sale,
         customerName: json.sale?.customer?.name ?? null,
+        shiftNo: json.sale?.shift?.shiftNo ?? null,
       })
       setCart([])
       setOrderDiscount(0)
@@ -202,6 +222,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       setCheckoutOpen(false)
       onSalesRecorded?.()
       loadProducts()
+      loadCurrentShift()
     } finally {
       setSubmitting(false)
     }
@@ -213,6 +234,33 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
       {/* Products */}
       <div className="min-w-0 space-y-3">
+        {!shift && (
+          <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-amber-500/30 dark:bg-amber-500/10">
+            <div className="flex items-center gap-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+                <TriangleAlert className="h-4.5 w-4.5" />
+              </span>
+              <div>
+                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">No active shift — sales are not being recorded</p>
+                <p className="text-xs text-amber-700/80 dark:text-amber-300/80">Start your shift to open the cash drawer and track sales, quantities and cash on this register.</p>
+              </div>
+            </div>
+            <Button size="sm" className="shrink-0 rounded-full bg-amber-500 hover:bg-amber-600 text-white" onClick={() => setStartShiftOpen(true)}>
+              <Timer className="h-4 w-4" /> Start Shift
+            </Button>
+          </div>
+        )}
+        {shift && (
+          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-teal-600/20 bg-teal-600/5 px-4 py-2.5 text-sm dark:bg-teal-500/10">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-500 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-teal-500" />
+            </span>
+            <Timer className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+            <span className="font-semibold">{shift.shiftNo}</span>
+            <span className="text-xs text-muted-foreground">active shift — sales are being recorded</span>
+          </div>
+        )}
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
             <Barcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -307,6 +355,15 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             <h3 className="font-semibold">Current Sale</h3>
             {cart.length > 0 && <Badge className="rounded-full bg-teal-600 text-white">{cart.reduce((n, l) => n + l.qty, 0)}</Badge>}
           </div>
+          {shift ? (
+            <Badge variant="outline" className="gap-1 rounded-full border-teal-300 bg-teal-50 text-[10px] text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+              <Timer className="h-3 w-3" /> {shift.shiftNo}
+            </Badge>
+          ) : (
+            <button onClick={() => setStartShiftOpen(true)} className="text-[11px] font-medium text-amber-600 underline-offset-2 hover:underline dark:text-amber-400">
+              start shift
+            </button>
+          )}
           {cart.length > 0 && (
             <Button variant="ghost" size="sm" onClick={() => { setCart([]); setOrderDiscount(0) }} className="h-8 gap-1 text-xs text-red-500 hover:text-red-600">
               <Trash2 className="h-3.5 w-3.5" /> Clear
@@ -382,7 +439,15 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             className="w-full rounded-full bg-teal-600 hover:bg-teal-700"
             size="lg"
             disabled={cart.length === 0}
-            onClick={() => { setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : ''); setCheckoutOpen(true) }}
+            onClick={() => {
+              if (!shift) {
+                toast({ title: 'Start your shift first', description: 'Open a shift to record this sale on your register.', variant: 'destructive' })
+                setStartShiftOpen(true)
+                return
+              }
+              setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : '')
+              setCheckoutOpen(true)
+            }}
           >
             Charge {fmtMoney(total)}
           </Button>
@@ -463,6 +528,9 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Start shift dialog (shift gating) */}
+      <StartShiftDialog open={startShiftOpen} onOpenChange={setStartShiftOpen} onStarted={loadCurrentShift} />
 
       {/* Receipt dialog */}
       <Dialog open={!!receipt} onOpenChange={(open) => !open && setReceipt(null)}>

@@ -1,6 +1,7 @@
 export type ViewKey =
   | 'dashboard'
   | 'pos'
+  | 'shifts'
   | 'medicines'
   | 'categories'
   | 'inventory'
@@ -50,7 +51,10 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     title: 'Sales',
-    items: [{ key: 'sales', label: 'Sales & Invoices', icon: 'ReceiptText', roles: ALL }],
+    items: [
+      { key: 'shifts', label: 'Shift Management', icon: 'Timer', roles: ALL },
+      { key: 'sales', label: 'Sales & Invoices', icon: 'ReceiptText', roles: ALL },
+    ],
   },
   {
     title: 'Purchasing',

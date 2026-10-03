@@ -88,6 +88,8 @@ model Sale {
   invoiceNo     String     @unique
   customerId    String?
   customer      Customer?  @relation(fields: [customerId], references: [id])
+  shiftId       String?
+  shift         Shift?     @relation(fields: [shiftId], references: [id])
   subtotal      Float      @default(0)
   discount      Float      @default(0)
   tax           Float      @default(0)
@@ -177,4 +179,36 @@ model StoreSetting {
   id       String @id @default(cuid())
   key      String @unique
   value    String
+}
+
+model Shift {
+  id           String         @id @default(cuid())
+  shiftNo      String         @unique
+  userId       String
+  userName     String
+  userRole     String         @default("cashier")
+  openingCash  Float          @default(0)
+  closingCash  Float?
+  expectedCash Float?
+  variance     Float?
+  status       String         @default("open") // open | closed
+  note         String? // opening note
+  closeNote    String?
+  startedAt    DateTime       @default(now())
+  endedAt      DateTime?
+  sales        Sale[]
+  movements    CashMovement[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model CashMovement {
+  id        String   @id @default(cuid())
+  shiftId   String
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  type      String // addition | payout | drop
+  amount    Float
+  reason    String?
+  userName  String
+  createdAt DateTime @default(now())
 }

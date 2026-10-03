@@ -7,11 +7,11 @@ import { NAV_GROUPS, type Role, type ViewKey } from '@/components/pos/nav-config
 import { ROLE_LABEL } from '@/components/pos/user-context'
 import {
   Boxes, ChartNoAxesColumn, ChevronLeft, ClipboardList, FileHeart, LayoutDashboard, LayoutGrid,
-  Pill, ReceiptText, Settings, ShieldCheck, ShoppingCart, Truck, Users, Activity,
+  Pill, ReceiptText, Settings, ShieldCheck, ShoppingCart, Timer, Truck, Users, Activity,
 } from 'lucide-react'
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  LayoutDashboard, ShoppingCart, Pill, LayoutGrid, Boxes, ReceiptText, ClipboardList, Truck, Users, FileHeart, ChartNoAxesColumn, Settings, ShieldCheck,
+  LayoutDashboard, ShoppingCart, Pill, LayoutGrid, Boxes, ReceiptText, ClipboardList, Truck, Users, FileHeart, ChartNoAxesColumn, Settings, ShieldCheck, Timer,
 }
 
 interface SidebarProps {

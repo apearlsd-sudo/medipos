@@ -9,9 +9,15 @@ import {
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ROLE_BADGE, ROLE_LABEL, useUser } from '@/components/pos/user-context'
-import { Bell, LogOut, Menu, Moon, PackageX, Search, Settings, ShoppingCart, Sun, TimerReset, UserRound } from 'lucide-react'
+import { fmtDuration } from '@/components/pos/shifts'
+import { Bell, LogOut, Menu, Moon, PackageX, Search, Settings, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+
+interface ActiveShiftChip {
+  shiftNo: string
+  startedAt: string
+}
 
 interface AlertItem {
   id: string
@@ -25,14 +31,33 @@ interface HeaderProps {
   onMenuClick: () => void
   onQuickSearch: (q: string) => void
   onGotoPOS: () => void
+  onGotoShifts?: () => void
   alerts: AlertItem[]
   onAlertClick: () => void
 }
 
-export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, alerts, onAlertClick }: HeaderProps) {
+export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShifts, alerts, onAlertClick }: HeaderProps) {
   const { resolvedTheme, setTheme } = useTheme()
   const [q, setQ] = useState('')
   const { user, logout } = useUser()
+  const [activeShift, setActiveShift] = useState<ActiveShiftChip | null>(null)
+  const [tick, setTick] = useState(0)
+
+  // Live shift indicator for the signed-in user
+  useEffect(() => {
+    let alive = true
+    const load = () =>
+      fetch('/api/shifts/current', { cache: 'no-store' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (!alive) return
+          setActiveShift(j?.shift ? { shiftNo: j.shift.shiftNo, startedAt: j.shift.startedAt } : null)
+        })
+        .catch(() => {})
+    load()
+    const t = setInterval(() => { load(); setTick((n) => n + 1) }, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
 
   const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
 
@@ -54,6 +79,22 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, alerts, o
       <h2 className="truncate text-lg font-semibold tracking-tight">{title}</h2>
 
       <div className="ml-auto flex items-center gap-2">
+        {/* Active shift indicator */}
+        {activeShift && onGotoShifts && (
+          <button
+            onClick={onGotoShifts}
+            className="hidden items-center gap-1.5 rounded-full border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 transition hover:bg-teal-100 md:inline-flex dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300 dark:hover:bg-teal-500/20"
+            title="Active shift — open Shift Management"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-500 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-teal-500" />
+            </span>
+            <Timer className="h-3.5 w-3.5" />
+            {activeShift.shiftNo} · {fmtDuration(activeShift.startedAt, null, Date.now())}
+          </button>
+        )}
+
         {/* Global search */}
         <form onSubmit={submit} className="relative hidden md:block" role="search">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />

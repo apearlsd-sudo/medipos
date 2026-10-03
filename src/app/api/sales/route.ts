@@ -95,11 +95,18 @@ export async function POST(req: NextRequest) {
     const count = await db.sale.count()
     const invoiceNo = `INV-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
 
+    // Attribute the sale to the cashier's open shift when one exists
+    const openShift = await db.shift.findFirst({
+      where: { userId: gate.user.id, status: 'open' },
+      orderBy: { startedAt: 'desc' },
+    })
+
     const sale = await db.$transaction(async (tx) => {
       const created = await tx.sale.create({
         data: {
           invoiceNo,
           customerId: body.customerId || null,
+          shiftId: openShift?.id ?? null,
           subtotal, discount, tax, total,
           paidAmount: Math.min(paidAmount, total),
           changeAmount,
@@ -110,7 +117,7 @@ export async function POST(req: NextRequest) {
           note: body.note || null,
           items: { create: lines },
         },
-        include: { items: true, customer: true },
+        include: { items: true, customer: true, shift: { select: { shiftNo: true } } },
       })
 
       for (const line of lines) {
