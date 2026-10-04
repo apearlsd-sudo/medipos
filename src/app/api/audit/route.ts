@@ -18,7 +18,14 @@ export async function GET(req: NextRequest) {
     const skip = Math.max(0, Number(searchParams.get('skip') ?? 0) || 0)
 
     const where: Record<string, unknown> = {}
-    if (type === 'role' || type === 'user') where.targetType = type
+    const TYPE_MAP: Record<string, string> = {
+      role: 'role',
+      user: 'user',
+      approval: 'discount_request',
+      branch: 'branch',
+      sale: 'sale',
+    }
+    if (type !== 'all' && TYPE_MAP[type]) where.targetType = TYPE_MAP[type]
     if (q) {
       where.OR = [
         { actorName: { contains: q } },

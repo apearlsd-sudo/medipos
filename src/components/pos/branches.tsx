@@ -3,7 +3,7 @@
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
@@ -13,10 +13,11 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/pos/shared'
 import { useUser } from '@/components/pos/user-context'
 import { fmtMoney } from '@/lib/format'
-import { Building2, Loader2, MapPin, Pencil, Phone, Plus, RefreshCcw, Trash2, Users } from 'lucide-react'
+import { Building2, Loader2, MapPin, Pencil, Phone, Plus, RefreshCcw, Save, Search, Tags, Trash2, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -35,7 +36,22 @@ interface BranchRow {
     sales30d: number
     sales30dCount: number
     stockUnits: number
+    priceOverrides: number
   }
+}
+
+interface PriceItem {
+  medicineId: string
+  name: string
+  sku: string
+  unit: string
+  category: string
+  costPrice: number
+  basePrice: number
+  overridePrice: number | null
+  effectivePrice: number
+  marginPct: number
+  updatedByName: string | null
 }
 
 const EMPTY_FORM = { id: '', name: '', code: '', city: '', address: '', phone: '', isActive: true }
@@ -52,6 +68,14 @@ export function Branches() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [form, setForm] = useState(EMPTY_FORM)
 
+  // --- branch pricing dialog ---
+  const [pricingBranch, setPricingBranch] = useState<BranchRow | null>(null)
+  const [priceItems, setPriceItems] = useState<PriceItem[]>([])
+  const [priceSearch, setPriceSearch] = useState('')
+  const [priceEdits, setPriceEdits] = useState<Record<string, string>>({}) // medicineId → '' (reset) | new price
+  const [priceLoading, setPriceLoading] = useState(false)
+  const [priceSaving, setPriceSaving] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -66,6 +90,60 @@ export function Branches() {
   useEffect(() => {
     load()
   }, [load])
+
+  // --- pricing helpers ---
+  const loadPrices = useCallback(async (branch: BranchRow, q = '') => {
+    setPriceLoading(true)
+    try {
+      const res = await fetch(`/api/branches/${branch.id}/prices?q=${encodeURIComponent(q)}`, { cache: 'no-store' })
+      const json = await res.json()
+      setPriceItems(json.items ?? [])
+    } finally {
+      setPriceLoading(false)
+    }
+  }, [])
+
+  const openPricing = (b: BranchRow) => {
+    setPricingBranch(b)
+    setPriceSearch('')
+    setPriceEdits({})
+    loadPrices(b)
+  }
+
+  const editPrice = (m: PriceItem, value: string) => {
+    setPriceEdits((prev) => ({ ...prev, [m.medicineId]: value }))
+  }
+
+  const savePrices = async () => {
+    if (!pricingBranch) return
+    const updates = Object.entries(priceEdits).map(([medicineId, raw]) => ({
+      medicineId,
+      price: raw.trim() === '' ? null : Number(raw),
+    }))
+    if (updates.length === 0) {
+      toast({ title: 'No changes to save', description: 'Edit a price or clear an override to fall back to the catalog price.' })
+      return
+    }
+    setPriceSaving(true)
+    try {
+      const res = await fetch(`/api/branches/${pricingBranch.id}/prices`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        toast({ title: 'Save failed', description: json.error ?? 'Please try again.', variant: 'destructive' })
+        return
+      }
+      toast({ title: 'Prices saved', description: `${json.saved} price change${json.saved === 1 ? '' : 's'} at ${pricingBranch.name} — recorded in the audit trail.` })
+      setPriceEdits({})
+      loadPrices(pricingBranch, priceSearch)
+      load() // refresh the override badge on the card
+    } finally {
+      setPriceSaving(false)
+    }
+  }
 
   const openCreate = () => {
     setForm(EMPTY_FORM)
@@ -198,6 +276,12 @@ export function Branches() {
                   </div>
                   {canEdit && (
                     <div className="flex gap-1">
+                      <Button variant="outline" size="sm" className="h-8 rounded-full px-3 text-xs" onClick={() => openPricing(b)} aria-label={`Pricing for ${b.name}`}>
+                        <Tags className="h-3.5 w-3.5" /> Prices
+                        {b.stats.priceOverrides > 0 && (
+                          <span className="ml-1 rounded-full bg-teal-600 px-1.5 text-[10px] font-bold text-white">{b.stats.priceOverrides}</span>
+                        )}
+                      </Button>
                       <Button variant="outline" size="icon" className="h-8 w-8 rounded-full" onClick={() => openEdit(b)} aria-label={`Edit ${b.name}`}>
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
@@ -278,6 +362,107 @@ export function Branches() {
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               {saving ? 'Saving…' : form.id ? 'Save changes' : 'Create branch'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Branch pricing dialog */}
+      <Dialog open={!!pricingBranch} onOpenChange={(open) => !open && setPricingBranch(null)}>
+        <DialogContent className="flex max-h-[85vh] flex-col sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Tags className="h-5 w-5 text-teal-500" /> Branch pricing — {pricingBranch?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Override the selling price of any product at this branch. POS, discounts and reports always use the effective price. Every change is recorded in the audit trail.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9"
+              placeholder="Search product, generic name or SKU…"
+              value={priceSearch}
+              onChange={(e) => {
+                setPriceSearch(e.target.value)
+                if (pricingBranch) loadPrices(pricingBranch, e.target.value)
+              }}
+            />
+          </div>
+
+          <div className="-mx-1 min-h-0 flex-1 overflow-y-auto px-1">
+            {priceLoading ? (
+              <div className="space-y-2 py-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
+            ) : priceItems.length === 0 ? (
+              <p className="py-12 text-center text-sm text-muted-foreground">No products match at this branch.</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Product</TableHead>
+                    <TableHead className="text-right">Catalog</TableHead>
+                    <TableHead className="w-32 text-center">Branch price</TableHead>
+                    <TableHead className="text-right">Effective</TableHead>
+                    <TableHead className="text-right">Margin</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {priceItems.map((m) => {
+                    const edited = priceEdits[m.medicineId]
+                    const editing = edited !== undefined
+                    const parsed = editing ? (edited.trim() === '' ? null : Number(edited)) : m.overridePrice
+                    const isOverride = parsed !== null && parsed !== undefined && !Number.isNaN(parsed)
+                    const effective = isOverride ? (parsed as number) : m.basePrice
+                    const invalid = editing && edited.trim() !== '' && (Number.isNaN(Number(edited)) || Number(edited) < 0)
+                    const margin = effective > 0 ? (((effective - m.costPrice) / effective) * 100).toFixed(1) : '—'
+                    return (
+                      <TableRow key={m.medicineId}>
+                        <TableCell>
+                          <p className="max-w-52 truncate font-medium">{m.name}</p>
+                          <p className="text-[11px] text-muted-foreground">{m.sku} · {m.category}</p>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums text-muted-foreground">
+                          {isOverride ? <span className="line-through">{fmtMoney(m.basePrice)}</span> : fmtMoney(m.basePrice)}
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            inputMode="decimal"
+                            className={`h-8 text-right tabular-nums ${invalid ? 'border-red-400' : isOverride ? 'border-teal-400 dark:border-teal-500' : ''}`}
+                            placeholder="catalog"
+                            value={editing ? edited : m.overridePrice !== null ? String(m.overridePrice) : ''}
+                            onChange={(e) => editPrice(m, e.target.value)}
+                            aria-label={`Branch price for ${m.name}`}
+                          />
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">
+                          {invalid ? <span className="text-red-500">—</span> : fmtMoney(effective)}
+                        </TableCell>
+                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{invalid ? '—' : `${margin}%`}</TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </div>
+
+          <DialogFooter className="items-center gap-2 border-t pt-3 sm:justify-between">
+            <p className="text-xs text-muted-foreground">
+              {Object.keys(priceEdits).length > 0
+                ? `${Object.keys(priceEdits).length} unsaved change${Object.keys(priceEdits).length === 1 ? '' : 's'} · clear a field to use the catalog price`
+                : 'Leave a field empty to fall back to the catalog price.'}
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setPricingBranch(null)}>Close</Button>
+              <Button onClick={savePrices} disabled={priceSaving || Object.keys(priceEdits).length === 0} className="rounded-full bg-teal-600 hover:bg-teal-700">
+                {priceSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {priceSaving ? 'Saving…' : 'Save prices'}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

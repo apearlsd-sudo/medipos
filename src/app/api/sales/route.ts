@@ -3,6 +3,8 @@ import { db } from '@/lib/db'
 import { requirePermission, verifyPassword, can, type SessionUser } from '@/lib/auth'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
 import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
+import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
+import { logAudit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'sales', 'view')
@@ -70,6 +72,10 @@ export async function POST(req: NextRequest) {
     const meds = await db.medicine.findMany({ where: { id: { in: medIds } } })
     const medMap = new Map(meds.map((m) => [m.id, m]))
 
+    // Resolve the branch this sale will belong to, so branch-level pricing applies
+    const saleBranchId = await branchIdForWrite(gate.user, body.branchId)
+    const branchPrices = await loadBranchPrices(saleBranchId)
+
     // Validate stock availability
     for (const item of items) {
       const med = medMap.get(item.medicineId)
@@ -81,7 +87,7 @@ export async function POST(req: NextRequest) {
 
     const lines = items.map((item) => {
       const med = medMap.get(item.medicineId)!
-      const unitPrice = item.unitPrice ?? med.sellingPrice
+      const unitPrice = item.unitPrice ?? effectivePrice(med.sellingPrice, saleBranchId, med.id, branchPrices)
       const disc = item.discount ?? 0
       const total = +(unitPrice * item.qty - disc).toFixed(2)
       return { medicineId: med.id, name: med.name, sku: med.sku, qty: item.qty, unitPrice, discount: disc, total }
@@ -89,6 +95,7 @@ export async function POST(req: NextRequest) {
 
     const subtotal = +lines.reduce((s, l) => s + l.total, 0).toFixed(2)
     const discount = +Number(body.discount ?? 0).toFixed(2)
+    const pctOfSubtotal = subtotal > 0 ? (discount / subtotal) * 100 : 0
     const taxRate = Number(body.taxRate ?? 2.5)
     const tax = +(((subtotal - discount) * taxRate) / 100).toFixed(2)
     const total = +(subtotal - discount + tax).toFixed(2)
@@ -169,7 +176,7 @@ export async function POST(req: NextRequest) {
           invoiceNo,
           customerId: body.customerId || null,
           shiftId: openShift?.id ?? null,
-          branchId: await branchIdForWrite(gate.user, body.branchId),
+          branchId: saleBranchId,
           approvedById,
           approvedByName,
           discountRequestId,
@@ -199,6 +206,30 @@ export async function POST(req: NextRequest) {
       }
       return created
     })
+
+    // Audit-trail entries for the discount approval workflow (fire-and-forget)
+    if (discountRequestId) {
+      const usedRequest = await db.discountRequest.findUnique({ where: { id: discountRequestId } })
+      await logAudit({
+        actor: gate.user,
+        action: 'discount.used',
+        targetType: 'discount_request',
+        targetId: discountRequestId,
+        targetName: usedRequest?.requestCode ?? discountRequestId,
+        summary: `${gate.user.name} completed ${invoiceNo} using pre-approved discount request ${usedRequest?.requestCode ?? discountRequestId} (${usedRequest?.discountPct ?? 0}% — ${(usedRequest?.discountValue ?? discount).toFixed(2)})`,
+        changes: { invoiceNo, discountValue: discount, method: 'pre_approved' },
+      })
+    } else if (approvedById) {
+      await logAudit({
+        actor: gate.user,
+        action: 'discount.approved',
+        targetType: 'sale',
+        targetId: sale.id,
+        targetName: invoiceNo,
+        summary: `Large discount (${pctOfSubtotal.toFixed(1)}% — ${discount.toFixed(2)}) on ${invoiceNo} authorized on the spot by ${approvedByName ?? 'a manager'}`,
+        changes: { invoiceNo, discountValue: discount, discountPct: +pctOfSubtotal.toFixed(2), subtotal, method: 'on_the_spot' },
+      })
+    }
 
     return NextResponse.json({ sale }, { status: 201 })
   } catch (e) {

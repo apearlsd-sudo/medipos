@@ -8,44 +8,61 @@ datasource db {
 }
 
 model User {
-  id          String    @id @default(cuid())
-  username    String    @unique
-  passwordHash String
-  name        String
-  email       String?
-  phone       String?
-  role        String    @default("cashier") // denormalized role slug (admin | pharmacist | cashier | custom)
-  roleRef     Role?     @relation(fields: [roleId], references: [id])
-  roleId      String?
-  status      String    @default("active") // active | suspended
-  branchRef     Branch?   @relation(fields: [branchId], references: [id])
-  branchId      String?
-  twoFactorEnabled Boolean @default(false)
+  id               String    @id @default(cuid())
+  username         String    @unique
+  passwordHash     String
+  name             String
+  email            String?
+  phone            String?
+  role             String    @default("cashier") // denormalized role slug (admin | pharmacist | cashier | custom)
+  roleRef          Role?     @relation(fields: [roleId], references: [id])
+  roleId           String?
+  status           String    @default("active") // active | suspended
+  branchRef        Branch?   @relation(fields: [branchId], references: [id])
+  branchId         String?
+  twoFactorEnabled Boolean   @default(false)
   twoFactorSecret  String? // base32 TOTP secret (stored while setup is in progress or enabled)
   recoveryCodes    String? // JSON array of hashed recovery codes
-  lastLoginAt DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 }
 
 model Branch {
-  id        String   @id @default(cuid())
-  name      String
-  code      String   @unique // MAIN, OSU …
-  address   String?
-  city      String?
-  phone     String?
-  isActive  Boolean  @default(true)
-  isDefault Boolean  @default(false) // the seeded primary branch
-  users     User[]
-  medicines Medicine[]
-  sales     Sale[]
-  purchases Purchase[]
-  shifts    Shift[]
-  stockTakes StockTake[]
+  id               String            @id @default(cuid())
+  name             String
+  code             String            @unique // MAIN, OSU …
+  address          String?
+  city             String?
+  phone            String?
+  isActive         Boolean           @default(true)
+  isDefault        Boolean           @default(false) // the seeded primary branch
+  users            User[]
+  medicines        Medicine[]
+  branchPrices     BranchPrice[]
+  sales            Sale[]
+  purchases        Purchase[]
+  shifts           Shift[]
+  stockTakes       StockTake[]
   discountRequests DiscountRequest[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model BranchPrice {
+  id            String   @id @default(cuid())
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  medicineId    String
+  medicine      Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  sellingPrice  Float // branch-level override for the medicine's selling price
+  updatedById   String?
+  updatedByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([branchId, medicineId])
+  @@index([medicineId])
 }
 
 model Role {
@@ -61,11 +78,11 @@ model Role {
 }
 
 model Permission {
-  id       String @id @default(cuid())
-  key      String @unique // "medicines:create"
-  module   String // medicines
-  action   String // create
-  roles    Role[]
+  id     String @id @default(cuid())
+  key    String @unique // "medicines:create"
+  module String // medicines
+  action String // create
+  roles  Role[]
 }
 
 model AuditLog {
@@ -95,7 +112,7 @@ model Category {
 }
 
 model Supplier {
-  id            String         @id @default(cuid())
+  id            String     @id @default(cuid())
   name          String
   contactPerson String?
   email         String?
@@ -103,38 +120,39 @@ model Supplier {
   address       String?
   medicines     Medicine[]
   purchases     Purchase[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 }
 
 model Medicine {
-  id                   String          @id @default(cuid())
+  id                   String         @id @default(cuid())
   name                 String
   genericName          String?
   brand                String?
-  branchRef            Branch?         @relation(fields: [branchId], references: [id])
+  branchRef            Branch?        @relation(fields: [branchId], references: [id])
   branchId             String?
-  sku                  String          @unique
+  sku                  String         @unique
   barcode              String?
   categoryId           String
-  category             Category        @relation(fields: [categoryId], references: [id])
+  category             Category       @relation(fields: [categoryId], references: [id])
   supplierId           String?
-  supplier             Supplier?       @relation(fields: [supplierId], references: [id])
-  unit                 String          @default("Box")
+  supplier             Supplier?      @relation(fields: [supplierId], references: [id])
+  unit                 String         @default("Box")
   batchNumber          String?
   expiryDate           DateTime?
-  stockQty             Int             @default(0)
-  reorderLevel         Int             @default(20)
-  costPrice            Float           @default(0)
-  sellingPrice         Float           @default(0)
-  prescriptionRequired Boolean         @default(false)
+  stockQty             Int            @default(0)
+  reorderLevel         Int            @default(20)
+  costPrice            Float          @default(0)
+  sellingPrice         Float          @default(0)
+  prescriptionRequired Boolean        @default(false)
   location             String?
-  status               String          @default("active")
+  status               String         @default("active")
   saleItems            SaleItem[]
   purchaseItems        PurchaseItem[]
   logs                 InventoryLog[]
-  createdAt            DateTime        @default(now())
-  updatedAt            DateTime        @updatedAt
+  branchPrices         BranchPrice[]
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
 }
 
 model Customer {
@@ -150,31 +168,31 @@ model Customer {
 }
 
 model Sale {
-  id            String     @id @default(cuid())
-  invoiceNo     String     @unique
-  customerId    String?
-  customer      Customer?  @relation(fields: [customerId], references: [id])
-  shiftId       String?
-  shift         Shift?     @relation(fields: [shiftId], references: [id])
-  branchRef      Branch?    @relation(fields: [branchId], references: [id])
-  branchId       String?
-  approvedById   String? // manager who authorized a large-discount sale
-  approvedByName String?
+  id                String     @id @default(cuid())
+  invoiceNo         String     @unique
+  customerId        String?
+  customer          Customer?  @relation(fields: [customerId], references: [id])
+  shiftId           String?
+  shift             Shift?     @relation(fields: [shiftId], references: [id])
+  branchRef         Branch?    @relation(fields: [branchId], references: [id])
+  branchId          String?
+  approvedById      String? // manager who authorized a large-discount sale
+  approvedByName    String?
   discountRequestId String?
-  subtotal      Float      @default(0)
-  discount      Float      @default(0)
-  tax           Float      @default(0)
-  total         Float      @default(0)
-  paidAmount    Float      @default(0)
-  changeAmount  Float      @default(0)
-  paymentMethod String     @default("cash")
-  paymentStatus String     @default("paid")
-  saleStatus    String     @default("completed")
-  cashierName   String     @default("Admin User")
-  note          String?
-  items         SaleItem[]
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  subtotal          Float      @default(0)
+  discount          Float      @default(0)
+  tax               Float      @default(0)
+  total             Float      @default(0)
+  paidAmount        Float      @default(0)
+  changeAmount      Float      @default(0)
+  paymentMethod     String     @default("cash")
+  paymentStatus     String     @default("paid")
+  saleStatus        String     @default("completed")
+  cashierName       String     @default("Admin User")
+  note              String?
+  items             SaleItem[]
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
 }
 
 model SaleItem {
@@ -194,7 +212,7 @@ model SaleItem {
 model Purchase {
   id           String         @id @default(cuid())
   referenceNo  String         @unique
-  branchRef    Branch?    @relation(fields: [branchId], references: [id])
+  branchRef    Branch?        @relation(fields: [branchId], references: [id])
   branchId     String?
   supplierId   String?
   supplier     Supplier?      @relation(fields: [supplierId], references: [id])
@@ -211,17 +229,17 @@ model Purchase {
 }
 
 model PurchaseItem {
-  id         String    @id @default(cuid())
-  purchaseId String
-  purchase   Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  medicineId String?
-  medicine   Medicine? @relation(fields: [medicineId], references: [id])
-  name       String
-  qty        Int
-  unitCost   Float
+  id          String    @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  medicineId  String?
+  medicine    Medicine? @relation(fields: [medicineId], references: [id])
+  name        String
+  qty         Int
+  unitCost    Float
   batchNumber String?
-  expiryDate DateTime?
-  total      Float
+  expiryDate  DateTime?
+  total       Float
 }
 
 model Prescription {
@@ -249,15 +267,15 @@ model InventoryLog {
 }
 
 model StoreSetting {
-  id       String @id @default(cuid())
-  key      String @unique
-  value    String
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
 }
 
 model Shift {
   id           String         @id @default(cuid())
   shiftNo      String         @unique
-  branchRef    Branch?    @relation(fields: [branchId], references: [id])
+  branchRef    Branch?        @relation(fields: [branchId], references: [id])
   branchId     String?
   userId       String
   userName     String
@@ -291,7 +309,7 @@ model CashMovement {
 model StockTake {
   id              String          @id @default(cuid())
   stockTakeNo     String          @unique // ST-2026-0001
-  branchRef       Branch?    @relation(fields: [branchId], references: [id])
+  branchRef       Branch?         @relation(fields: [branchId], references: [id])
   branchId        String?
   title           String
   scope           String          @default("all") // all | category

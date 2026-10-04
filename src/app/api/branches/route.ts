@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { slugifyRoleName } from '@/lib/permissions'
+import { logAudit } from '@/lib/audit'
 
 /** GET /api/branches — list branches with per-branch stats. */
 export async function GET(req: NextRequest) {
@@ -15,11 +16,12 @@ export async function GET(req: NextRequest) {
 
     const stats = await Promise.all(
       branches.map(async (b) => {
-        const [users, medicines, salesAgg, stockValue] = await Promise.all([
+        const [users, medicines, salesAgg, stockValue, priceOverrides] = await Promise.all([
           db.user.count({ where: { branchId: b.id } }),
           db.medicine.count({ where: { branchId: b.id, status: { not: 'discontinued' } } }),
           db.sale.aggregate({ _sum: { total: true }, _count: true, where: { branchId: b.id, createdAt: { gte: monthAgo }, saleStatus: { not: 'cancelled' } } }),
           db.medicine.aggregate({ _sum: { stockQty: true }, where: { branchId: b.id } }),
+          db.branchPrice.count({ where: { branchId: b.id } }),
         ])
         return {
           id: b.id,
@@ -28,6 +30,7 @@ export async function GET(req: NextRequest) {
           sales30d: +(salesAgg._sum.total ?? 0).toFixed(2),
           sales30dCount: salesAgg._count,
           stockUnits: stockValue._sum.stockQty ?? 0,
+          priceOverrides,
         }
       }),
     )
@@ -63,6 +66,17 @@ export async function POST(req: NextRequest) {
         isActive: body.isActive ?? true,
       },
     })
+
+    await logAudit({
+      actor: gate.user,
+      action: 'branch.created',
+      targetType: 'branch',
+      targetId: branch.id,
+      targetName: branch.name,
+      summary: `${gate.user.name} created branch ${branch.name} (code ${branch.code})`,
+      changes: { name: { from: '', to: branch.name } },
+    })
+
     return NextResponse.json({ branch }, { status: 201 })
   } catch (e) {
     console.error('Branches POST error', e)

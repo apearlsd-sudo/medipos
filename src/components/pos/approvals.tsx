@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader } from '@/components/pos/shared'
 import { useUser } from '@/components/pos/user-context'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
-import { BadgeCheck, Check, Loader2, Percent, RefreshCcw, X } from 'lucide-react'
+import { BadgeCheck, Check, FilePlus2, Loader2, Percent, RefreshCcw, ScrollText, ShoppingCart, Trash2, Undo2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -43,6 +43,15 @@ interface DiscountRequestRow {
   items: DiscountLine[]
 }
 
+interface HistoryEntry {
+  id: string
+  action: string
+  actorName: string
+  actorRole: string | null
+  summary: string
+  createdAt: string
+}
+
 const STATUS_STYLES: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400',
   approved: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400',
@@ -63,6 +72,31 @@ export function Approvals() {
 
   const [detail, setDetail] = useState<DiscountRequestRow | null>(null)
   const [note, setNote] = useState('')
+
+  // --- audit lifecycle for the open request ---
+  const [history, setHistory] = useState<HistoryEntry[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  useEffect(() => {
+    if (!detail) {
+      setHistory([])
+      return
+    }
+    let alive = true
+    setHistoryLoading(true)
+    fetch(`/api/discount-requests/${detail.id}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { history: [] }))
+      .then((json) => {
+        if (alive) setHistory(json.history ?? [])
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (alive) setHistoryLoading(false)
+      })
+    return () => {
+      alive = false
+    }
+  }, [detail])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -302,6 +336,34 @@ export function Approvals() {
                   {detail.reviewNote && <p className="text-xs text-muted-foreground">Note: {detail.reviewNote}</p>}
                 </div>
               )}
+
+              {/* Audit lifecycle trail */}
+              <div className="rounded-xl border bg-muted/20 p-3">
+                <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  <ScrollText className="h-3.5 w-3.5" /> Audit trail
+                </p>
+                {historyLoading ? (
+                  <div className="mt-2 space-y-2">{Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-8 rounded-lg" />)}</div>
+                ) : history.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">No recorded events yet.</p>
+                ) : (
+                  <ol className="mt-2 space-y-2.5">
+                    {history.map((h) => (
+                      <li key={h.id} className="flex gap-2.5">
+                        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-teal-600/10 text-teal-600 dark:text-teal-400">
+                          <HistoryIcon action={h.action} />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium">{h.summary}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {h.actorName}{h.actorRole ? ` · ${h.actorRole}` : ''} · {fmtDateTime(h.createdAt)}
+                          </p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
             </div>
           )}
         </DialogContent>
@@ -314,4 +376,25 @@ export function Approvals() {
       )}
     </div>
   )
+}
+
+/** Small icon for each audit lifecycle action in the request trail. */
+function HistoryIcon({ action }: { action: string }) {
+  const cls = 'h-3.5 w-3.5'
+  switch (action) {
+    case 'discount.created':
+      return <FilePlus2 className={cls} />
+    case 'discount.approved':
+      return <Check className={cls} />
+    case 'discount.rejected':
+      return <X className={cls} />
+    case 'discount.withdrawn':
+      return <Undo2 className={cls} />
+    case 'discount.used':
+      return <ShoppingCart className={cls} />
+    case 'discount.deleted':
+      return <Trash2 className={cls} />
+    default:
+      return <ScrollText className={cls} />
+  }
 }

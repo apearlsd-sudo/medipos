@@ -10,7 +10,7 @@ import { PageHeader, StatusBadge } from '@/components/pos/shared'
 import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, Boxes, CalendarClock, DollarSign, Download, FileText, Percent, PiggyBank, ReceiptText, ShoppingCart, TrendingUp, Truck, Users, Wallet,
+  Banknote, Boxes, Building2, CalendarClock, DollarSign, Download, FileText, Percent, PiggyBank, ReceiptText, ShoppingCart, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
@@ -19,6 +19,7 @@ import autoTable from 'jspdf-autotable'
 
 interface ReportData {
   periodDays: number
+  scope?: { branchId: string | null; label: string }
   summary: {
     revenue: number; transactions: number; avgTransaction: number; purchases: number
     cogs: number; grossProfit: number; marginPct: number; inventoryValue: number; retailValue: number
@@ -28,17 +29,23 @@ interface ReportData {
   categoryRevenue: Array<{ name: string; value: number }>
   cashierStats: Array<{ name: string; transactions: number; revenue: number; avg: number }>
   productStats: Array<{ name: string; category: string; qtySold: number; revenue: number; profit: number }>
-  stockValuation: Array<{ name: string; category: string; qty: number; unit: string; unitCost: number; unitPrice: number; stockValue: number; retailValue: number }>
-  expiryReport: Array<{ name: string; batch: string; expiryDate: string; daysLeft: number; qty: number }>
+  stockValuation: Array<{ name: string; category: string; branch?: string; qty: number; unit: string; unitCost: number; unitPrice: number; stockValue: number; retailValue: number }>
+  expiryReport: Array<{ name: string; branch?: string; batch: string; expiryDate: string; daysLeft: number; qty: number }>
   purchaseStats: Array<{ reference: string; supplier: string; date: string; total: number; paid: number; status: string }>
+  branchBreakdown?: Array<{
+    branchId: string; branchName: string; branchCode: string
+    transactions: number; unitsSold: number; revenue: number; discounts: number
+    cogs: number; grossProfit: number; avgSale: number; marginPct: number; sharePct: number
+  }>
 }
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases'
+type ReportTab = 'overview' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
+  { key: 'branches', label: 'Branch Comparison', icon: Building2 },
   { key: 'products', label: 'Product Performance', icon: ShoppingCart },
   { key: 'staff', label: 'Staff Performance', icon: Users },
   { key: 'stock', label: 'Inventory Valuation', icon: Boxes },
@@ -68,6 +75,12 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
   const currentTable = (): { title: string; head: string[]; body: (string | number)[][] } => {
     if (!data) return { title: 'Report', head: [], body: [] }
     switch (tab) {
+      case 'branches':
+        return {
+          title: 'Branch Comparison',
+          head: ['Branch', 'Code', 'Transactions', 'Units Sold', 'Revenue', 'Discounts Given', 'Est. Profit', 'Margin %', 'Share %'],
+          body: (data.branchBreakdown ?? []).map((b) => [b.branchName, b.branchCode, b.transactions, b.unitsSold, b.revenue, b.discounts, b.grossProfit, b.marginPct, b.sharePct]),
+        }
       case 'products':
         return {
           title: 'Product Performance',
@@ -83,14 +96,14 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
       case 'stock':
         return {
           title: 'Inventory Valuation',
-          head: ['Product', 'Category', 'Qty', 'Unit Cost', 'Unit Price', 'Stock Value', 'Retail Value'],
-          body: data.stockValuation.map((m) => [m.name, m.category, `${m.qty} ${m.unit}`, m.unitCost, m.unitPrice, m.stockValue, m.retailValue]),
+          head: ['Product', 'Category', 'Branch', 'Qty', 'Unit Cost', 'Unit Price', 'Stock Value', 'Retail Value'],
+          body: data.stockValuation.map((m) => [m.name, m.category, m.branch ?? '—', `${m.qty} ${m.unit}`, m.unitCost, m.unitPrice, m.stockValue, m.retailValue]),
         }
       case 'expiry':
         return {
           title: 'Expiry Report',
-          head: ['Product', 'Batch', 'Expiry Date', 'Days Left', 'Stock Qty', 'Status'],
-          body: data.expiryReport.map((m) => [m.name, m.batch, fmtDate(m.expiryDate), m.daysLeft, m.qty, m.daysLeft <= 0 ? 'Expired' : m.daysLeft <= 30 ? 'Critical' : 'Upcoming']),
+          head: ['Product', 'Branch', 'Batch', 'Expiry Date', 'Days Left', 'Stock Qty', 'Status'],
+          body: data.expiryReport.map((m) => [m.name, m.branch ?? '—', m.batch, fmtDate(m.expiryDate), m.daysLeft, m.qty, m.daysLeft <= 0 ? 'Expired' : m.daysLeft <= 30 ? 'Critical' : 'Upcoming']),
         }
       case 'purchases':
         return {
@@ -109,7 +122,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
 
   const exportCSV = () => {
     const { title, head, body } = currentTable()
-    const rows = [['Report', title], ['Period', `Last ${data?.periodDays} days`], [], head, ...body]
+    const rows = [['Report', title], ['Period', `Last ${data?.periodDays} days`], ['Scope', data?.scope?.label || 'All branches'], [], head, ...body]
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a')
@@ -125,6 +138,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
     const { title, head, body } = currentTable()
     const storeName = storeSettings?.storeName || 'MediPOS Pharmacy'
     const currency = storeSettings?.currencyCode || 'USD'
+    const scopeLabel = data.scope?.label || 'All branches'
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     const pageW = doc.internal.pageSize.getWidth()
@@ -136,7 +150,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
     doc.setFontSize(15)
     doc.text(storeName, 14, 11)
     doc.setFontSize(10)
-    doc.text(`${title} — Last ${data.periodDays} days (${currency})`, 14, 19)
+    doc.text(`${title} — Last ${data.periodDays} days · ${scopeLabel} (${currency})`, 14, 19)
     doc.setFontSize(8)
     doc.text(`Generated ${new Date().toLocaleString()}`, pageW - 14, 11, { align: 'right' })
     doc.text('MediPOS Pro', pageW - 14, 19, { align: 'right' })
@@ -182,6 +196,9 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         breadcrumb="Reports"
         actions={
           <>
+            <span className="hidden items-center gap-1.5 rounded-full border bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground sm:inline-flex">
+              <Building2 className="h-3.5 w-3.5 text-teal-500" /> {data?.scope?.label || 'All branches'}
+            </span>
             <Select value={days} onValueChange={setDays}>
               <SelectTrigger className="w-36 rounded-full"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -297,10 +314,121 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         </>
       )}
 
+      {/* ---------------- Branch Comparison ---------------- */}
+      {tab === 'branches' && (
+        <>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold"><Building2 className="h-4 w-4 text-teal-500" /> Revenue by Branch</CardTitle>
+              </CardHeader>
+              <CardContent className="h-64">
+                {(data.branchBreakdown ?? []).length === 0 ? (
+                  <p className="flex h-full items-center justify-center text-sm text-muted-foreground">No branch sales in this period.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={data.branchBreakdown} layout="vertical" margin={{ top: 0, right: 16, left: 20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="currentColor" opacity={0.12} />
+                      <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtCompact(v)} />
+                      <YAxis type="category" dataKey="branchName" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} width={110} />
+                      <Tooltip formatter={(v: number) => [fmtMoney(v), 'Revenue']} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                      <Bar dataKey="revenue" fill="#0d9488" radius={[0, 6, 6, 0]} barSize={22} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base font-semibold"><Percent className="h-4 w-4 text-teal-500" /> Revenue Share</CardTitle>
+              </CardHeader>
+              <CardContent className="h-64">
+                {(data.branchBreakdown ?? []).length === 0 ? (
+                  <p className="flex h-full items-center justify-center text-sm text-muted-foreground">Nothing to compare yet.</p>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie data={data.branchBreakdown} dataKey="revenue" nameKey="branchName" innerRadius="55%" outerRadius="85%" paddingAngle={3} strokeWidth={0}>
+                        {data.branchBreakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                      </Pie>
+                      <Tooltip formatter={(v: number, n: string) => [fmtMoney(v), n]} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <BranchBreakdownTable data={data} />
+        </>
+      )}
+
       {/* ---------------- Table tabs ---------------- */}
-      {tab !== 'overview' && <ReportDataTable tab={tab} data={data} />}
-      {tab !== 'overview' && <p className="text-center text-xs text-muted-foreground">{tabMeta.label} · showing up to 20 rows · use Export PDF / CSV for the full list</p>}
+      {tab !== 'overview' && tab !== 'branches' && <ReportDataTable tab={tab} data={data} />}
+      {tab !== 'overview' && tab !== 'branches' && <p className="text-center text-xs text-muted-foreground">{tabMeta.label} · showing up to 20 rows · use Export PDF / CSV for the full list</p>}
     </div>
+  )
+}
+
+function BranchBreakdownTable({ data }: { data: ReportData }) {
+  const rows = data.branchBreakdown ?? []
+  const totals = rows.reduce(
+    (acc, b) => ({ transactions: acc.transactions + b.transactions, unitsSold: acc.unitsSold + b.unitsSold, revenue: acc.revenue + b.revenue, profit: acc.profit + b.grossProfit }),
+    { transactions: 0, unitsSold: 0, revenue: 0, profit: 0 },
+  )
+  const maxRev = Math.max(...rows.map((b) => b.revenue), 1)
+  return (
+    <Card>
+      <CardContent className="p-0">
+        <div className="flex flex-wrap gap-2 border-b p-3 text-xs">
+          <span className="rounded-full bg-muted px-3 py-1">{rows.length} branch{rows.length === 1 ? '' : 'es'} · {data.scope?.label || 'All branches'}</span>
+          <span className="rounded-full bg-teal-600/10 px-3 py-1 font-semibold text-teal-700 dark:text-teal-400">Combined revenue {fmtMoney(totals.revenue)}</span>
+          <span className="rounded-full bg-teal-600/10 px-3 py-1 font-semibold text-teal-700 dark:text-teal-400">Combined profit {fmtMoney(totals.profit)}</span>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>Branch</TableHead>
+              <TableHead className="text-center">Transactions</TableHead>
+              <TableHead className="text-center">Units Sold</TableHead>
+              <TableHead className="text-right">Revenue</TableHead>
+              <TableHead className="text-right">Avg Sale</TableHead>
+              <TableHead className="text-right">Est. Profit</TableHead>
+              <TableHead className="text-right">Margin</TableHead>
+              <TableHead className="hidden w-52 lg:table-cell">Share</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((b) => (
+              <TableRow key={b.branchId}>
+                <TableCell>
+                  <p className="font-medium">{b.branchName}</p>
+                  <p className="text-[11px] text-muted-foreground">Code {b.branchCode} · discounts {fmtMoney(b.discounts)}</p>
+                </TableCell>
+                <TableCell className="text-center tabular-nums">{b.transactions}</TableCell>
+                <TableCell className="text-center tabular-nums">{b.unitsSold}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(b.revenue)}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{fmtMoney(b.avgSale)}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{fmtMoney(b.grossProfit)}</TableCell>
+                <TableCell className="text-right tabular-nums text-muted-foreground">{b.marginPct}%</TableCell>
+                <TableCell className="hidden lg:table-cell">
+                  <div className="flex items-center gap-2">
+                    <div className="h-2 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div className="h-full rounded-full bg-teal-500" style={{ width: `${(b.revenue / maxRev) * 100}%` }} />
+                    </div>
+                    <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">{b.sharePct}%</span>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+            {rows.length === 0 && (
+              <TableRow><TableCell colSpan={8} className="py-10 text-center text-muted-foreground">No branch sales in this period.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -389,6 +517,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Product</TableHead><TableHead>Category</TableHead>
+                <TableHead className="hidden md:table-cell">Branch</TableHead>
                 <TableHead className="text-center">Qty</TableHead>
                 <TableHead className="text-right">Unit Cost</TableHead>
                 <TableHead className="text-right">Unit Price</TableHead>
@@ -398,9 +527,10 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
             </TableHeader>
             <TableBody>
               {data.stockValuation.map((m) => (
-                <TableRow key={m.name}>
+                <TableRow key={`${m.name}-${m.branch ?? ''}`}>
                   <TableCell className="max-w-64 truncate font-medium">{m.name}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{m.category}</TableCell>
+                  <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{m.branch ?? '—'}</TableCell>
                   <TableCell className="text-center tabular-nums">{m.qty} {m.unit}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmtMoney(m.unitCost)}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmtMoney(m.unitPrice)}</TableCell>
@@ -422,7 +552,9 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead>Product</TableHead><TableHead>Batch</TableHead>
+                <TableHead>Product</TableHead>
+                <TableHead className="hidden md:table-cell">Branch</TableHead>
+                <TableHead>Batch</TableHead>
                 <TableHead>Expiry Date</TableHead>
                 <TableHead className="text-center">Days Left</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
@@ -433,6 +565,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
               {data.expiryReport.map((m) => (
                 <TableRow key={`${m.name}-${m.batch}`}>
                   <TableCell className="max-w-64 truncate font-medium">{m.name}</TableCell>
+                  <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{m.branch ?? '—'}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">{m.batch}</TableCell>
                   <TableCell className="tabular-nums">{fmtDate(m.expiryDate)}</TableCell>
                   <TableCell className="text-center font-semibold tabular-nums">{m.daysLeft <= 0 ? 0 : m.daysLeft}</TableCell>
@@ -450,7 +583,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
                   </TableCell>
                 </TableRow>
               ))}
-              {data.expiryReport.length === 0 && <TableRow><TableCell colSpan={6} className="py-10 text-center text-muted-foreground">No expiring or expired stock. Great job!</TableCell></TableRow>}
+              {data.expiryReport.length === 0 && <TableRow><TableCell colSpan={7} className="py-10 text-center text-muted-foreground">No expiring or expired stock. Great job!</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>

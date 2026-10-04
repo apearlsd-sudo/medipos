@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requireUser, requirePermission } from '@/lib/auth'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
+import { loadBranchPrices } from '@/lib/pricing'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -35,8 +36,19 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'desc' },
     })
 
+    // Branch-level pricing: attach overrides + effective price for the scope.
+    const priceMap = await loadBranchPrices(scope.branchId)
+    const withPrices = meds.map((m) => {
+      const override = priceMap.get(`${scope.branchId}:${m.id}`) // scope.branchId null → no per-branch key match
+      return {
+        ...m,
+        branchPriceOverride: scope.branchId ? (override ?? null) : null,
+        effectiveSellingPrice: scope.branchId ? (override ?? m.sellingPrice) : m.sellingPrice,
+      }
+    })
+
     const now = Date.now()
-    let filtered = meds
+    let filtered = withPrices
     if (stockFilter === 'low') filtered = filtered.filter((m) => m.stockQty > 0 && m.stockQty <= m.reorderLevel)
     if (stockFilter === 'out') filtered = filtered.filter((m) => m.stockQty === 0)
     if (stockFilter === 'adequate') filtered = filtered.filter((m) => m.stockQty > m.reorderLevel)

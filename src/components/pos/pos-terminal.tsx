@@ -39,6 +39,8 @@ interface Medicine {
   unit: string
   stockQty: number
   sellingPrice: number
+  /** Branch-level price override applied by the server for the active scope. */
+  effectiveSellingPrice?: number
   prescriptionRequired: boolean
 }
 
@@ -173,7 +175,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       }
       return [
         ...prev,
-        { medicineId: m.id, name: m.name, sku: m.sku, unit: m.unit, unitPrice: m.sellingPrice, qty, stockQty: m.stockQty, prescriptionRequired: m.prescriptionRequired },
+        { medicineId: m.id, name: m.name, sku: m.sku, unit: m.unit, unitPrice: m.effectiveSellingPrice ?? m.sellingPrice, qty, stockQty: m.stockQty, prescriptionRequired: m.prescriptionRequired },
       ]
     })
   }, [])
@@ -400,7 +402,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                   <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{m.genericName ?? m.brand ?? m.sku}</p>
                   <div className="mt-2 flex items-end justify-between">
                     <div>
-                      <p className="text-base font-bold text-teal-600 dark:text-teal-400">{fmtMoney(m.sellingPrice)}</p>
+                      <p className="text-base font-bold text-teal-600 dark:text-teal-400">{fmtMoney(m.effectiveSellingPrice ?? m.sellingPrice)}</p>
                       <p className={`text-[11px] font-medium ${out ? 'text-red-500' : low ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
                         {out ? 'Out of stock' : `${m.stockQty} ${m.unit}`}
                       </p>

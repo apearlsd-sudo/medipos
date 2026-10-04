@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { logAudit } from '@/lib/audit'
 
 /**
  * PUT /api/branches/[id] — update a branch (super admin).
@@ -35,6 +36,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         isActive: body.isActive ?? branch.isActive,
       },
     })
+
+    const changed: string[] = []
+    if (updated.name !== branch.name) changed.push(`name ${branch.name} → ${updated.name}`)
+    if (updated.code !== branch.code) changed.push(`code ${branch.code} → ${updated.code}`)
+    if (updated.isActive !== branch.isActive) changed.push(`status ${branch.isActive ? 'active' : 'inactive'} → ${updated.isActive ? 'active' : 'inactive'}`)
+    await logAudit({
+      actor: gate.user,
+      action: 'branch.updated',
+      targetType: 'branch',
+      targetId: branch.id,
+      targetName: updated.name,
+      summary: `${gate.user.name} updated branch ${updated.name}${changed.length > 0 ? ` (${changed.join(', ')})` : ''}`,
+      changes: {
+        name: updated.name !== branch.name ? { from: branch.name, to: updated.name } : undefined,
+        status: updated.isActive !== branch.isActive ? { from: branch.isActive ? 'active' : 'inactive', to: updated.isActive ? 'active' : 'inactive' } : undefined,
+      },
+    })
+
     return NextResponse.json({ branch: updated })
   } catch (e) {
     console.error('Branch PUT error', e)
@@ -71,6 +90,14 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
       )
     }
     await db.branch.delete({ where: { id } })
+    await logAudit({
+      actor: gate.user,
+      action: 'branch.deleted',
+      targetType: 'branch',
+      targetId: branch.id,
+      targetName: branch.name,
+      summary: `${gate.user.name} deleted empty branch ${branch.name} (code ${branch.code})`,
+    })
     return NextResponse.json({ deleted: true })
   } catch (e) {
     console.error('Branch DELETE error', e)

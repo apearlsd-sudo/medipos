@@ -7,12 +7,34 @@ import type { SessionUser } from '@/lib/auth'
 // ---------------------------------------------------------------------------
 
 export type AuditAction =
+  // roles & users
   | 'role.created'
   | 'role.updated'
   | 'role.deleted'
   | 'user.created'
   | 'user.updated'
   | 'user.deleted'
+  // discount approval workflow
+  | 'discount.created'
+  | 'discount.approved'
+  | 'discount.rejected'
+  | 'discount.withdrawn'
+  | 'discount.used'
+  | 'discount.deleted'
+  // branches & branch pricing
+  | 'branch.created'
+  | 'branch.updated'
+  | 'branch.deleted'
+  | 'branch.price_updated'
+
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine'
+
+export interface AuditPriceChange {
+  medicine: string
+  sku?: string
+  from: number | null // null = no previous override
+  to: number | null // null = override removed
+}
 
 export interface AuditChanges {
   permissionsAdded?: string[]
@@ -23,12 +45,22 @@ export interface AuditChanges {
   name?: { from: string; to: string }
   passwordReset?: boolean
   selfService?: boolean
+  // approvals
+  subtotal?: number
+  discountValue?: number
+  discountPct?: number
+  reason?: string | null
+  reviewNote?: string | null
+  method?: 'on_the_spot' | 'pre_approved'
+  invoiceNo?: string
+  // branch pricing
+  priceChanges?: AuditPriceChange[]
 }
 
 export async function logAudit(opts: {
   actor: Pick<SessionUser, 'id' | 'name' | 'roleName'> | null
   action: AuditAction
-  targetType: 'role' | 'user'
+  targetType: AuditTargetType
   targetId?: string | null
   targetName?: string | null
   summary: string

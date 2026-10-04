@@ -25,8 +25,8 @@ import {
   MODULE_GROUPS, PERMISSION_COUNT, PERMISSION_KEYS, SYSTEM_ROLE_PERMISSIONS, moduleDef, permissionLabel,
 } from '@/lib/permissions'
 import {
-  ArrowDown, ArrowUp, Check, FileDown, KeyRound, Lock, MoreHorizontal, Pencil, Plus, ScrollText, Search,
-  ShieldCheck, ShieldPlus, Sparkles, Trash2, UserPlus, UserRoundCheck, UserRoundX, Users as UsersIcon,
+  ArrowDown, ArrowUp, BadgePercent, Building2, Check, FileDown, KeyRound, Lock, MoreHorizontal, Pencil, Plus, ReceiptText, ScrollText, Search,
+  ShieldCheck, ShieldPlus, Sparkles, Tags, Trash2, UserPlus, UserRoundCheck, UserRoundX, Users as UsersIcon,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -78,6 +78,14 @@ interface AuditEntry {
     role?: { from: string; to: string }
     status?: { from: string; to: string }
     passwordReset?: boolean
+    subtotal?: number
+    discountValue?: number
+    discountPct?: number
+    reason?: string | null
+    reviewNote?: string | null
+    method?: string
+    invoiceNo?: string
+    priceChanges?: Array<{ medicine: string; sku?: string; from: number | null; to: number | null }>
   } | null
   createdAt: string
 }
@@ -119,6 +127,28 @@ function auditActionStyle(action: string): { icon: typeof ShieldPlus; badge: str
       return { icon: Pencil, badge: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400', label: 'User updated' }
     case 'user.deleted':
       return { icon: Trash2, badge: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400', label: 'User deleted' }
+    // discount approval workflow
+    case 'discount.created':
+      return { icon: BadgePercent, badge: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400', label: 'Discount requested' }
+    case 'discount.approved':
+      return { icon: Check, badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400', label: 'Discount approved' }
+    case 'discount.rejected':
+      return { icon: UserRoundX, badge: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400', label: 'Discount rejected' }
+    case 'discount.withdrawn':
+      return { icon: ArrowDown, badge: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400', label: 'Discount withdrawn' }
+    case 'discount.used':
+      return { icon: ReceiptText, badge: 'bg-teal-100 text-teal-700 dark:bg-teal-500/15 dark:text-teal-400', label: 'Approval used' }
+    case 'discount.deleted':
+      return { icon: Trash2, badge: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400', label: 'Request deleted' }
+    // branches & pricing
+    case 'branch.created':
+      return { icon: Building2, badge: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400', label: 'Branch created' }
+    case 'branch.updated':
+      return { icon: Pencil, badge: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400', label: 'Branch updated' }
+    case 'branch.deleted':
+      return { icon: Trash2, badge: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400', label: 'Branch deleted' }
+    case 'branch.price_updated':
+      return { icon: Tags, badge: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-400', label: 'Branch pricing' }
     default:
       return { icon: ScrollText, badge: 'bg-muted text-muted-foreground', label: action }
   }
@@ -790,9 +820,9 @@ export function Users() {
               <CardContent className="p-0">
                 <div className="flex flex-col gap-3 border-b p-4 lg:flex-row lg:items-center lg:justify-between">
                   <div>
-                    <p className="font-semibold">RBAC Audit Trail</p>
+                    <p className="font-semibold">Audit Trail</p>
                     <p className="text-xs text-muted-foreground">
-                      Who granted, changed or deleted roles, privileges and users · {auditTotal} entr{auditTotal === 1 ? 'y' : 'ies'} on record
+                      Roles, users, discount approvals and branch pricing — who did what, when · {auditTotal} entr{auditTotal === 1 ? 'y' : 'ies'} on record
                     </p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -812,6 +842,9 @@ export function Users() {
                         <SelectItem value="all">All actions</SelectItem>
                         <SelectItem value="role">Role changes</SelectItem>
                         <SelectItem value="user">User changes</SelectItem>
+                        <SelectItem value="approval">Discount approvals</SelectItem>
+                        <SelectItem value="branch">Branches & pricing</SelectItem>
+                        <SelectItem value="sale">Sales</SelectItem>
                       </SelectContent>
                     </Select>
                     <Button variant="outline" size="sm" className="rounded-full" onClick={() => loadAudit()} disabled={auditLoading}>
@@ -874,6 +907,31 @@ export function Users() {
                                     password reset
                                   </span>
                                 )}
+                                {typeof l.changes.discountValue === 'number' && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-medium text-red-700 dark:bg-red-500/10 dark:text-red-400">
+                                    −{l.changes.discountValue}{typeof l.changes.discountPct === 'number' ? ` (${l.changes.discountPct}%)` : ''}
+                                  </span>
+                                )}
+                                {l.changes.reason && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                    reason: {l.changes.reason}
+                                  </span>
+                                )}
+                                {l.changes.reviewNote && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                                    note: {l.changes.reviewNote}
+                                  </span>
+                                )}
+                                {l.changes.invoiceNo && (
+                                  <span className="inline-flex items-center gap-1 rounded-full bg-teal-50 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:bg-teal-500/10 dark:text-teal-400">
+                                    {l.changes.invoiceNo}
+                                  </span>
+                                )}
+                                {(l.changes.priceChanges ?? []).map((c, i) => (
+                                  <span key={`p-${c.medicine}-${i}`} className="inline-flex items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-400">
+                                    {c.medicine}: {c.from === null ? 'catalog' : c.from} → {c.to === null ? 'catalog' : c.to}
+                                  </span>
+                                ))}
                               </div>
                             )}
                             <p className="mt-1 text-[11px] text-muted-foreground">

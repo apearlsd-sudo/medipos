@@ -3,6 +3,8 @@ import { db } from '@/lib/db'
 import { requireUser, requirePermission, can } from '@/lib/auth'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
 import { branchIdForWrite } from '@/lib/branches'
+import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
+import { logAudit } from '@/lib/audit'
 
 async function loadPolicy() {
   const rows = await db.storeSetting.findMany({ where: { key: { in: ['discountApprovalEnabled', 'discountApprovalPct', 'discountApprovalAmount'] } } })
@@ -90,9 +92,13 @@ export async function POST(req: NextRequest) {
 
     const meds = await db.medicine.findMany({ where: { id: { in: items.map((i) => i.medicineId) } } })
     const medMap = new Map(meds.map((m) => [m.id, m]))
+
+    // Snapshot prices honor branch-level overrides for the cashier's branch
+    const reqBranchId = await branchIdForWrite(user, body.branchId)
+    const branchPrices = await loadBranchPrices(reqBranchId)
     const lines = items.map((item) => {
       const med = medMap.get(item.medicineId)
-      const unitPrice = item.unitPrice ?? med?.sellingPrice ?? 0
+      const unitPrice = item.unitPrice ?? effectivePrice(med?.sellingPrice ?? 0, reqBranchId, item.medicineId, branchPrices)
       return {
         medicineId: item.medicineId,
         name: med?.name ?? 'Unknown item',
@@ -128,9 +134,25 @@ export async function POST(req: NextRequest) {
         itemsJson: JSON.stringify(lines),
         customerId: body.customerId || null,
         reason: body.reason?.trim() || null,
-        branchId: await branchIdForWrite(user, body.branchId),
+        branchId: reqBranchId,
       },
     })
+
+    await logAudit({
+      actor: user,
+      action: 'discount.created',
+      targetType: 'discount_request',
+      targetId: request.id,
+      targetName: request.requestCode,
+      summary: `${user.name} requested a ${request.discountPct}% discount (${discountValue.toFixed(2)} on ${subtotal.toFixed(2)}) via ${request.requestCode}${request.reason ? ` — “${request.reason}”` : ''}`,
+      changes: {
+        subtotal,
+        discountValue,
+        discountPct: request.discountPct,
+        reason: request.reason,
+      },
+    })
+
     return NextResponse.json({ request }, { status: 201 })
   } catch (e) {
     console.error('Discount requests POST error', e)
@@ -155,6 +177,20 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: 'Only pending requests can be withdrawn.' }, { status: 400 })
     }
     const updated = await db.discountRequest.update({ where: { id }, data: { status: 'cancelled' } })
+    await logAudit({
+      actor: user,
+      action: 'discount.withdrawn',
+      targetType: 'discount_request',
+      targetId: id,
+      targetName: request.requestCode,
+      summary: `${user.name} withdrew discount request ${request.requestCode} (${request.discountPct}% — ${request.discountValue.toFixed(2)}) before review`,
+      changes: {
+        subtotal: request.subtotal,
+        discountValue: request.discountValue,
+        discountPct: request.discountPct,
+        status: { from: 'pending', to: 'cancelled' },
+      },
+    })
     return NextResponse.json({ request: updated })
   } catch (e) {
     console.error('Discount requests PUT error', e)

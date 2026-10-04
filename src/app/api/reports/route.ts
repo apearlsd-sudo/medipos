@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { resolveBranchScope } from '@/lib/branches'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -11,17 +12,26 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const days = Math.min(Number(searchParams.get('days') ?? 30), 120)
     const since = new Date(Date.now() - days * DAY)
+    const scope = resolveBranchScope(gate.user, searchParams)
+
+    // Give the scope a human label when a specific branch is requested
+    if (scope.branchId && !scope.label) {
+      const branch = await db.branch.findUnique({ where: { id: scope.branchId }, select: { name: true } })
+      scope.label = branch?.name ?? 'Branch'
+    }
+
+    const branchWhere = scope.branchId ? { branchId: scope.branchId } : {}
 
     const [sales, purchaseAgg, meds, saleItems] = await Promise.all([
       db.sale.findMany({
-        where: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' } },
-        include: { items: { include: { medicine: { include: { category: true } } } } },
+        where: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' }, ...branchWhere },
+        include: { items: { include: { medicine: { include: { category: true } } } }, branchRef: { select: { name: true, code: true } } },
         orderBy: { createdAt: 'asc' },
       }),
-      db.purchase.aggregate({ _sum: { totalAmount: true }, where: { purchaseDate: { gte: since }, status: { not: 'cancelled' } } }),
-      db.medicine.findMany({ include: { category: true } }),
+      db.purchase.aggregate({ _sum: { totalAmount: true }, where: { purchaseDate: { gte: since }, status: { not: 'cancelled' }, ...branchWhere } }),
+      db.medicine.findMany({ include: { category: true, branchRef: { select: { name: true, code: true } } }, where: scope.branchId ? { branchId: scope.branchId } : {} }),
       db.saleItem.findMany({
-        where: { sale: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' } } },
+        where: { sale: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' }, ...branchWhere } },
         include: { medicine: { include: { category: true } } },
       }),
     ])
@@ -105,6 +115,7 @@ export async function GET(req: NextRequest) {
       .map((m) => ({
         name: m.name,
         category: m.category?.name ?? '—',
+        branch: m.branchRef?.name ?? 'Unassigned',
         qty: m.stockQty,
         unit: m.unit,
         unitCost: m.costPrice,
@@ -120,6 +131,7 @@ export async function GET(req: NextRequest) {
       .filter((m) => m.expiryDate && m.status !== 'discontinued')
       .map((m) => ({
         name: m.name,
+        branch: m.branchRef?.name ?? 'Unassigned',
         batch: m.batchNumber ?? '—',
         expiryDate: m.expiryDate,
         daysLeft: Math.ceil((new Date(m.expiryDate as Date).getTime() - Date.now()) / DAY),
@@ -145,8 +157,72 @@ export async function GET(req: NextRequest) {
       status: p.status,
     }))
 
+    // ---------- Per-branch comparison ----------
+    // Sales carry the branch on the record; items' cost basis comes from the
+    // linked medicine (falls back to 0 for deleted products).
+    interface BranchBucket {
+      branchId: string
+      branchName: string
+      branchCode: string
+      transactions: number
+      unitsSold: number
+      revenue: number
+      discounts: number
+      cogs: number
+    }
+    const branchBuckets = new Map<string, BranchBucket>()
+    const bucketFor = (sale: (typeof sales)[number]): BranchBucket => {
+      const key = sale.branchId ?? 'unassigned'
+      let bucket = branchBuckets.get(key)
+      if (!bucket) {
+        bucket = {
+          branchId: key,
+          branchName: sale.branchRef?.name ?? 'Unassigned',
+          branchCode: sale.branchRef?.code ?? '—',
+          transactions: 0,
+          unitsSold: 0,
+          revenue: 0,
+          discounts: 0,
+          cogs: 0,
+        }
+        branchBuckets.set(key, bucket)
+      }
+      return bucket
+    }
+    for (const s of sales) {
+      const b = bucketFor(s)
+      b.transactions += 1
+      b.revenue += s.total
+      b.discounts += s.discount
+      for (const it of s.items) {
+        b.unitsSold += it.qty
+        b.cogs += (it.medicine?.costPrice ?? 0) * it.qty
+      }
+    }
+    const totalBranchRevenue = [...branchBuckets.values()].reduce((sum, b) => sum + b.revenue, 0)
+    const branchBreakdown = [...branchBuckets.values()]
+      .map((b) => {
+        const grossProfit = b.revenue - b.cogs
+        return {
+          branchId: b.branchId,
+          branchName: b.branchName,
+          branchCode: b.branchCode,
+          transactions: b.transactions,
+          unitsSold: b.unitsSold,
+          revenue: +b.revenue.toFixed(2),
+          discounts: +b.discounts.toFixed(2),
+          cogs: +b.cogs.toFixed(2),
+          grossProfit: +grossProfit.toFixed(2),
+          avgSale: b.transactions > 0 ? +(b.revenue / b.transactions).toFixed(2) : 0,
+          marginPct: b.revenue > 0 ? +((grossProfit / b.revenue) * 100).toFixed(1) : 0,
+          sharePct: totalBranchRevenue > 0 ? +((b.revenue / totalBranchRevenue) * 100).toFixed(1) : 0,
+        }
+      })
+      .sort((a, b) => b.revenue - a.revenue)
+
     return NextResponse.json({
       periodDays: days,
+      scope: { branchId: scope.branchId, label: scope.label || 'All branches' },
       summary: {
         revenue: +revenue.toFixed(2),
         transactions: sales.length,
@@ -166,6 +242,7 @@ export async function GET(req: NextRequest) {
       stockValuation,
       expiryReport,
       purchaseStats,
+      branchBreakdown,
     })
   } catch (e) {
     console.error('Reports API error', e)
