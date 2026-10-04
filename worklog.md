@@ -115,3 +115,18 @@ Stage Summary:
 - Deliverable: full RBAC engine on MediPOS Pro — super admin creates custom roles from templates or a 48-privilege grouped editor, grants/revokes live via the permission matrix, assigns roles to users, and every API + nav view + UI action enforces granular permissions with friendly 403s; system roles editable-but-undeletable, Super Admin locked, last-super-admin protected.
 - Key new files: prisma Role+Permission models, src/lib/permissions.ts, src/app/api/roles/**, scripts/seed-roles.ts, scripts/migrate-guards.ts; rebuilt src/components/pos/users.tsx.
 - Demo state: 3 system roles + custom "Inventory Clerk" (11 perms) with user kwame/kwame123; admin/admin123 (Super Admin), pharmacist/pharm123, cashier/cash123, linda/linda123 unchanged.
+
+---
+Task ID: 5-verify
+Agent: Main Agent (Super Z)
+Task: Post-restart verification of completed Stock Taking (Task 4) and RBAC Users & Roles (Task 5) modules after session context recovery.
+
+Work Log:
+- Confirmed all RBAC artifacts on disk: src/lib/permissions.ts (275L), src/components/pos/users.tsx (1311L), src/app/api/roles/**, src/lib/auth.ts (231L), prisma/schema.prisma (305L).
+- Dev server running; unauthenticated /api/auth/me returns 401 (guards active).
+- API smoke: admin login -> roleName "Super Admin", isSuperAdmin true, permissions ["*"]; roles list -> 3 system roles + custom "Inventory Clerk" w/ 11 permission keys + userCounts; users list -> 5 users correctly role-assigned; kwame (custom role) login -> session carries exactly the 11 granular permissions.
+- Stock-take report API responsive (accuracyPct 82.8 matches Task 4 verified state).
+- npm run lint -> exit 0, zero warnings/errors.
+
+Stage Summary:
+- Both pending user requests (stock taking variance system; super-admin RBAC with roles/privileges/permissions) are complete, verified, and demo-ready. No code changes required in this pass.
