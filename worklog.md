@@ -178,3 +178,18 @@ Stage Summary:
 - Deliverable: branch-aware reporting (per-branch comparison + scoped/consolidated views with exports), branch-level pricing (per-branch price overrides enforced end-to-end in catalog → POS → discount snapshots, managed from the Branches page), and a complete audit trail for the discount approval workflow (every request lifecycle event + branch/pricing changes recorded, filterable in the audit tab, surfaced as a per-request timeline in the review dialog).
 - Verification: npm run lint exit 0; smoke-t7.sh 26/26 (branch breakdown sums match summary, scoped/locked report labels, override apply/remove round-trip, OSU sale at overridden 99.99, DR create→approve→use with 3-entry history visible to approver and owner, audit filters, branch CRUD + pricing audits).
 - Demo state: OSU gained realistic demo sales (INV-2026-0121…0126 incl. two approval-linked), DR-2026-0004/0005 used; all price overrides removed after tests.
+
+---
+Task ID: 8-preview-fix
+Agent: Main Agent (Super Z)
+Task: Diagnose user report "preview not opening, it shows error".
+
+Work Log:
+- Root cause identified: dev server had been restarted (session recovery, 09:25) and was likely down when the user clicked the preview link; additionally the first cold request after restart took 14.5s to compile (GET / 200 in 14.5s), which can trip preview-gateway timeouts.
+- Verified healthy state: Next.js 16.1.3 on :3000 (Ready in 890ms), Caddy on :81 -> :3000 proxy, both ports HTTP 200; memory 1.6GB available.
+- Browser check via agent-browser: root page renders (title "MediPOS Pro — Pharmacy POS & Management Suite"), zero page errors, screenshot confirms dashboard UI intact.
+- End-to-end through the proxy path (:81): page render OK, admin login API 200.
+- Warmed ALL 20 major API routes via proxy with an admin session (dashboard/medicines/categories/sales/shifts/current/purchases/customers/suppliers/prescriptions/inventory/reports/settings/roles/users/branches/stock-takes/stock-takes-report/discount-requests/auth-me) — all HTTP 200, so user's first click now hits pre-compiled routes (no cold-compile timeout).
+
+Stage Summary:
+- No code defects found; preview failure was a transient server-restart/cold-compile issue. App is up, warm, and preview-ready. All demo credentials unchanged (admin/admin123, pharmacist/pharm123, cashier/cash123, kwame/kwame123).
