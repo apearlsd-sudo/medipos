@@ -193,3 +193,21 @@ Work Log:
 
 Stage Summary:
 - No code defects found; preview failure was a transient server-restart/cold-compile issue. App is up, warm, and preview-ready. All demo credentials unchanged (admin/admin123, pharmacist/pharm123, cashier/cash123, kwame/kwame123).
+
+---
+Task ID: 9-preview-stability
+Agent: Main Agent (Super Z)
+Task: Fix recurring preview failures ("page buffers and doesn't open" / "preview shows error").
+
+Work Log:
+- Diagnosis chain: (1) dev.log showed cold-compile GET / 200 in 14.5s after restart -> preview gateway timeout on first hit; (2) after switching to production build, background servers kept dying between tool calls -> sandbox reaps ALL runtime-spawned processes (tested: setsid, nohup, env -i, MCP-root-shell spawns, sleep probes on random ports - all killed); (3) dmesg confirmed an OOM kill of next-server (anon-rss 1.6GB) during the dev-era memory pressure; (4) conclusion: only container-BOOT-spawned processes survive (.zscripts/dev.sh flow), and Turbopack dev (~1.5GB RSS in 4GB container, 14.5s cold compile) is structurally unfit for the preview gateway.
+- Built production standalone bundle: npm run build (all 35 API routes + SPA, output standalone, static+public copied per package.json build script).
+- Rewrote .zscripts/dev.sh with production-first boot strategy: bun install -> db:push -> if .next/standalone/server.js exists AND no src/prisma file is newer than the build -> start production standalone (NODE_ENV=production, PORT=3000, DATABASE_URL from .env w/ absolute-path fallback) with automatic fallback to bun run dev when sources changed (prevents stale builds after future code edits).
+- Verified boot prerequisites: bash -n syntax OK, standalone server.js + .next/static + public present, zero source files newer than build (boot will select production), db/custom.db intact.
+- Production server measurements when launched in-call: HTTP 200 in 0.034s (vs 14.5s dev cold start), RSS 132MB (vs ~1,490MB dev -> 11x lighter), all 20 key API routes 200 via :81 proxy, admin login 200, fresh-visitor login screen rendered with zero errors.
+- Commit: "fix(preview): production-first boot - standalone server replaces dev mode".
+
+Stage Summary:
+- Root cause: preview gateway + 4GB container cannot reliably run Turbopack dev mode (OOM kills + cold-compile timeouts + runtime process reaping).
+- Fix staged in .zscripts/dev.sh: container boot now serves the production standalone build (132MB RSS, instant responses); dev mode auto-fallback only when source is newer than build.
+- Pending: ONE container/session restart required for the platform to run the new boot flow (runtime-spawned servers cannot persist in this sandbox by design). All work committed to git + repo snapshot.
