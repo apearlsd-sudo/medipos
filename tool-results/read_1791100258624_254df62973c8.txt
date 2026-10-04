@@ -1,0 +1,563 @@
+     1→'use client'
+     2→
+     3→import { Badge } from '@/components/ui/badge'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Card } from '@/components/ui/card'
+     6→import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+     7→import { Input } from '@/components/ui/input'
+     8→import { Label } from '@/components/ui/label'
+     9→import { ScrollArea } from '@/components/ui/scroll-area'
+    10→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    11→import { Separator } from '@/components/ui/separator'
+    12→import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    13→import { StatusBadge } from '@/components/pos/shared'
+    14→import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
+    15→import { StartShiftDialog } from '@/components/pos/shift-dialogs'
+    16→import type { ShiftRecord } from '@/components/pos/shift-report'
+    17→import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
+    18→import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
+    19→import type { StoreSettingsMap } from '@/lib/store-settings'
+    20→import {
+    21→  Banknote, Barcode, CheckCircle2, CreditCard, Minus, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+    22→} from 'lucide-react'
+    23→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+    24→import { toast } from '@/hooks/use-toast'
+    25→
+    26→type SaleResult = ReceiptSale
+    27→
+    28→interface Medicine {
+    29→  id: string
+    30→  name: string
+    31→  genericName: string | null
+    32→  brand: string | null
+    33→  sku: string
+    34→  barcode: string | null
+    35→  categoryId: string
+    36→  category: { id: string; name: string }
+    37→  unit: string
+    38→  stockQty: number
+    39→  sellingPrice: number
+    40→  prescriptionRequired: boolean
+    41→}
+    42→
+    43→interface Category { id: string; name: string }
+    44→
+    45→interface CartLine {
+    46→  medicineId: string
+    47→  name: string
+    48→  sku: string
+    49→  unit: string
+    50→  unitPrice: number
+    51→  qty: number
+    52→  stockQty: number
+    53→  prescriptionRequired: boolean
+    54→}
+    55→
+    56→interface CustomerOption { id: string; name: string }
+    57→
+    58→export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { quickSearch?: string; onSalesRecorded?: () => void; storeSettings?: StoreSettingsMap | null }) {
+    59→  const [meds, setMeds] = useState<Medicine[]>([])
+    60→  const [categories, setCategories] = useState<Category[]>([])
+    61→  const [customers, setCustomers] = useState<CustomerOption[]>([])
+    62→  const [loading, setLoading] = useState(true)
+    63→  const [search, setSearch] = useState('')
+    64→  const [activeCat, setActiveCat] = useState('all')
+    65→  const [cart, setCart] = useState<CartLine[]>([])
+    66→  const [orderDiscount, setOrderDiscount] = useState(0)
+    67→  const [checkoutOpen, setCheckoutOpen] = useState(false)
+    68→  const [receipt, setReceipt] = useState<SaleResult | null>(null)
+    69→  const [submitting, setSubmitting] = useState(false)
+    70→
+    71→  // Shift state: sales are recorded on the cashier's open shift
+    72→  const [shift, setShift] = useState<ShiftRecord | null>(null)
+    73→  const [startShiftOpen, setStartShiftOpen] = useState(false)
+    74→
+    75→  // Checkout state
+    76→  const [paymentMethod, setPaymentMethod] = useState('cash')
+    77→  const [customerId, setCustomerId] = useState<string>('walkin')
+    78→  const [tendered, setTendered] = useState('')
+    79→  const [note, setNote] = useState('')
+    80→
+    81→  const searchRef = useRef<HTMLInputElement>(null)
+    82→
+    83→  const loadProducts = useCallback(async () => {
+    84→    try {
+    85→      const [medRes, catRes, custRes] = await Promise.all([
+    86→        fetch('/api/medicines?status=active', { cache: 'no-store' }),
+    87→        fetch('/api/categories', { cache: 'no-store' }),
+    88→        fetch('/api/customers', { cache: 'no-store' }),
+    89→      ])
+    90→      const [medJson, catJson, custJson] = await Promise.all([medRes.json(), catRes.json(), custRes.json()])
+    91→      setMeds(medJson.medicines ?? [])
+    92→      setCategories(catJson.categories ?? [])
+    93→      setCustomers(custJson.customers ?? [])
+    94→    } finally {
+    95→      setLoading(false)
+    96→    }
+    97→  }, [])
+    98→
+    99→  useEffect(() => { loadProducts() }, [loadProducts])
+   100→
+   101→  const loadCurrentShift = useCallback(async () => {
+   102→    try {
+   103→      const res = await fetch('/api/shifts/current', { cache: 'no-store' })
+   104→      if (!res.ok) return
+   105→      const json = await res.json()
+   106→      setShift(json.shift ?? null)
+   107→    } catch {
+   108→      /* non-fatal */
+   109→    }
+   110→  }, [])
+   111→
+   112→  useEffect(() => { loadCurrentShift() }, [loadCurrentShift])
+   113→
+   114→  useEffect(() => {
+   115→    if (quickSearch) setSearch(quickSearch)
+   116→  }, [quickSearch])
+   117→
+   118→  const filtered = useMemo(() => {
+   119→    let list = meds
+   120→    if (activeCat !== 'all') list = list.filter((m) => m.categoryId === activeCat)
+   121→    if (search.trim()) {
+   122→      const q = search.trim().toLowerCase()
+   123→      list = list.filter((m) => m.name.toLowerCase().includes(q) || m.sku.toLowerCase().includes(q) || (m.barcode ?? '').includes(q) || (m.genericName ?? '').toLowerCase().includes(q) || (m.brand ?? '').toLowerCase().includes(q))
+   124→    }
+   125→    return list
+   126→  }, [meds, activeCat, search])
+   127→
+   128→  const addToCart = useCallback((m: Medicine, qty = 1) => {
+   129→    if (m.stockQty <= 0) {
+   130→      toast({ title: 'Out of stock', description: `${m.name} has no stock available.`, variant: 'destructive' })
+   131→      return
+   132→    }
+   133→    setCart((prev) => {
+   134→      const existing = prev.find((l) => l.medicineId === m.id)
+   135→      if (existing) {
+   136→        if (existing.qty + qty > m.stockQty) {
+   137→          toast({ title: 'Stock limit reached', description: `Only ${m.stockQty} ${m.unit}(s) of ${m.name} available.`, variant: 'destructive' })
+   138→          return prev
+   139→        }
+   140→        return prev.map((l) => (l.medicineId === m.id ? { ...l, qty: l.qty + qty } : l))
+   141→      }
+   142→      return [
+   143→        ...prev,
+   144→        { medicineId: m.id, name: m.name, sku: m.sku, unit: m.unit, unitPrice: m.sellingPrice, qty, stockQty: m.stockQty, prescriptionRequired: m.prescriptionRequired },
+   145→      ]
+   146→    })
+   147→  }, [])
+   148→
+   149→  // Barcode scanner behavior: Enter in search adds exact match or first result
+   150→  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+   151→    if (e.key === 'Enter' && filtered.length > 0) {
+   152→      const exactBarcode = meds.find((m) => m.barcode === search.trim() || m.sku.toLowerCase() === search.trim().toLowerCase())
+   153→      addToCart(exactBarcode ?? filtered[0])
+   154→      setSearch('')
+   155→      searchRef.current?.focus()
+   156→    }
+   157→  }
+   158→
+   159→  const updateQty = (id: string, delta: number) => {
+   160→    setCart((prev) =>
+   161→      prev
+   162→        .map((l) => {
+   163→          if (l.medicineId !== id) return l
+   164→          const newQty = l.qty + delta
+   165→          if (newQty > l.stockQty) {
+   166→            toast({ title: 'Stock limit reached', description: `Only ${l.stockQty} ${l.unit}(s) available.`, variant: 'destructive' })
+   167→            return l
+   168→          }
+   169→          return { ...l, qty: newQty }
+   170→        })
+   171→        .filter((l) => l.qty > 0)
+   172→    )
+   173→  }
+   174→
+   175→  const removeLine = (id: string) => setCart((prev) => prev.filter((l) => l.medicineId !== id))
+   176→
+   177→  const subtotal = useMemo(() => +cart.reduce((s, l) => s + l.unitPrice * l.qty, 0).toFixed(2), [cart])
+   178→  const discountValue = useMemo(() => Math.min(Number(orderDiscount) || 0, subtotal), [orderDiscount, subtotal])
+   179→  const taxValue = useMemo(() => +(((subtotal - discountValue) * 2.5) / 100).toFixed(2), [subtotal, discountValue])
+   180→  const total = useMemo(() => +(subtotal - discountValue + taxValue).toFixed(2), [subtotal, discountValue, taxValue])
+   181→  const rxInCart = cart.some((l) => l.prescriptionRequired)
+   182→  const tenderedNum = Number(tendered) || 0
+   183→  const change = Math.max(0, +(tenderedNum - total).toFixed(2))
+   184→
+   185→  const rxCount = cart.filter((l) => l.prescriptionRequired).length
+   186→
+   187→  const checkout = async () => {
+   188→    if (paymentMethod === 'cash' && tenderedNum < total) {
+   189→      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNum)} is less than total ${fmtMoney(total)}.`, variant: 'destructive' })
+   190→      return
+   191→    }
+   192→    setSubmitting(true)
+   193→    try {
+   194→      const res = await fetch('/api/sales', {
+   195→        method: 'POST',
+   196→        headers: { 'Content-Type': 'application/json' },
+   197→        body: JSON.stringify({
+   198→          items: cart.map((l) => ({ medicineId: l.medicineId, qty: l.qty, unitPrice: l.unitPrice })),
+   199→          discount: discountValue,
+   200→          customerId: customerId === 'walkin' ? null : customerId,
+   201→          paymentMethod,
+   202→          paidAmount: paymentMethod === 'cash' ? tenderedNum : total,
+   203→          taxRate: 2.5,
+   204→          note: note || null,
+   205→        }),
+   206→      })
+   207→      const json = await res.json()
+   208→      if (!res.ok) {
+   209→        toast({ title: 'Sale failed', description: json.error ?? 'Unknown error', variant: 'destructive' })
+   210→        return
+   211→      }
+   212→      setReceipt({
+   213→        ...json.sale,
+   214→        customerName: json.sale?.customer?.name ?? null,
+   215→        shiftNo: json.sale?.shift?.shiftNo ?? null,
+   216→      })
+   217→      setCart([])
+   218→      setOrderDiscount(0)
+   219→      setTendered('')
+   220→      setNote('')
+   221→      setCustomerId('walkin')
+   222→      setCheckoutOpen(false)
+   223→      onSalesRecorded?.()
+   224→      loadProducts()
+   225→      loadCurrentShift()
+   226→    } finally {
+   227→      setSubmitting(false)
+   228→    }
+   229→  }
+   230→
+   231→  const methodIcon = (m: string) => (m === 'cash' ? <Banknote className="h-4 w-4" /> : m === 'card' ? <CreditCard className="h-4 w-4" /> : m === 'mobile_money' ? <Smartphone className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />)
+   232→
+   233→  return (
+   234→    <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
+   235→      {/* Products */}
+   236→      <div className="min-w-0 space-y-3">
+   237→        {!shift && (
+   238→          <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-amber-500/30 dark:bg-amber-500/10">
+   239→            <div className="flex items-center gap-3">
+   240→              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+   241→                <TriangleAlert className="h-4.5 w-4.5" />
+   242→              </span>
+   243→              <div>
+   244→                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">No active shift — sales are not being recorded</p>
+   245→                <p className="text-xs text-amber-700/80 dark:text-amber-300/80">Start your shift to open the cash drawer and track sales, quantities and cash on this register.</p>
+   246→              </div>
+   247→            </div>
+   248→            <Button size="sm" className="shrink-0 rounded-full bg-amber-500 hover:bg-amber-600 text-white" onClick={() => setStartShiftOpen(true)}>
+   249→              <Timer className="h-4 w-4" /> Start Shift
+   250→            </Button>
+   251→          </div>
+   252→        )}
+   253→        {shift && (
+   254→          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-teal-600/20 bg-teal-600/5 px-4 py-2.5 text-sm dark:bg-teal-500/10">
+   255→            <span className="relative flex h-2 w-2">
+   256→              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-500 opacity-75" />
+   257→              <span className="relative inline-flex h-2 w-2 rounded-full bg-teal-500" />
+   258→            </span>
+   259→            <Timer className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+   260→            <span className="font-semibold">{shift.shiftNo}</span>
+   261→            <span className="text-xs text-muted-foreground">active shift — sales are being recorded</span>
+   262→          </div>
+   263→        )}
+   264→        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+   265→          <div className="relative flex-1">
+   266→            <Barcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   267→            <Input
+   268→              ref={searchRef}
+   269→              value={search}
+   270→              onChange={(e) => setSearch(e.target.value)}
+   271→              onKeyDown={onSearchKeyDown}
+   272→              placeholder="Scan barcode or search by name / generic / brand… (Enter to add)"
+   273→              className="pl-9"
+   274→              aria-label="Product search"
+   275→            />
+   276→            {search && (
+   277→              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Clear search">
+   278→                <X className="h-4 w-4" />
+   279→              </button>
+   280→            )}
+   281→          </div>
+   282→          <Badge variant="outline" className="hidden shrink-0 rounded-full px-3 py-1.5 text-xs sm:inline-flex">
+   283→            {filtered.length} products
+   284→          </Badge>
+   285→        </div>
+   286→
+   287→        <Tabs value={activeCat} onValueChange={setActiveCat}>
+   288→          <ScrollArea className="w-full whitespace-nowrap pb-1">
+   289→            <TabsList className="inline-flex h-9">
+   290→              <TabsTrigger value="all" className="rounded-full px-4 text-xs">All</TabsTrigger>
+   291→              {categories.map((c) => (
+   292→                <TabsTrigger key={c.id} value={c.id} className="rounded-full px-4 text-xs">{c.name}</TabsTrigger>
+   293→              ))}
+   294→            </TabsList>
+   295→          </ScrollArea>
+   296→        </Tabs>
+   297→
+   298→        {loading ? (
+   299→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
+   300→            {Array.from({ length: 8 }).map((_, i) => <Card key={i} className="h-36 animate-pulse bg-muted" />)}
+   301→          </div>
+   302→        ) : (
+   303→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
+   304→            {filtered.map((m) => {
+   305→              const out = m.stockQty <= 0
+   306→              const low = m.stockQty > 0 && m.stockQty <= 20
+   307→              return (
+   308→                <button
+   309→                  key={m.id}
+   310→                  onClick={() => addToCart(m)}
+   311→                  disabled={out}
+   312→                  className={`group relative flex flex-col rounded-xl border bg-card p-3.5 text-left transition ${out ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-lg dark:hover:border-teal-700'}`}
+   313→                >
+   314→                  <div className="flex items-start justify-between gap-2">
+   315→                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400">
+   316→                      <Pill className="h-4.5 w-4.5" />
+   317→                    </span>
+   318→                    {m.prescriptionRequired && (
+   319→                      <Badge className="rounded-full bg-sky-100 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400" variant="secondary">Rx</Badge>
+   320→                    )}
+   321→                  </div>
+   322→                  <p className="mt-2.5 line-clamp-2 min-h-9 text-sm font-semibold leading-snug">{m.name}</p>
+   323→                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{m.genericName ?? m.brand ?? m.sku}</p>
+   324→                  <div className="mt-2 flex items-end justify-between">
+   325→                    <div>
+   326→                      <p className="text-base font-bold text-teal-600 dark:text-teal-400">{fmtMoney(m.sellingPrice)}</p>
+   327→                      <p className={`text-[11px] font-medium ${out ? 'text-red-500' : low ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+   328→                        {out ? 'Out of stock' : `${m.stockQty} ${m.unit}`}
+   329→                      </p>
+   330→                    </div>
+   331→                    {!out && (
+   332→                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-600 text-white opacity-0 shadow transition group-hover:opacity-100">
+   333→                        <Plus className="h-4 w-4" />
+   334→                      </span>
+   335→                    )}
+   336→                  </div>
+   337→                </button>
+   338→              )
+   339→            })}
+   340→            {filtered.length === 0 && (
+   341→              <div className="col-span-full flex flex-col items-center gap-2 py-16 text-muted-foreground">
+   342→                <Search className="h-8 w-8 opacity-40" />
+   343→                <p className="text-sm">No products match your search.</p>
+   344→              </div>
+   345→            )}
+   346→          </div>
+   347→        )}
+   348→      </div>
+   349→
+   350→      {/* Cart */}
+   351→      <Card className="flex h-fit flex-col xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)]">
+   352→        <div className="flex items-center justify-between border-b px-4 py-3">
+   353→          <div className="flex items-center gap-2">
+   354→            <ShoppingCart className="h-4.5 w-4.5 text-teal-600 dark:text-teal-400" />
+   355→            <h3 className="font-semibold">Current Sale</h3>
+   356→            {cart.length > 0 && <Badge className="rounded-full bg-teal-600 text-white">{cart.reduce((n, l) => n + l.qty, 0)}</Badge>}
+   357→          </div>
+   358→          {shift ? (
+   359→            <Badge variant="outline" className="gap-1 rounded-full border-teal-300 bg-teal-50 text-[10px] text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+   360→              <Timer className="h-3 w-3" /> {shift.shiftNo}
+   361→            </Badge>
+   362→          ) : (
+   363→            <button onClick={() => setStartShiftOpen(true)} className="text-[11px] font-medium text-amber-600 underline-offset-2 hover:underline dark:text-amber-400">
+   364→              start shift
+   365→            </button>
+   366→          )}
+   367→          {cart.length > 0 && (
+   368→            <Button variant="ghost" size="sm" onClick={() => { setCart([]); setOrderDiscount(0) }} className="h-8 gap-1 text-xs text-red-500 hover:text-red-600">
+   369→              <Trash2 className="h-3.5 w-3.5" /> Clear
+   370→            </Button>
+   371→          )}
+   372→        </div>
+   373→
+   374→        <ScrollArea className="min-h-32 flex-1 xl:max-h-[38vh]">
+   375→          {cart.length === 0 ? (
+   376→            <div className="flex flex-col items-center gap-2 px-4 py-10 text-muted-foreground">
+   377→              <ShoppingCart className="h-8 w-8 opacity-30" />
+   378→              <p className="text-sm">Cart is empty. Click a product or scan a barcode.</p>
+   379→            </div>
+   380→          ) : (
+   381→            <div className="divide-y px-4">
+   382→              {cart.map((l) => (
+   383→                <div key={l.medicineId} className="flex items-start gap-2 py-3">
+   384→                  <div className="min-w-0 flex-1">
+   385→                    <p className="truncate text-sm font-medium">{l.name}</p>
+   386→                    <p className="text-xs text-muted-foreground tabular-nums">{fmtMoney(l.unitPrice)} × {l.qty} = <span className="font-semibold text-foreground">{fmtMoney(l.unitPrice * l.qty)}</span></p>
+   387→                    {l.prescriptionRequired && <Badge variant="secondary" className="mt-1 rounded-full bg-sky-100 text-[10px] text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">Rx item</Badge>}
+   388→                  </div>
+   389→                  <div className="flex items-center gap-1">
+   390→                    <Button variant="outline" size="icon" className="h-6.5 w-6.5 rounded-md" onClick={() => updateQty(l.medicineId, -1)} aria-label={`Decrease ${l.name}`}>
+   391→                      <Minus className="h-3 w-3" />
+   392→                    </Button>
+   393→                    <span className="w-7 text-center text-sm font-bold tabular-nums">{l.qty}</span>
+   394→                    <Button variant="outline" size="icon" className="h-6.5 w-6.5 rounded-md" onClick={() => updateQty(l.medicineId, 1)} aria-label={`Increase ${l.name}`}>
+   395→                      <Plus className="h-3 w-3" />
+   396→                    </Button>
+   397→                    <Button variant="ghost" size="icon" className="h-6.5 w-6.5 rounded-md text-muted-foreground hover:text-red-500" onClick={() => removeLine(l.medicineId)} aria-label={`Remove ${l.name}`}>
+   398→                      <X className="h-3.5 w-3.5" />
+   399→                    </Button>
+   400→                  </div>
+   401→                </div>
+   402→              ))}
+   403→            </div>
+   404→          )}
+   405→        </ScrollArea>
+   406→
+   407→        <div className="space-y-2.5 border-t px-4 py-3 text-sm">
+   408→          <div className="flex items-center justify-between">
+   409→            <span className="text-muted-foreground">Subtotal</span>
+   410→            <span className="font-medium tabular-nums">{fmtMoney(subtotal)}</span>
+   411→          </div>
+   412→          <div className="flex items-center justify-between gap-3">
+   413→            <span className="text-muted-foreground">Discount</span>
+   414→            <Input
+   415→              type="number"
+   416→              min={0}
+   417→              value={orderDiscount || ''}
+   418→              onChange={(e) => setOrderDiscount(Number(e.target.value))}
+   419→              placeholder="0.00"
+   420→              className="h-7 w-24 text-right tabular-nums"
+   421→              aria-label="Order discount"
+   422→            />
+   423→          </div>
+   424→          <div className="flex items-center justify-between">
+   425→            <span className="text-muted-foreground">Tax (2.5%)</span>
+   426→            <span className="font-medium tabular-nums">{fmtMoney(taxValue)}</span>
+   427→          </div>
+   428→          <Separator />
+   429→          <div className="flex items-center justify-between">
+   430→            <span className="font-semibold">Total</span>
+   431→            <span className="text-lg font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(total)}</span>
+   432→          </div>
+   433→          {rxInCart && (
+   434→            <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:bg-sky-500/10 dark:text-sky-400">
+   435→              ⚕ {rxCount} prescription item(s) in cart — verify prescription before dispensing.
+   436→            </p>
+   437→          )}
+   438→          <Button
+   439→            className="w-full rounded-full bg-teal-600 hover:bg-teal-700"
+   440→            size="lg"
+   441→            disabled={cart.length === 0}
+   442→            onClick={() => {
+   443→              if (!shift) {
+   444→                toast({ title: 'Start your shift first', description: 'Open a shift to record this sale on your register.', variant: 'destructive' })
+   445→                setStartShiftOpen(true)
+   446→                return
+   447→              }
+   448→              setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : '')
+   449→              setCheckoutOpen(true)
+   450→            }}
+   451→          >
+   452→            Charge {fmtMoney(total)}
+   453→          </Button>
+   454→        </div>
+   455→      </Card>
+   456→
+   457→      {/* Checkout dialog */}
+   458→      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+   459→        <DialogContent className="sm:max-w-md">
+   460→          <DialogHeader>
+   461→            <DialogTitle>Complete Sale</DialogTitle>
+   462→          </DialogHeader>
+   463→          <div className="space-y-4">
+   464→            <div className="rounded-xl bg-muted/60 p-4 text-center">
+   465→              <p className="text-xs uppercase tracking-wider text-muted-foreground">Amount Due</p>
+   466→              <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(total)}</p>
+   467→              <p className="mt-0.5 text-xs text-muted-foreground">{cart.reduce((n, l) => n + l.qty, 0)} items · incl. {fmtMoney(taxValue)} tax</p>
+   468→            </div>
+   469→
+   470→            <div className="grid grid-cols-4 gap-2">
+   471→              {PAYMENT_METHODS.map((pm) => (
+   472→                <button
+   473→                  key={pm.value}
+   474→                  onClick={() => setPaymentMethod(pm.value)}
+   475→                  className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition ${paymentMethod === pm.value ? 'border-teal-500 bg-teal-50 text-teal-700 shadow-sm dark:bg-teal-500/10 dark:text-teal-300' : 'hover:bg-muted'}`}
+   476→                >
+   477→                  {methodIcon(pm.value)}
+   478→                  {pm.label}
+   479→                </button>
+   480→              ))}
+   481→            </div>
+   482→
+   483→            <div className="space-y-3">
+   484→              <div className="space-y-1.5">
+   485→                <Label>Customer</Label>
+   486→                <Select value={customerId} onValueChange={setCustomerId}>
+   487→                  <SelectTrigger><SelectValue /></SelectTrigger>
+   488→                  <SelectContent>
+   489→                    <SelectItem value="walkin">Walk-in Customer</SelectItem>
+   490→                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+   491→                  </SelectContent>
+   492→                </Select>
+   493→              </div>
+   494→
+   495→              {paymentMethod === 'cash' && (
+   496→                <>
+   497→                  <div className="grid grid-cols-2 gap-3">
+   498→                    <div className="space-y-1.5">
+   499→                      <Label>Cash Tendered</Label>
+   500→                      <Input type="number" min={0} value={tendered} onChange={(e) => setTendered(e.target.value)} className="tabular-nums" />
+   501→                    </div>
+   502→                    <div className="space-y-1.5">
+   503→                      <Label>Change Due</Label>
+   504→                      <div className={`flex h-9 items-center rounded-md border px-3 font-bold tabular-nums ${change > 0 ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'text-muted-foreground'}`}>
+   505→                        {fmtMoney(change)}
+   506→                      </div>
+   507→                    </div>
+   508→                  </div>
+   509→                  <div className="flex gap-2">
+   510→                    {[total, 10, 20, 50, 100].map((v, i) => (
+   511→                      <Button key={i} variant="outline" size="sm" className="flex-1 rounded-full text-xs tabular-nums" onClick={() => setTendered(String(i === 0 ? Math.ceil(v * 100) / 100 : v))}>
+   512→                        {i === 0 ? 'Exact' : `$${v}`}
+   513→                      </Button>
+   514→                    ))}
+   515→                  </div>
+   516→                </>
+   517→              )}
+   518→
+   519→              <div className="space-y-1.5">
+   520→                <Label>Note (optional)</Label>
+   521→                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. insurance claim #, remarks" />
+   522→              </div>
+   523→            </div>
+   524→
+   525→            <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={checkout} disabled={submitting}>
+   526→              {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(total)}</>}
+   527→            </Button>
+   528→          </div>
+   529→        </DialogContent>
+   530→      </Dialog>
+   531→
+   532→      {/* Start shift dialog (shift gating) */}
+   533→      <StartShiftDialog open={startShiftOpen} onOpenChange={setStartShiftOpen} onStarted={loadCurrentShift} />
+   534→
+   535→      {/* Receipt dialog */}
+   536→      <Dialog open={!!receipt} onOpenChange={(open) => !open && setReceipt(null)}>
+   537→        <DialogContent className="sm:max-w-sm">
+   538→          <DialogHeader>
+   539→            <DialogTitle className="flex items-center gap-2">
+   540→              <CheckCircle2 className="h-5 w-5 text-emerald-500" /> Payment Successful
+   541→            </DialogTitle>
+   542→          </DialogHeader>
+   543→          {receipt && (
+   544→            <div className="space-y-3">
+   545→              <div className="max-h-[50vh] overflow-y-auto rounded-lg border bg-white">
+   546→                <ThermalReceipt sale={receipt} settings={storeSettings ?? null} />
+   547→              </div>
+   548→              <div className="flex gap-2 print:hidden">
+   549→                <Button variant="outline" className="flex-1 rounded-full" onClick={() => printWithPageStyle(THERMAL_PAGE_CSS)}>
+   550→                  <Printer className="h-4 w-4" /> Print 80mm Receipt
+   551→                </Button>
+   552→                <Button className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setReceipt(null)}>
+   553→                  New Sale
+   554→                </Button>
+   555→              </div>
+   556→            </div>
+   557→          )}
+   558→        </DialogContent>
+   559→      </Dialog>
+   560→    </div>
+   561→  )
+   562→}
+   563→

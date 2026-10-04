@@ -17,6 +17,8 @@ export interface ReceiptSale {
   cashierName?: string
   customerName?: string | null
   shiftNo?: string | null
+  approvedByName?: string | null
+  branchName?: string | null
   items: Array<{ name: string; qty: number; unitPrice: number; total: number }>
 }
 
@@ -69,6 +71,11 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
           <span>Shift: {sale.shiftNo}</span>
         </div>
       )}
+      {sale.branchName && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+          <span>Branch: {sale.branchName}</span>
+        </div>
+      )}
 
       <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
 
@@ -97,6 +104,9 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
           <span>Discount</span><span>-{fmtMoney(sale.discount)}</span>
         </div>
+      )}
+      {sale.discount > 0 && sale.approvedByName && (
+        <div style={{ fontSize: '9px', color: '#333' }}>Approved by: {sale.approvedByName}</div>
       )}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
         <span>Tax</span><span>{fmtMoney(sale.tax)}</span>

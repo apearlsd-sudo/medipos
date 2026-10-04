@@ -15,6 +15,9 @@ export interface AuthUser {
   permissions: string[] // permission keys; ['*'] = super admin wildcard
   status: string
   lastLoginAt?: string | null
+  branchId?: string | null
+  branchName?: string | null
+  twoFactorEnabled?: boolean
 }
 
 interface UserContextValue {

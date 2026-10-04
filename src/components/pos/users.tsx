@@ -47,6 +47,8 @@ interface UserRow {
   isSuperAdmin: boolean
   status: string
   lastLoginAt: string | null
+  branchId: string | null
+  branchName: string | null
 }
 
 interface RoleRow {
@@ -80,7 +82,14 @@ interface AuditEntry {
   createdAt: string
 }
 
-const EMPTY_USER_FORM = { name: '', username: '', email: '', phone: '', roleId: '', password: '', status: 'active' }
+const EMPTY_USER_FORM = { name: '', username: '', email: '', phone: '', roleId: '', password: '', status: 'active', branchId: '' }
+
+interface BranchOption {
+  id: string
+  name: string
+  code: string
+  isActive: boolean
+}
 
 function RoleIcon({ slug, className }: { slug: string; className?: string }) {
   if (slug === 'admin') return <ShieldCheck className={className} />
@@ -138,6 +147,7 @@ export function Users() {
 
   // --- roles ---
   const [roles, setRoles] = useState<RoleRow[]>([])
+  const [branches, setBranches] = useState<BranchOption[]>([])
   const [rolesLoading, setRolesLoading] = useState(true)
   const [roleDialogOpen, setRoleDialogOpen] = useState(false)
   const [editingRole, setEditingRole] = useState<RoleRow | null>(null)
@@ -179,17 +189,19 @@ export function Users() {
     }
   }, [])
 
+  // Branches (for the user form's branch assignment) — super admin only
+  useEffect(() => {
+    if (!me.isSuperAdmin) return
+    fetch('/api/branches', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setBranches(j?.branches ?? []))
+      .catch(() => {})
+  }, [me.isSuperAdmin])
+
   useEffect(() => {
     load()
     loadRoles()
   }, [load, loadRoles])
-
-  // Load audit trail the first time its tab opens
-  useEffect(() => {
-    if (tab === 'audit' && !auditLoaded) {
-      loadAudit()
-    }
-  }, [tab, auditLoaded, loadAudit])
 
   const roleNameOf = useCallback(
     (roleId: string) => roles.find((r) => r.id === roleId)?.name ?? 'Role',
@@ -217,6 +229,13 @@ export function Users() {
     }
   }, [auditType, auditSearch, auditLogs.length])
 
+  // Load audit trail the first time its tab opens
+  useEffect(() => {
+    if (tab === 'audit' && !auditLoaded) {
+      loadAudit()
+    }
+  }, [tab, auditLoaded, loadAudit])
+
   // --- user CRUD -----------------------------------------------------------
 
   const openCreate = () => {
@@ -228,7 +247,7 @@ export function Users() {
 
   const openEdit = (u: UserRow) => {
     setEditing(u)
-    setForm({ name: u.name, username: u.username, email: u.email ?? '', phone: u.phone ?? '', roleId: u.roleId ?? '', password: '', status: u.status })
+    setForm({ name: u.name, username: u.username, email: u.email ?? '', phone: u.phone ?? '', roleId: u.roleId ?? '', password: '', status: u.status, branchId: u.branchId ?? '' })
     setDialogOpen(true)
   }
 
@@ -539,6 +558,7 @@ export function Users() {
                       <tr className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
                         <th className="px-4 py-3 font-medium">User</th>
                         <th className="px-4 py-3 font-medium">Role</th>
+                        <th className="hidden lg:table-cell px-4 py-3 font-medium">Branch</th>
                         <th className="px-4 py-3 font-medium">Contact</th>
                         <th className="px-4 py-3 font-medium">Status</th>
                         <th className="px-4 py-3 font-medium">Last Login</th>
@@ -567,6 +587,7 @@ export function Users() {
                             <td className="px-4 py-3">
                               <Badge className={`rounded-full border-transparent ${roleBadgeClass(u.role)}`}>{roleLabel(u.role, u.roleName)}</Badge>
                             </td>
+                            <td className="hidden px-4 py-3 text-sm text-muted-foreground lg:table-cell">{u.branchName ?? 'All (HQ)'}</td>
                             <td className="px-4 py-3 text-xs text-muted-foreground">
                               <p>{u.email ?? '—'}</p>
                               <p>{u.phone ?? ''}</p>
@@ -893,6 +914,8 @@ export function Users() {
         form={form}
         setForm={setForm}
         roles={roles}
+        branches={branches}
+        showBranch={me.isSuperAdmin}
         saving={saving}
         onSave={save}
       />
@@ -1036,7 +1059,7 @@ function ModuleMatrixGroup({
 // ---------------------------------------------------------------------------
 
 function UserDialog({
-  open, onOpenChange, editing, isSelf, form, setForm, roles, saving, onSave,
+  open, onOpenChange, editing, isSelf, form, setForm, roles, branches, showBranch, saving, onSave,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -1045,6 +1068,8 @@ function UserDialog({
   form: typeof EMPTY_USER_FORM
   setForm: React.Dispatch<React.SetStateAction<typeof EMPTY_USER_FORM>>
   roles: RoleRow[]
+  branches: BranchOption[]
+  showBranch: boolean
   saving: boolean
   onSave: () => void
 }) {
@@ -1099,6 +1124,21 @@ function UserDialog({
             <div className="space-y-1.5">
               <Label>Password *</Label>
               <Input type="password" value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min 4 characters" />
+            </div>
+          )}
+          {showBranch && !isSelf && (
+            <div className="space-y-1.5">
+              <Label>Branch</Label>
+              <Select value={form.branchId || 'none'} onValueChange={(v) => setForm((f) => ({ ...f, branchId: v === 'none' ? '' : v }))}>
+                <SelectTrigger><SelectValue placeholder="Select branch" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">All branches (HQ)</SelectItem>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>{b.name} · {b.code}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">Staff locked to a branch see only that store&apos;s stock, sales and shifts.</p>
             </div>
           )}
           {editing && (

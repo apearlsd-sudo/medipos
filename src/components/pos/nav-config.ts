@@ -8,10 +8,12 @@ export type ViewKey =
   | 'stock-take'
   | 'purchases'
   | 'sales'
+  | 'approvals'
   | 'customers'
   | 'suppliers'
   | 'prescriptions'
   | 'reports'
+  | 'branches'
   | 'users'
   | 'settings'
 
@@ -72,6 +74,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: 'shifts', label: 'Shift Management', icon: 'Timer', permission: ['shifts', 'view'] },
       { key: 'sales', label: 'Sales & Invoices', icon: 'ReceiptText', permission: ['sales', 'view'] },
+      { key: 'approvals', label: 'Discount Approvals', icon: 'BadgePercent', permission: ['discounts', 'view'] },
     ],
   },
   {
@@ -96,6 +99,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     title: 'Administration',
     items: [
+      { key: 'branches', label: 'Branches', icon: 'Building2', permission: ['branches', 'view'] },
       { key: 'users', label: 'Users & Roles', icon: 'ShieldCheck', permission: ['users', 'view'], altPermission: ['audit', 'view'] },
       { key: 'settings', label: 'Settings', icon: 'Settings', permission: ['settings', 'view'] },
     ],

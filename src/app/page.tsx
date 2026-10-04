@@ -1,13 +1,15 @@
 'use client'
 
 import { Dashboard } from '@/components/pos/dashboard'
-import { Header } from '@/components/pos/header'
+import { Header, BRANCH_EVENT, BRANCH_STORAGE_KEY } from '@/components/pos/header'
 import { Sidebar } from '@/components/pos/sidebar'
 import { POSTerminal } from '@/components/pos/pos-terminal'
 import { Shifts } from '@/components/pos/shifts'
 import { Medicines } from '@/components/pos/medicines'
 import { Purchases } from '@/components/pos/purchases'
 import { Sales } from '@/components/pos/sales'
+import { Approvals } from '@/components/pos/approvals'
+import { Branches } from '@/components/pos/branches'
 import { Customers } from '@/components/pos/customers'
 import { Suppliers } from '@/components/pos/suppliers'
 import { Categories } from '@/components/pos/categories'
@@ -35,10 +37,12 @@ const VIEW_TITLES: Record<ViewKey, string> = {
   'stock-take': 'Stock Take',
   purchases: 'Purchases',
   sales: 'Sales & Invoices',
+  approvals: 'Discount Approvals',
   customers: 'Customers',
   suppliers: 'Suppliers',
   prescriptions: 'Prescriptions',
   reports: 'Reports',
+  branches: 'Branches',
   users: 'Users & Roles',
   settings: 'Settings',
 }
@@ -60,6 +64,7 @@ export default function Home() {
   const [quickSearch, setQuickSearch] = useState('')
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [posKey, setPosKey] = useState(0)
+  const [branchKey, setBranchKey] = useState(0) // bumped when the super admin switches branch
   const userRef = useRef<AuthUser | null>(null)
   useEffect(() => {
     userRef.current = user
@@ -74,11 +79,24 @@ export default function Home() {
     setUser(null)
   }, [])
 
-  // Global 401 interceptor: any API auth failure bounces back to the login screen.
+  // Global 401 interceptor + branch-scoping injector:
+  // any API auth failure bounces to login; GET /api/* requests carry the
+  // super admin's selected branch so every module reads branch-filtered data.
   useEffect(() => {
     const rawFetch = window.fetch.bind(window)
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
-      const res = await rawFetch(input, init)
+      let req = input
+      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
+      if (typeof input === 'string' && input.startsWith('/api/') && method === 'GET') {
+        const skip = ['/api/auth/', '/api/shifts/current', '/api/branches']
+        if (!skip.some((p) => input.startsWith(p)) && !input.includes('branchId=')) {
+          const sel = localStorage.getItem(BRANCH_STORAGE_KEY)
+          if (sel && sel !== 'all') {
+            req = input + (input.includes('?') ? '&' : '?') + 'branchId=' + encodeURIComponent(sel)
+          }
+        }
+      }
+      const res = await rawFetch(req, init)
       const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
       if (res.status === 401 && !url.includes('/api/auth/') && userRef.current) {
         setUser(null)
@@ -89,6 +107,9 @@ export default function Home() {
       window.fetch = rawFetch
     }
   }, [])
+
+  // Super admin switched branch → remount all data views with the new scope.
+  // Registered after loadAlerts below; see the effect following loadAlerts.
 
   // Bootstrap: session + settings (currency/locale hydration)
   useEffect(() => {
@@ -139,6 +160,18 @@ export default function Home() {
     const t = setTimeout(loadAlerts, 0)
     return () => clearTimeout(t)
   }, [loadAlerts, user])
+
+  // Super admin switched branch → remount data views + refresh stock alerts
+  useEffect(() => {
+    const onChange = () => {
+      setBranchKey((k) => k + 1)
+      if (userRef.current && userCan(userRef.current, 'dashboard', 'view') && userCan(userRef.current, 'inventory', 'view')) {
+        loadAlerts()
+      }
+    }
+    window.addEventListener(BRANCH_EVENT, onChange)
+    return () => window.removeEventListener(BRANCH_EVENT, onChange)
+  }, [loadAlerts])
 
   // Loading splash while checking session
   if (!authReady) {
@@ -198,11 +231,12 @@ export default function Home() {
             onQuickSearch={(q) => { setQuickSearch(q); navigate('medicines') }}
             onGotoPOS={() => navigate('pos')}
             onGotoShifts={() => navigate('shifts')}
+            onGotoApprovals={() => navigate('approvals')}
             alerts={alerts}
             onAlertClick={() => navigate(canAccessView(user, 'inventory') ? 'inventory' : 'medicines')}
           />
 
-          <main className="flex-1 p-4 sm:p-6">
+          <main key={branchKey} className="flex-1 p-4 sm:p-6">
             {activeView === 'dashboard' && <Dashboard onNavigate={navigate} />}
             {activeView === 'pos' && <POSTerminal key={posKey} onSalesRecorded={loadAlerts} storeSettings={settings} />}
             {activeView === 'shifts' && <Shifts storeSettings={settings} />}
@@ -212,6 +246,8 @@ export default function Home() {
             {activeView === 'stock-take' && <StockTake storeSettings={settings} />}
             {activeView === 'purchases' && <Purchases onPurchasesChanged={loadAlerts} />}
             {activeView === 'sales' && <Sales onSalesChanged={loadAlerts} storeSettings={settings} />}
+            {activeView === 'approvals' && <Approvals />}
+            {activeView === 'branches' && <Branches />}
             {activeView === 'customers' && <Customers />}
             {activeView === 'suppliers' && <Suppliers />}
             {activeView === 'prescriptions' && <Prescriptions />}

@@ -72,6 +72,9 @@ export interface SessionUser {
   isSuperAdmin: boolean
   permissions: string[] // permission keys; ['*'] = super admin wildcard
   status: string
+  branchId: string | null // assigned branch (null = all branches)
+  branchName: string | null
+  twoFactorEnabled: boolean
 }
 
 export const ROLE_WEIGHT: Record<string, number> = { cashier: 1, pharmacist: 2, admin: 3 }
@@ -89,7 +92,10 @@ export async function getSessionUser(req: NextRequest): Promise<SessionUser | nu
   if (!session) return null
   const user = await db.user.findUnique({
     where: { id: session.uid },
-    include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+    include: {
+      roleRef: { include: { permissions: { select: { key: true } } } },
+      branchRef: { select: { id: true, name: true } },
+    },
   })
   if (!user || user.status !== 'active') return null
   const isSuperAdmin = user.role === 'admin' || user.roleRef?.slug === 'admin'
@@ -105,6 +111,9 @@ export async function getSessionUser(req: NextRequest): Promise<SessionUser | nu
     isSuperAdmin,
     permissions: isSuperAdmin ? ['*'] : (user.roleRef?.permissions ?? []).map((p) => p.key),
     status: user.status,
+    branchId: user.branchId,
+    branchName: user.branchRef?.name ?? null,
+    twoFactorEnabled: user.twoFactorEnabled,
   }
 }
 
@@ -170,6 +179,31 @@ export async function requirePermission(req: NextRequest, module: string, action
   return { user }
 }
 
+// Two-factor login challenge tokens (short-lived, purpose-bound) ---------------
+
+const CHALLENGE_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+export function createChallengeToken(userId: string): string {
+  const payload = b64url(JSON.stringify({ uid: userId, exp: Date.now() + CHALLENGE_TTL_MS, p: '2fa' }))
+  return `${payload}.${sign(payload)}`
+}
+
+export function parseChallengeToken(token: string): { uid: string } | null {
+  const [payload, sig] = token.split('.')
+  if (!payload || !sig) return null
+  const expected = sign(payload)
+  const a = Buffer.from(sig)
+  const b = Buffer.from(expected)
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
+  try {
+    const data = JSON.parse(Buffer.from(payload, 'base64url').toString()) as { uid: string; exp: number; p: string }
+    if (!data.uid || !data.exp || data.exp < Date.now() || data.p !== '2fa') return null
+    return { uid: data.uid }
+  } catch {
+    return null
+  }
+}
+
 // Cookie helpers -------------------------------------------------------------
 
 export const sessionCookie = {
@@ -205,6 +239,9 @@ type UserWithRole = {
   roleId: string | null
   status: string
   lastLoginAt: Date | null
+  twoFactorEnabled?: boolean
+  branchId?: string | null
+  branchRef?: { id: string; name: string } | null
   roleRef?: {
     name: string
     slug: string
@@ -227,5 +264,8 @@ export function sanitizeUser(user: UserWithRole) {
     permissions: isSuperAdmin ? ['*'] : (user.roleRef?.permissions ?? []).map((p) => p.key),
     status: user.status,
     lastLoginAt: user.lastLoginAt,
+    branchId: user.branchId ?? null,
+    branchName: user.branchRef?.name ?? null,
+    twoFactorEnabled: user.twoFactorEnabled ?? false,
   }
 }

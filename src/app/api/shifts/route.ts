@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { can, requireUser } from '@/lib/auth'
 import { nextShiftNo, computeShiftSummary } from '@/lib/shifts'
+import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
 /** GET /api/shifts — role-aware list. Admin/pharmacist see all; cashier sees own. */
 export async function GET(req: NextRequest) {
@@ -11,9 +12,11 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const status = searchParams.get('status')
     const search = searchParams.get('search')?.trim()
+    const scope = resolveBranchScope(gate.user, searchParams)
 
     const where: Record<string, unknown> = {}
     if (!can(gate.user, 'shifts', 'close')) where.userId = gate.user.id
+    if (scope.branchId) where.branchId = scope.branchId
     if (status && status !== 'all') where.status = status
     if (search) {
       where.OR = [{ shiftNo: { contains: search } }, { userName: { contains: search } }]
@@ -105,6 +108,7 @@ export async function POST(req: NextRequest) {
         userId: gate.user.id,
         userName: gate.user.name,
         userRole: gate.user.role,
+        branchId: await branchIdForWrite(gate.user, body.branchId),
         openingCash,
         note: body.note || null,
         status: 'open',

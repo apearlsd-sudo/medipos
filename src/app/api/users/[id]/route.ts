@@ -82,11 +82,26 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       summaryParts.push('reset the password')
       changeLog.passwordReset = true
     }
+    // Branch assignment (super admin managing staff across stores)
+    if (body.branchId !== undefined) {
+      const branchId = typeof body.branchId === 'string' && body.branchId ? body.branchId : null
+      if (branchId) {
+        const branch = await db.branch.findUnique({ where: { id: branchId } })
+        if (!branch) return NextResponse.json({ error: 'Selected branch was not found' }, { status: 400 })
+      }
+      if ((existing.branchId ?? null) !== branchId) {
+        summaryParts.push(branchId ? 'changed branch assignment' : 'cleared branch assignment')
+      }
+      data.branchId = branchId
+    }
 
     const user = await db.user.update({
       where: { id },
       data,
-      include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+      include: {
+        roleRef: { include: { permissions: { select: { key: true } } } },
+        branchRef: { select: { id: true, name: true } },
+      },
     })
     if (summaryParts.length > 0) {
       await logAudit({

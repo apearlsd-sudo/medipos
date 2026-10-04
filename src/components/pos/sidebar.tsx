@@ -6,12 +6,12 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
 import { NAV_GROUPS, canAccessNavItem, type PermissionSubject, type ViewKey } from '@/components/pos/nav-config'
 import { roleLabel } from '@/components/pos/user-context'
 import {
-  Boxes, ChartNoAxesColumn, ChevronLeft, ClipboardCheck, ClipboardList, FileHeart, LayoutDashboard, LayoutGrid,
+  BadgePercent, Boxes, Building2, ChartNoAxesColumn, ChevronLeft, ClipboardCheck, ClipboardList, FileHeart, LayoutDashboard, LayoutGrid,
   Pill, ReceiptText, Settings, ShieldCheck, ShoppingCart, Timer, Truck, Users, Activity,
 } from 'lucide-react'
 
 const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  LayoutDashboard, ShoppingCart, Pill, LayoutGrid, Boxes, ReceiptText, ClipboardList, Truck, Users, FileHeart, ChartNoAxesColumn, Settings, ShieldCheck, Timer, ClipboardCheck,
+  LayoutDashboard, ShoppingCart, Pill, LayoutGrid, Boxes, ReceiptText, ClipboardList, Truck, Users, FileHeart, ChartNoAxesColumn, Settings, ShieldCheck, Timer, ClipboardCheck, BadgePercent, Building2,
 }
 
 interface SidebarProps {

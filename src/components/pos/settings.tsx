@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/pos/shared'
 import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
+import { TwoFactorCard } from '@/components/pos/security-settings'
+import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
-import { BadgeCheck, Loader2, Moon, Printer, Save, Store, Sun, Wallet } from 'lucide-react'
+import { BadgeCheck, Loader2, Moon, Percent, Printer, Save, ShieldCheck, Store, Sun, Wallet } from 'lucide-react'
 
 interface StoreSettings {
   storeName: string
@@ -28,6 +30,9 @@ interface StoreSettings {
   receiptHeader: string
   receiptFooter: string
   receiptShowBarcode: string
+  discountApprovalEnabled: string
+  discountApprovalPct: string
+  discountApprovalAmount: string
 }
 
 const DEFAULTS: StoreSettings = {
@@ -44,6 +49,9 @@ const DEFAULTS: StoreSettings = {
   receiptHeader: 'Thank you for choosing MediPOS Pharmacy — get well soon!',
   receiptFooter: 'Returns accepted within 14 days with this receipt.',
   receiptShowBarcode: 'true',
+  discountApprovalEnabled: 'true',
+  discountApprovalPct: String(DISCOUNT_POLICY_DEFAULTS.pct),
+  discountApprovalAmount: String(DISCOUNT_POLICY_DEFAULTS.amount),
 }
 
 export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
@@ -184,6 +192,36 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input disabled={!canEditSettings} type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><Percent className="h-4 w-4 text-teal-500" /> Discount Approval Policy</CardTitle>
+              <CardDescription>
+                Order discounts beyond this rule need a manager&apos;s OK at the till or via the approvals queue.
+                {(() => { const p = discountPolicyFromSettings(settings as unknown as Record<string, string>); return p.enabled ? ` Current rule: ${describeDiscountPolicy(p)}.` : ' Currently disabled.' })()}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between rounded-xl border p-3">
+                <div>
+                  <Label>Require approval for large discounts</Label>
+                  <p className="text-xs text-muted-foreground">Cashiers can still request approval from a manager.</p>
+                </div>
+                <Switch checked={settings.discountApprovalEnabled !== 'false'} disabled={!canEditSettings} onCheckedChange={(v) => set('discountApprovalEnabled', String(v))} />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>Discount % of order ≥</Label>
+                  <Input disabled={!canEditSettings} type="number" min={0} step="0.5" value={settings.discountApprovalPct} onChange={(e) => set('discountApprovalPct', e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Discount amount ≥</Label>
+                  <Input disabled={!canEditSettings} type="number" min={0} value={settings.discountApprovalAmount} onChange={(e) => set('discountApprovalAmount', e.target.value)} />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">Set a value to 0 to ignore that trigger. Sales are blocked server-side until a manager with the “Discount Approvals · Approve” permission authorizes them.</p>
+            </CardContent>
+          </Card>
         </div>
 
         <div className="space-y-4">
@@ -239,7 +277,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <CardTitle className="text-base">Your Session</CardTitle>
               <CardDescription>Signed-in identity and permission level.</CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
               <div className="flex items-center justify-between rounded-xl border p-4">
                 <div>
                   <p className="font-semibold">{user.name}</p>
@@ -249,6 +287,19 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                   {roleLabel(user.role, user.roleName)}
                 </span>
               </div>
+              <TwoFactorCard />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-teal-500" /> Account Security</CardTitle>
+              <CardDescription>Your sign-in safety — available to every account.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground">
+                Two-factor sign-in is enforced per user, not per role: when enabled, signing in requires both your password and a rotating 6-digit code from your authenticator app. Recovery codes let you back in if you change devices.
+              </p>
             </CardContent>
           </Card>
         </div>

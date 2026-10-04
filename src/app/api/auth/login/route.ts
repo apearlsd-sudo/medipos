@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { verifyPassword, createSessionToken, sessionCookie, sanitizeUser } from '@/lib/auth'
+import { verifyPassword, createSessionToken, createChallengeToken, sessionCookie, sanitizeUser } from '@/lib/auth'
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,13 +11,26 @@ export async function POST(req: NextRequest) {
 
     const user = await db.user.findUnique({
       where: { username: String(username).trim().toLowerCase() },
-      include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+      include: {
+        roleRef: { include: { permissions: { select: { key: true } } } },
+        branchRef: { select: { id: true, name: true } },
+      },
     })
     if (!user || !verifyPassword(String(password), user.passwordHash)) {
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
     }
     if (user.status !== 'active') {
       return NextResponse.json({ error: 'This account has been suspended. Contact your administrator.' }, { status: 403 })
+    }
+
+    // Two-factor enabled → do NOT open a session yet. Issue a short-lived
+    // purpose-bound challenge the client must redeem with a valid OTP.
+    if (user.twoFactorEnabled && user.twoFactorSecret) {
+      return NextResponse.json({
+        twoFactorRequired: true,
+        challenge: createChallengeToken(user.id),
+        displayName: user.name,
+      })
     }
 
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } })

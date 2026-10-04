@@ -29,7 +29,10 @@ export async function GET(req: NextRequest) {
   try {
     const users = await db.user.findMany({
       orderBy: { createdAt: 'asc' },
-      include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+      include: {
+        roleRef: { include: { permissions: { select: { key: true } } } },
+        branchRef: { select: { id: true, name: true } },
+      },
     })
     return NextResponse.json({ users: users.map(sanitizeUser) })
   } catch (e) {
@@ -66,9 +69,13 @@ export async function POST(req: NextRequest) {
         phone: body.phone || null,
         role: role?.slug ?? 'cashier',
         roleId: role?.id ?? null,
+        branchId: typeof body.branchId === 'string' && body.branchId ? body.branchId : null,
         status: body.status === 'suspended' ? 'suspended' : 'active',
       },
-      include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+      include: {
+        roleRef: { include: { permissions: { select: { key: true } } } },
+        branchRef: { select: { id: true, name: true } },
+      },
     })
     await logAudit({
       actor: gate.user,

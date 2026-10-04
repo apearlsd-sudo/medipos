@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'purchases', 'view')
@@ -9,8 +10,10 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const search = searchParams.get('search')?.trim()
     const status = searchParams.get('status')
+    const scope = resolveBranchScope(gate.user, searchParams)
 
     const where: Record<string, unknown> = {}
+    if (scope.branchId) where.branchId = scope.branchId
     if (search) {
       where.OR = [{ referenceNo: { contains: search } }, { supplier: { is: { name: { contains: search } } } }]
     }
@@ -94,6 +97,7 @@ export async function POST(req: NextRequest) {
         data: {
           referenceNo,
           supplierId: body.supplierId || null,
+          branchId: await branchIdForWrite(gate.user, body.branchId),
           subtotal, tax, totalAmount, paidAmount, status,
           purchaseDate: body.purchaseDate ? new Date(body.purchaseDate) : new Date(),
           note: body.note || null,

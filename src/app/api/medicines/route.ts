@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requireUser, requirePermission } from '@/lib/auth'
+import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -12,8 +13,10 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status')
     const stockFilter = searchParams.get('stockFilter') // all | low | out | adequate
     const expiryFilter = searchParams.get('expiryFilter') // all | expiring | expired
+    const scope = resolveBranchScope(gate.user, searchParams)
 
     const where: Record<string, unknown> = {}
+    if (scope.branchId) where.branchId = scope.branchId
     if (search) {
       where.OR = [
         { name: { contains: search } },
@@ -84,6 +87,7 @@ export async function POST(req: NextRequest) {
         prescriptionRequired: Boolean(body.prescriptionRequired),
         location: body.location || null,
         status: body.status || 'active',
+        branchId: await branchIdForWrite(gate.user, body.branchId),
       },
       include: { category: true, supplier: true },
     })

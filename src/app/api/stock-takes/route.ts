@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { nextStockTakeNo, refreshTakeCounters } from '@/lib/stock-take'
+import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
 /** GET /api/stock-takes?status=&search= — list count sessions with live aggregates. */
 export async function GET(req: NextRequest) {
@@ -11,8 +12,10 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url)
     const status = searchParams.get('status')
     const search = searchParams.get('search')?.trim()
+    const branchScope = resolveBranchScope(gate.user, searchParams)
 
     const where: Record<string, unknown> = {}
+    if (branchScope.branchId) where.branchId = branchScope.branchId
     if (status && status !== 'all') where.status = status
     if (search) {
       where.OR = [
@@ -77,6 +80,7 @@ export async function POST(req: NextRequest) {
       where: {
         status: 'active',
         ...(scope === 'category' && categoryId ? { categoryId } : {}),
+        ...(gate.user.branchId ? { branchId: gate.user.branchId } : {}),
       },
       include: { category: { select: { name: true } } },
       orderBy: { name: 'asc' },
@@ -95,6 +99,7 @@ export async function POST(req: NextRequest) {
         status: 'in_progress',
         startedById: gate.user.id,
         startedByName: gate.user.name,
+        branchId: await branchIdForWrite(gate.user, body.branchId),
         note,
         totalItems: 0,
       },

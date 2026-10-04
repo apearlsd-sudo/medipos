@@ -18,9 +18,34 @@ model User {
   roleRef     Role?     @relation(fields: [roleId], references: [id])
   roleId      String?
   status      String    @default("active") // active | suspended
+  branchRef     Branch?   @relation(fields: [branchId], references: [id])
+  branchId      String?
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String? // base32 TOTP secret (stored while setup is in progress or enabled)
+  recoveryCodes    String? // JSON array of hashed recovery codes
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique // MAIN, OSU …
+  address   String?
+  city      String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  isDefault Boolean  @default(false) // the seeded primary branch
+  users     User[]
+  medicines Medicine[]
+  sales     Sale[]
+  purchases Purchase[]
+  shifts    Shift[]
+  stockTakes StockTake[]
+  discountRequests DiscountRequest[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Role {
@@ -87,6 +112,8 @@ model Medicine {
   name                 String
   genericName          String?
   brand                String?
+  branchRef            Branch?         @relation(fields: [branchId], references: [id])
+  branchId             String?
   sku                  String          @unique
   barcode              String?
   categoryId           String
@@ -129,6 +156,11 @@ model Sale {
   customer      Customer?  @relation(fields: [customerId], references: [id])
   shiftId       String?
   shift         Shift?     @relation(fields: [shiftId], references: [id])
+  branchRef      Branch?    @relation(fields: [branchId], references: [id])
+  branchId       String?
+  approvedById   String? // manager who authorized a large-discount sale
+  approvedByName String?
+  discountRequestId String?
   subtotal      Float      @default(0)
   discount      Float      @default(0)
   tax           Float      @default(0)
@@ -162,6 +194,8 @@ model SaleItem {
 model Purchase {
   id           String         @id @default(cuid())
   referenceNo  String         @unique
+  branchRef    Branch?    @relation(fields: [branchId], references: [id])
+  branchId     String?
   supplierId   String?
   supplier     Supplier?      @relation(fields: [supplierId], references: [id])
   purchaseDate DateTime       @default(now())
@@ -223,6 +257,8 @@ model StoreSetting {
 model Shift {
   id           String         @id @default(cuid())
   shiftNo      String         @unique
+  branchRef    Branch?    @relation(fields: [branchId], references: [id])
+  branchId     String?
   userId       String
   userName     String
   userRole     String         @default("cashier")
@@ -255,6 +291,8 @@ model CashMovement {
 model StockTake {
   id              String          @id @default(cuid())
   stockTakeNo     String          @unique // ST-2026-0001
+  branchRef       Branch?    @relation(fields: [branchId], references: [id])
+  branchId        String?
   title           String
   scope           String          @default("all") // all | category
   scopeCategory   String?
@@ -302,4 +340,31 @@ model StockTakeItem {
   countedAt     DateTime?
   note          String?
   createdAt     DateTime  @default(now())
+}
+
+model DiscountRequest {
+  id             String    @id @default(cuid())
+  requestCode    String    @unique // DR-2026-0001
+  status         String    @default("pending") // pending | approved | rejected | used | cancelled
+  cashierId      String
+  cashierName    String
+  subtotal       Float     @default(0)
+  discountValue  Float     @default(0)
+  discountPct    Float     @default(0) // discount as % of subtotal, snapshot
+  itemCount      Int       @default(0)
+  itemsJson      String? // JSON snapshot of cart lines at request time
+  customerId     String?
+  reason         String?
+  reviewedById   String?
+  reviewedByName String?
+  reviewedAt     DateTime?
+  reviewNote     String?
+  saleId         String? // set once the approved draft is completed as a sale
+  branchRef      Branch?   @relation(fields: [branchId], references: [id])
+  branchId       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([cashierId])
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { can, requirePermission } from '@/lib/auth'
+import { resolveBranchScope } from '@/lib/branches'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -17,6 +18,11 @@ export async function GET(req: NextRequest) {
   const canPurchases = can(user, 'purchases', 'view')
   const canInventory = can(user, 'inventory', 'view')
   const canReports = can(user, 'reports', 'view')
+  const scope = resolveBranchScope(user, new URL(req.url).searchParams)
+  // Branch-scoped where fragments (null = all branches)
+  const saleWhere = { saleStatus: { not: 'cancelled' }, ...(scope.branchId ? { branchId: scope.branchId } : {}) }
+  const purchaseWhere = { status: { not: 'cancelled' }, ...(scope.branchId ? { branchId: scope.branchId } : {}) }
+  const medWhere = scope.branchId ? { branchId: scope.branchId } : {}
 
   try {
     const now = new Date()
@@ -26,16 +32,16 @@ export async function GET(req: NextRequest) {
     const prevWeekStart = new Date(now.getTime() - 14 * DAY)
 
     const [salesThisMonth, salesPrevMonth, salesThisWeek, salesPrevWeek, medicineCount, customerCount, supplierCount, pendingPurchases, allMeds, recentSales, topMeds, categoryStats] = await Promise.all([
-      db.sale.aggregate({ _sum: { total: true }, _count: true, where: { createdAt: { gte: monthAgo }, saleStatus: { not: 'cancelled' } } }),
-      db.sale.aggregate({ _sum: { total: true }, where: { createdAt: { gte: prevMonthStart, lt: monthAgo }, saleStatus: { not: 'cancelled' } } }),
-      db.sale.aggregate({ _sum: { total: true }, _count: true, where: { createdAt: { gte: weekAgo }, saleStatus: { not: 'cancelled' } } }),
-      db.sale.aggregate({ _sum: { total: true }, where: { createdAt: { gte: prevWeekStart, lt: weekAgo }, saleStatus: { not: 'cancelled' } } }),
-      db.medicine.count(),
+      db.sale.aggregate({ _sum: { total: true }, _count: true, where: { createdAt: { gte: monthAgo }, ...saleWhere } }),
+      db.sale.aggregate({ _sum: { total: true }, where: { createdAt: { gte: prevMonthStart, lt: monthAgo }, ...saleWhere } }),
+      db.sale.aggregate({ _sum: { total: true }, _count: true, where: { createdAt: { gte: weekAgo }, ...saleWhere } }),
+      db.sale.aggregate({ _sum: { total: true }, where: { createdAt: { gte: prevWeekStart, lt: weekAgo }, ...saleWhere } }),
+      db.medicine.count({ where: medWhere }),
       db.customer.count(),
       db.supplier.count(),
-      db.purchase.aggregate({ _sum: { totalAmount: true }, _count: true, where: { status: { in: ['pending', 'partially_paid'] } } }),
-      db.medicine.findMany({ include: { category: true } }),
-      db.sale.findMany({ take: 6, orderBy: { createdAt: 'desc' }, include: { customer: true, items: true } }),
+      db.purchase.aggregate({ _sum: { totalAmount: true }, _count: true, where: { status: { in: ['pending', 'partially_paid'] }, ...(scope.branchId ? { branchId: scope.branchId } : {}) } }),
+      db.medicine.findMany({ where: medWhere, include: { category: true } }),
+      db.sale.findMany({ take: 6, orderBy: { createdAt: 'desc' }, where: scope.branchId ? { branchId: scope.branchId } : {}, include: { customer: true, items: true } }),
       db.saleItem.groupBy({ by: ['medicineId'], _sum: { qty: true, total: true }, orderBy: { _sum: { qty: 'desc' } }, take: 7 }),
       db.saleItem.groupBy({ by: ['medicineId'], _sum: { qty: true, total: true } }),
     ])
@@ -43,13 +49,13 @@ export async function GET(req: NextRequest) {
     // 14-day sales & purchases trend
     const sales14 = canSales
       ? await db.sale.findMany({
-          where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, saleStatus: { not: 'cancelled' } },
+          where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, ...saleWhere },
           select: { total: true, createdAt: true },
         })
       : []
     const purchases14 = canPurchases
       ? await db.purchase.findMany({
-          where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, status: { not: 'cancelled' } },
+          where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, ...purchaseWhere },
           select: { totalAmount: true, createdAt: true },
         })
       : []

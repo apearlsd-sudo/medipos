@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Activity, Eye, EyeOff, Lock, Loader2, ShieldCheck, LogIn, Pill, ReceiptText, BarChart3 } from 'lucide-react'
+import { Activity, Eye, EyeOff, Lock, Loader2, ShieldCheck, LogIn, Pill, ReceiptText, BarChart3, KeyRound, ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import type { AuthUser } from '@/components/pos/user-context'
 
@@ -21,6 +21,12 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  // Two-factor step state
+  const [challenge, setChallenge] = useState<string | null>(null)
+  const [challengeUser, setChallengeUser] = useState('')
+  const [otp, setOtp] = useState('')
+  const [useRecovery, setUseRecovery] = useState(false)
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
@@ -34,6 +40,34 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
       const json = await res.json()
       if (!res.ok) {
         setError(json.error ?? 'Login failed')
+        return
+      }
+      if (json.twoFactorRequired) {
+        setChallenge(json.challenge)
+        setChallengeUser(json.displayName || username)
+        return
+      }
+      onLogin(json.user)
+    } catch {
+      setError('Network error — please try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const submitOtp = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setBusy(true)
+    try {
+      const res = await fetch('/api/auth/2fa/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ challenge, code: otp }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setError(json.error ?? 'Verification failed')
         return
       }
       onLogin(json.user)
@@ -50,49 +84,121 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
     setError('')
   }
 
+  const branding = (
+    <div className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-teal-700 via-teal-800 to-teal-950 lg:flex lg:flex-col lg:justify-between lg:p-12">
+      <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full bg-teal-500/10 blur-3xl" />
+      <div className="absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-emerald-400/10 blur-3xl" />
+
+      <div className="relative flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-teal-400 to-teal-600 shadow-lg shadow-teal-500/30">
+          <Activity className="h-6 w-6 text-white" />
+        </div>
+        <div>
+          <p className="text-lg font-bold tracking-tight text-white">MediPOS <span className="text-teal-300">Pro</span></p>
+          <p className="text-[11px] uppercase tracking-widest text-teal-400/80">Pharmacy Management Suite</p>
+        </div>
+      </div>
+
+      <div className="relative space-y-8">
+        <h1 className="max-w-md text-4xl font-bold leading-tight tracking-tight text-white">
+          Run your pharmacy with <span className="text-teal-300">precision and speed.</span>
+        </h1>
+        <div className="space-y-5">
+          {[
+            { icon: ReceiptText, title: 'Lightning-fast POS', desc: 'Barcode scanning, thermal receipts & multi-payment checkout' },
+            { icon: Pill, title: 'Smart inventory', desc: 'Batch tracking, expiry alerts, low-stock reorder points' },
+            { icon: BarChart3, title: 'Actionable insights', desc: 'Revenue, profit & stock reports with PDF export' },
+            { icon: ShieldCheck, title: 'Bank-grade security', desc: 'Roles, granular permissions & two-factor authentication' },
+          ].map((f) => (
+            <div key={f.title} className="flex items-start gap-4">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10 text-teal-200 backdrop-blur">
+                <f.icon className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="font-semibold text-white">{f.title}</p>
+                <p className="text-sm text-teal-200/70">{f.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <p className="relative text-xs text-teal-300/60">© {new Date().getFullYear()} MediPOS. All rights reserved.</p>
+    </div>
+  )
+
+  // ---------------------------------------------------------------------------
+  // Step 2 — two-factor verification
+  // ---------------------------------------------------------------------------
+  if (challenge) {
+    return (
+      <div className="flex min-h-screen bg-background">
+        {branding}
+        <div className="flex w-full items-center justify-center p-6 lg:w-1/2">
+          <div className="w-full max-w-md space-y-6">
+            <div className="flex items-center gap-3 lg:hidden">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-teal-400 to-teal-600">
+                <Activity className="h-5 w-5 text-white" />
+              </div>
+              <p className="text-lg font-bold">MediPOS <span className="text-teal-500">Pro</span></p>
+            </div>
+
+            <div>
+              <button onClick={() => { setChallenge(null); setOtp(''); setError('') }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition hover:text-foreground">
+                <ArrowLeft className="h-4 w-4" /> Back to sign in
+              </button>
+              <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-600/10 text-teal-600 dark:text-teal-400">
+                <KeyRound className="h-6 w-6" />
+              </span>
+              <h2 className="text-2xl font-bold tracking-tight">Two-factor verification</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Hi {challengeUser.split(' ')[0]} — enter the 6-digit code from your authenticator app{useRecovery ? ' or a recovery code' : ''}.
+              </p>
+            </div>
+
+            <form onSubmit={submitOtp} className="space-y-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="otp">{useRecovery ? 'Recovery code' : 'Authentication code'}</Label>
+                <Input
+                  id="otp"
+                  value={otp}
+                  onChange={(e) => setOtp(e.target.value)}
+                  placeholder={useRecovery ? 'XXXX-XXXX' : '000000'}
+                  inputMode={useRecovery ? 'text' : 'numeric'}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  maxLength={useRecovery ? 10 : 6}
+                  className="text-center text-2xl font-bold tracking-[0.4em] tabular-nums"
+                />
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400">
+                  <Lock className="h-4 w-4 shrink-0" /> {error}
+                </div>
+              )}
+
+              <Button type="submit" disabled={busy || otp.length < 6} className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg">
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}
+                {busy ? 'Verifying…' : 'Verify & Sign In'}
+              </Button>
+
+              <button type="button" onClick={() => { setUseRecovery((s) => !s); setOtp(''); setError('') }} className="w-full text-center text-xs font-medium text-teal-600 hover:underline dark:text-teal-400">
+                {useRecovery ? 'Use an authenticator code instead' : 'Lost your device? Use a recovery code'}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 1 — credentials
+  // ---------------------------------------------------------------------------
   return (
     <div className="flex min-h-screen bg-background">
-      {/* Branding panel */}
-      <div className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-teal-700 via-teal-800 to-teal-950 lg:flex lg:flex-col lg:justify-between lg:p-12">
-        <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full bg-teal-500/10 blur-3xl" />
-        <div className="absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-emerald-400/10 blur-3xl" />
-
-        <div className="relative flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-teal-400 to-teal-600 shadow-lg shadow-teal-500/30">
-            <Activity className="h-6 w-6 text-white" />
-          </div>
-          <div>
-            <p className="text-lg font-bold tracking-tight text-white">MediPOS <span className="text-teal-300">Pro</span></p>
-            <p className="text-[11px] uppercase tracking-widest text-teal-400/80">Pharmacy Management Suite</p>
-          </div>
-        </div>
-
-        <div className="relative space-y-8">
-          <h1 className="max-w-md text-4xl font-bold leading-tight tracking-tight text-white">
-            Run your pharmacy with <span className="text-teal-300">precision and speed.</span>
-          </h1>
-          <div className="space-y-5">
-            {[
-              { icon: ReceiptText, title: 'Lightning-fast POS', desc: 'Barcode scanning, thermal receipts & multi-payment checkout' },
-              { icon: Pill, title: 'Smart inventory', desc: 'Batch tracking, expiry alerts, low-stock reorder points' },
-              { icon: BarChart3, title: 'Actionable insights', desc: 'Revenue, profit & stock reports with PDF export' },
-              { icon: ShieldCheck, title: 'Role-based security', desc: 'Admin, pharmacist & cashier permission levels' },
-            ].map((f) => (
-              <div key={f.title} className="flex items-start gap-4">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-white/10 text-teal-200 backdrop-blur">
-                  <f.icon className="h-5 w-5" />
-                </span>
-                <div>
-                  <p className="font-semibold text-white">{f.title}</p>
-                  <p className="text-sm text-teal-200/70">{f.desc}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <p className="relative text-xs text-teal-300/60">© {new Date().getFullYear()} MediPOS. All rights reserved.</p>
-      </div>
+      {branding}
 
       {/* Login form */}
       <div className="flex w-full items-center justify-center p-6 lg:w-1/2">

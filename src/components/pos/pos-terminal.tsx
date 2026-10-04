@@ -12,13 +12,15 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/pos/shared'
 import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
+import { DiscountApprovalDialog } from '@/components/pos/discount-approval-dialog'
 import { StartShiftDialog } from '@/components/pos/shift-dialogs'
 import type { ShiftRecord } from '@/components/pos/shift-report'
 import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
+import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, Barcode, CheckCircle2, CreditCard, Minus, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Percent, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -55,6 +57,16 @@ interface CartLine {
 
 interface CustomerOption { id: string; name: string }
 
+interface ApprovedDiscountRequest {
+  id: string
+  requestCode: string
+  subtotal: number
+  discountValue: number
+  reviewedByName: string | null
+  reason: string | null
+  items: Array<{ medicineId: string; name: string; sku: string; unit: string; unitPrice: number; qty: number }>
+}
+
 export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { quickSearch?: string; onSalesRecorded?: () => void; storeSettings?: StoreSettingsMap | null }) {
   const [meds, setMeds] = useState<Medicine[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -77,6 +89,12 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const [customerId, setCustomerId] = useState<string>('walkin')
   const [tendered, setTendered] = useState('')
   const [note, setNote] = useState('')
+
+  // Discount approval workflow state
+  const [approvalOpen, setApprovalOpen] = useState(false)
+  const [approvedRequests, setApprovedRequests] = useState<ApprovedDiscountRequest[]>([])
+  const [approvedListOpen, setApprovedListOpen] = useState(false)
+  const [discountRequestId, setDiscountRequestId] = useState<string | null>(null)
 
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -110,6 +128,20 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }, [])
 
   useEffect(() => { loadCurrentShift() }, [loadCurrentShift])
+
+  // Approved-for-me discount requests (loadable into the cart)
+  const loadApprovedRequests = useCallback(async () => {
+    try {
+      const res = await fetch('/api/discount-requests?status=approved&mine=1', { cache: 'no-store' })
+      if (!res.ok) return
+      const json = await res.json()
+      setApprovedRequests(json.approvedForMe ?? [])
+    } catch {
+      /* non-fatal */
+    }
+  }, [])
+
+  useEffect(() => { loadApprovedRequests() }, [loadApprovedRequests])
 
   useEffect(() => {
     if (quickSearch) setSearch(quickSearch)
@@ -184,11 +216,10 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
 
   const rxCount = cart.filter((l) => l.prescriptionRequired).length
 
-  const checkout = async () => {
-    if (paymentMethod === 'cash' && tenderedNum < total) {
-      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNum)} is less than total ${fmtMoney(total)}.`, variant: 'destructive' })
-      return
-    }
+  const policy = useMemo(() => discountPolicyFromSettings(storeSettings ?? null), [storeSettings])
+  const needsApproval = requiresDiscountApproval(policy, subtotal, discountValue)
+
+  const completeSale = async (extra?: { approval?: { username: string; password: string }; discountRequestId?: string | null }): Promise<boolean> => {
     setSubmitting(true)
     try {
       const res = await fetch('/api/sales', {
@@ -202,30 +233,76 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           paidAmount: paymentMethod === 'cash' ? tenderedNum : total,
           taxRate: 2.5,
           note: note || null,
+          ...(extra?.approval ? { approval: extra.approval } : {}),
+          ...(extra?.discountRequestId ? { discountRequestId: extra.discountRequestId } : discountRequestId ? { discountRequestId } : {}),
         }),
       })
       const json = await res.json()
       if (!res.ok) {
-        toast({ title: 'Sale failed', description: json.error ?? 'Unknown error', variant: 'destructive' })
-        return
+        if (json.requiresApproval) {
+          setApprovalOpen(true)
+        } else {
+          toast({ title: 'Sale failed', description: json.error ?? 'Unknown error', variant: 'destructive' })
+        }
+        return false
       }
       setReceipt({
         ...json.sale,
         customerName: json.sale?.customer?.name ?? null,
         shiftNo: json.sale?.shift?.shiftNo ?? null,
+        approvedByName: json.sale?.approvedByName ?? null,
+        branchName: json.sale?.branchRef?.name ?? null,
       })
       setCart([])
       setOrderDiscount(0)
       setTendered('')
       setNote('')
       setCustomerId('walkin')
+      setDiscountRequestId(null)
       setCheckoutOpen(false)
       onSalesRecorded?.()
       loadProducts()
       loadCurrentShift()
+      return true
     } finally {
       setSubmitting(false)
     }
+  }
+
+  const checkout = async () => {
+    if (paymentMethod === 'cash' && tenderedNum < total) {
+      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNum)} is less than total ${fmtMoney(total)}.`, variant: 'destructive' })
+      return
+    }
+    await completeSale()
+  }
+
+  const authorizeAndComplete = async (approval: { username: string; password: string }): Promise<boolean> => {
+    if (paymentMethod === 'cash' && tenderedNum < total) {
+      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNum)} is less than total ${fmtMoney(total)}.`, variant: 'destructive' })
+      return false
+    }
+    return await completeSale({ approval })
+  }
+
+  const loadApprovedRequest = (req: ApprovedDiscountRequest) => {
+    // Rebuild the cart from the approved snapshot (server re-validates stock)
+    setCart(
+      req.items.map((l) => ({
+        medicineId: l.medicineId,
+        name: l.name,
+        sku: l.sku,
+        unit: l.unit || 'Unit',
+        unitPrice: l.unitPrice,
+        qty: l.qty,
+        stockQty: Number.MAX_SAFE_INTEGER, // validated server-side
+        prescriptionRequired: false,
+      })),
+    )
+    setOrderDiscount(req.discountValue)
+    setDiscountRequestId(req.id)
+    setApprovedListOpen(false)
+    toast({ title: `${req.requestCode} loaded`, description: `Discount ${fmtMoney(req.discountValue)} approved by ${req.reviewedByName ?? 'manager'} — complete the sale as usual.` })
   }
 
   const methodIcon = (m: string) => (m === 'cash' ? <Banknote className="h-4 w-4" /> : m === 'card' ? <CreditCard className="h-4 w-4" /> : m === 'mobile_money' ? <Smartphone className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />)
@@ -365,11 +442,22 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             </button>
           )}
           {cart.length > 0 && (
-            <Button variant="ghost" size="sm" onClick={() => { setCart([]); setOrderDiscount(0) }} className="h-8 gap-1 text-xs text-red-500 hover:text-red-600">
+            <Button variant="ghost" size="sm" onClick={() => { setCart([]); setOrderDiscount(0); setDiscountRequestId(null) }} className="h-8 gap-1 text-xs text-red-500 hover:text-red-600">
               <Trash2 className="h-3.5 w-3.5" /> Clear
             </Button>
           )}
         </div>
+
+        {/* Approved discount requests ready to load */}
+        {approvedRequests.length > 0 && cart.length === 0 && (
+          <button
+            onClick={() => setApprovedListOpen(true)}
+            className="flex w-full items-center gap-2 border-b bg-emerald-50 px-4 py-2 text-left text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+          >
+            <BadgeCheck className="h-3.5 w-3.5" />
+            {approvedRequests.length} approved discount{approvedRequests.length > 1 ? 's' : ''} ready to load — tap to view
+          </button>
+        )}
 
         <ScrollArea className="min-h-32 flex-1 xl:max-h-[38vh]">
           {cart.length === 0 ? (
@@ -415,12 +503,17 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               type="number"
               min={0}
               value={orderDiscount || ''}
-              onChange={(e) => setOrderDiscount(Number(e.target.value))}
+              onChange={(e) => { setOrderDiscount(Number(e.target.value)); setDiscountRequestId(null) }}
               placeholder="0.00"
-              className="h-7 w-24 text-right tabular-nums"
+              className={`h-7 w-24 text-right tabular-nums ${needsApproval ? 'border-amber-400' : ''}`}
               aria-label="Order discount"
             />
           </div>
+          {needsApproval && (
+            <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+              <TriangleAlert className="h-3.5 w-3.5 shrink-0" /> This discount needs manager approval at checkout.
+            </p>
+          )}
           <div className="flex items-center justify-between">
             <span className="text-muted-foreground">Tax (2.5%)</span>
             <span className="font-medium tabular-nums">{fmtMoney(taxValue)}</span>
@@ -531,6 +624,51 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
 
       {/* Start shift dialog (shift gating) */}
       <StartShiftDialog open={startShiftOpen} onOpenChange={setStartShiftOpen} onStarted={loadCurrentShift} />
+
+      {/* Discount approval (threshold exceeded) */}
+      <DiscountApprovalDialog
+        open={approvalOpen}
+        onOpenChange={(o) => { setApprovalOpen(o); if (!o) loadApprovedRequests() }}
+        policy={policy}
+        subtotal={subtotal}
+        discountValue={discountValue}
+        items={cart.map((l) => ({ medicineId: l.medicineId, qty: l.qty, unitPrice: l.unitPrice }))}
+        customerId={customerId === 'walkin' ? null : customerId}
+        onAuthorize={authorizeAndComplete}
+      />
+
+      {/* Approved-for-me requests list */}
+      <Dialog open={approvedListOpen} onOpenChange={setApprovedListOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <BadgeCheck className="h-5 w-5 text-emerald-500" /> Approved discounts for you
+            </DialogTitle>
+          </DialogHeader>
+          {approvedRequests.length === 0 ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">Nothing approved right now.</p>
+          ) : (
+            <div className="max-h-80 space-y-2 overflow-y-auto">
+              {approvedRequests.map((req) => (
+                <div key={req.id} className="rounded-xl border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{req.requestCode} · −{fmtMoney(req.discountValue)}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {req.items.reduce((n, l) => n + l.qty, 0)} items · approved by {req.reviewedByName ?? 'manager'}
+                      </p>
+                    </div>
+                    <Button size="sm" className="shrink-0 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => loadApprovedRequest(req)}>
+                      <Percent className="h-3.5 w-3.5" /> Load
+                    </Button>
+                  </div>
+                  {req.reason && <p className="mt-1.5 truncate text-xs italic text-muted-foreground">“{req.reason}”</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Receipt dialog */}
       <Dialog open={!!receipt} onOpenChange={(open) => !open && setReceipt(null)}>

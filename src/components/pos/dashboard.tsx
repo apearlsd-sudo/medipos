@@ -6,11 +6,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { AvatarInitials, StatCard, StatusBadge } from '@/components/pos/shared'
 import { useUser } from '@/components/pos/user-context'
 import { fmtCompact, fmtMoney, fmtRelative, paymentMethodLabel } from '@/lib/format'
+import { DASHBOARD_WIDGETS, parseWidgetConfig, widgetDef, widgetsForRole } from '@/lib/dashboard-widgets'
+import { useStoreSettings } from '@/lib/store-settings'
+import { WidgetsPanel } from '@/components/pos/dashboard-widgets-dialog'
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  AlertTriangle, Banknote, Boxes, CalendarClock, CreditCard, DollarSign, LayoutDashboard, Pill, RefreshCcw, ShoppingCart, TimerReset, TrendingUp, Users,
+  AlertTriangle, Banknote, Boxes, CalendarClock, CreditCard, DollarSign, LayoutDashboard, LayoutPanelTop, Pill, RefreshCcw, ShoppingCart, TimerReset, TrendingUp, Users,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -40,11 +43,27 @@ const DONUT_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8
 export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' | 'inventory' | 'sales' | 'purchases' | 'customers') => void }) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [customizeOpen, setCustomizeOpen] = useState(false)
+  const settings = useStoreSettings()
   const { user, can } = useUser()
+
   const canSales = can('sales', 'view')
   const canPurchases = can('purchases', 'view')
   const canInventory = can('inventory', 'view')
   const canReports = can('reports', 'view')
+  const canCustomize = can('roles', 'view')
+
+  // Role-configured, permission-filtered widget visibility
+  const configured = widgetsForRole(user.role, parseWidgetConfig(settings?.dashboardWidgets))
+  const show = useCallback(
+    (widgetId: string) => {
+      if (!configured.includes(widgetId)) return false
+      const def = widgetDef(widgetId)
+      if (!def) return false
+      return can(def.permission[0], def.permission[1])
+    },
+    [configured, can],
+  )
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -61,12 +80,12 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
     load()
   }, [load])
 
-  const hasWidgets = canSales || canPurchases || canInventory || canReports
+  const widgetCount = DASHBOARD_WIDGETS.filter((w) => show(w.id)).length
 
   if (loading || !data) {
     return (
       <div className="space-y-6">
-        {hasWidgets && (
+        {widgetCount > 0 && (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)}
@@ -85,7 +104,12 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
   const { stats } = data
   const firstName = user.name.split(' ')[0]
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-  const kpiCount = (canSales ? 2 : 0) + (canInventory ? 1 : 0) + (canPurchases ? 1 : 0)
+  const kpiCount = [
+    show('kpi_sales_month'),
+    show('kpi_sales_week'),
+    show('kpi_inventory_value'),
+    show('kpi_pending_purchases'),
+  ].filter(Boolean).length
 
   return (
     <div className="space-y-6">
@@ -93,12 +117,17 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome back, {firstName} 👋</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Here is your pharmacy performance summary · {today}</p>
+          <p className="mt-1 text-sm text-muted-foreground">Here is your pharmacy performance summary · {today}{!user.isSuperAdmin && user.branchName ? ` · ${user.branchName}` : ''}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {can('pos', 'access') && (
             <button onClick={() => onNavigate('pos')} className="inline-flex items-center gap-2 rounded-full bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-500/25 transition hover:bg-orange-600">
               <ShoppingCart className="h-4 w-4" /> Open POS Terminal
+            </button>
+          )}
+          {canCustomize && (
+            <button onClick={() => setCustomizeOpen(true)} className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2.5 text-sm font-medium transition hover:bg-muted">
+              <LayoutPanelTop className="h-4 w-4" /> Customize
             </button>
           )}
           <button onClick={load} className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2.5 text-sm font-medium transition hover:bg-muted">
@@ -107,15 +136,14 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
         </div>
       </div>
 
-      {!hasWidgets ? (
+      {widgetCount === 0 ? (
         <Card className="flex flex-col items-center justify-center gap-3 p-14 text-center">
           <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-600/10 text-teal-600 dark:text-teal-400">
             <LayoutDashboard className="h-7 w-7" />
           </span>
           <p className="text-lg font-semibold">A quiet dashboard, for now</p>
           <p className="max-w-md text-sm text-muted-foreground">
-            Your role doesn&apos;t include any dashboard widgets yet. An administrator can grant you sales, inventory,
-            purchasing or report permissions to personalize this page.
+            Your role doesn&apos;t include any dashboard widgets yet. An administrator can grant permissions or enable widgets for your role on this page.
           </p>
         </Card>
       ) : (
@@ -123,25 +151,25 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
           {/* KPI row — each card gated by its matching permission */}
           {kpiCount > 0 && (
             <div className={`grid gap-4 sm:grid-cols-2 ${kpiCount >= 4 ? 'xl:grid-cols-4' : kpiCount === 3 ? 'xl:grid-cols-3' : ''}`}>
-              {canSales && stats.salesThisMonth && (
+              {show('kpi_sales_month') && stats.salesThisMonth && (
                 <StatCard variant="solid" label="Sales This Month" value={fmtMoney(stats.salesThisMonth.total)} icon={<DollarSign className="h-5 w-5" />} trend={stats.salesThisMonth.growth} hint={`${stats.salesThisMonth.count} transactions`} />
               )}
-              {canSales && stats.salesThisWeek && (
+              {show('kpi_sales_week') && stats.salesThisWeek && (
                 <StatCard label="Weekly Sales" value={fmtMoney(stats.salesThisWeek.total)} icon={<Banknote className="h-5 w-5" />} trend={stats.salesThisWeek.growth} hint={`${stats.salesThisWeek.count} transactions this week`} />
               )}
-              {canInventory && stats.inventoryValue !== undefined && (
+              {show('kpi_inventory_value') && stats.inventoryValue !== undefined && (
                 <StatCard label="Inventory Value" value={fmtMoney(stats.inventoryValue)} icon={<Boxes className="h-5 w-5" />} hint={`${stats.medicines ?? 0} medicine items tracked`} />
               )}
-              {canPurchases && stats.pendingPurchases && (
+              {show('kpi_pending_purchases') && stats.pendingPurchases && (
                 <StatCard label="Pending Purchases" value={String(stats.pendingPurchases.count)} icon={<TrendingUp className="h-5 w-5" />} hint={`${fmtMoney(stats.pendingPurchases.amount)} outstanding`} />
               )}
             </div>
           )}
 
           {/* Charts row */}
-          {(data.trend || data.categoryDistribution) && (
+          {(show('chart_trend') || show('chart_category')) && (
             <div className="grid gap-4 lg:grid-cols-3">
-              {data.trend && (
+              {show('chart_trend') && data.trend && (
                 <Card className="lg:col-span-2">
                   <CardHeader className="flex-row items-center justify-between space-y-0 pb-4">
                     <CardTitle className="text-base font-semibold">Sales{canPurchases ? ' & Purchases' : ''} — Last 14 Days</CardTitle>
@@ -178,8 +206,8 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
                 </Card>
               )}
 
-              {data.categoryDistribution && (
-                <Card className={data.trend ? '' : 'lg:col-span-3'}>
+              {show('chart_category') && data.categoryDistribution && (
+                <Card className={show('chart_trend') && data.trend ? '' : 'lg:col-span-3'}>
                   <CardHeader className="pb-2">
                     <CardTitle className="text-base font-semibold">Sales by Category</CardTitle>
                   </CardHeader>
@@ -211,9 +239,9 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
           )}
 
           {/* Alerts row — inventory permission only */}
-          {canInventory && (data.lowStock || data.expiringSoon) && (
+          {(show('panel_low_stock') || show('panel_expiring')) && (
             <div className="grid gap-4 lg:grid-cols-2">
-              {data.lowStock && (
+              {show('panel_low_stock') && data.lowStock && (
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
                     <CardTitle className="flex items-center gap-2 text-base font-semibold">
@@ -243,7 +271,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
                 </Card>
               )}
 
-              {data.expiringSoon && (
+              {show('panel_expiring') && data.expiringSoon && (
                 <Card>
                   <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
                     <CardTitle className="flex items-center gap-2 text-base font-semibold">
@@ -276,10 +304,10 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
           )}
 
           {/* Top selling + recent sales */}
-          {(data.topSelling || data.recentSales) && (
-            <div className={`grid gap-4 ${data.topSelling && data.recentSales ? 'lg:grid-cols-5' : ''}`}>
-              {data.topSelling && (
-                <Card className={data.recentSales ? 'lg:col-span-2' : ''}>
+          {(show('table_top_selling') || show('table_recent_sales')) && (
+            <div className={`grid gap-4 ${show('table_top_selling') && show('table_recent_sales') ? 'lg:grid-cols-5' : ''}`}>
+              {show('table_top_selling') && data.topSelling && (
+                <Card className={show('table_recent_sales') && data.recentSales ? 'lg:col-span-2' : ''}>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base font-semibold">Top Selling Medicines</CardTitle>
                   </CardHeader>
@@ -301,8 +329,8 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
                 </Card>
               )}
 
-              {data.recentSales && (
-                <Card className={data.topSelling ? 'lg:col-span-3' : ''}>
+              {show('table_recent_sales') && data.recentSales && (
+                <Card className={show('table_top_selling') && data.topSelling ? 'lg:col-span-3' : ''}>
                   <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
                     <CardTitle className="text-base font-semibold">Recent Transactions</CardTitle>
                     {canSales && (
@@ -371,6 +399,8 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
           </button>
         ))}
       </div>
+
+      <WidgetsPanel open={customizeOpen} onOpenChange={setCustomizeOpen} onSaved={load} />
     </div>
   )
 }
