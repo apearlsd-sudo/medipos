@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { refreshTakeCounters } from '@/lib/stock-take'
 
 const r2 = (n: number) => Math.round(n * 100) / 100
@@ -12,7 +12,7 @@ const r2 = (n: number) => Math.round(n * 100) / 100
  * and valuates it at the snapshotted unit cost. Refreshes live session counters.
  */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'stock_take', 'count')
   if (gate.response) return gate.response
   try {
     const { id } = await params

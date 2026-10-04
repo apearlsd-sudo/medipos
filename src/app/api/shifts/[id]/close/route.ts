@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
+import { can, requireUser } from '@/lib/auth'
 import { computeShiftSummary } from '@/lib/shifts'
 
 /**
@@ -17,7 +17,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // Cashiers close only their own shift; admins/pharmacists can close any open shift
     const isSelf = shift.userId === gate.user.id
-    const isManager = gate.user.role === 'admin' || gate.user.role === 'pharmacist'
+    const isManager = can(gate.user, 'shifts', 'close')
     if (!isSelf && !isManager) {
       return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
     }

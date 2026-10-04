@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'prescriptions', 'verify')
   if (gate.response) return gate.response
   try {
     const { id } = await params
@@ -27,7 +27,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireRole(req, ['admin'])
+  const gate = await requirePermission(req, 'prescriptions', 'delete')
   if (gate.response) return gate.response
   try {
     const { id } = await params

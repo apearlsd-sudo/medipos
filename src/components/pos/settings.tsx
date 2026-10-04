@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/pos/shared'
-import { ROLE_BADGE, ROLE_LABEL, useUser } from '@/components/pos/user-context'
+import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
@@ -51,8 +51,8 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
-  const { user } = useUser()
-  const isAdmin = user.role === 'admin'
+  const { user, can } = useUser()
+  const canEditSettings = can('settings', 'edit')
 
   useEffect(() => {
     fetch('/api/settings', { cache: 'no-store' })
@@ -64,7 +64,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
   const set = (k: keyof StoreSettings, v: string) => setSettings((s) => ({ ...s, [k]: v }))
 
   const save = async () => {
-    if (!isAdmin) {
+    if (!canEditSettings) {
       toast({ title: 'Permission denied', description: 'Only administrators can change store settings.', variant: 'destructive' })
       return
     }
@@ -95,7 +95,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
         title="Settings"
         breadcrumb="Settings"
         actions={
-          isAdmin ? (
+          canEditSettings ? (
             <Button onClick={save} disabled={saving} className="rounded-full bg-teal-600 hover:bg-teal-700">
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {saving ? 'Saving…' : 'Save Changes'}
@@ -116,12 +116,12 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <CardDescription>Appears on receipts and invoices.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-1.5"><Label>Store Name</Label><Input disabled={!isAdmin} value={settings.storeName} onChange={(e) => set('storeName', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Store Name</Label><Input disabled={!canEditSettings} value={settings.storeName} onChange={(e) => set('storeName', e.target.value)} /></div>
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5"><Label>Phone</Label><Input disabled={!isAdmin} value={settings.storePhone} onChange={(e) => set('storePhone', e.target.value)} /></div>
-                <div className="space-y-1.5"><Label>Email</Label><Input disabled={!isAdmin} value={settings.storeEmail} onChange={(e) => set('storeEmail', e.target.value)} /></div>
+                <div className="space-y-1.5"><Label>Phone</Label><Input disabled={!canEditSettings} value={settings.storePhone} onChange={(e) => set('storePhone', e.target.value)} /></div>
+                <div className="space-y-1.5"><Label>Email</Label><Input disabled={!canEditSettings} value={settings.storeEmail} onChange={(e) => set('storeEmail', e.target.value)} /></div>
               </div>
-              <div className="space-y-1.5"><Label>Address</Label><Input disabled={!isAdmin} value={settings.storeAddress} onChange={(e) => set('storeAddress', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Address</Label><Input disabled={!canEditSettings} value={settings.storeAddress} onChange={(e) => set('storeAddress', e.target.value)} /></div>
             </CardContent>
           </Card>
 
@@ -134,7 +134,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Currency</Label>
-                  <Select value={settings.currencyCode} onValueChange={(v) => { set('currencyCode', v); set('currency', v) }} disabled={!isAdmin}>
+                  <Select value={settings.currencyCode} onValueChange={(v) => { set('currencyCode', v); set('currency', v) }} disabled={!canEditSettings}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {CURRENCIES.map((c) => (
@@ -147,7 +147,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                 </div>
                 <div className="space-y-1.5">
                   <Label>Locale / Region</Label>
-                  <Select value={settings.currencyLocale} onValueChange={(v) => set('currencyLocale', v)} disabled={!isAdmin}>
+                  <Select value={settings.currencyLocale} onValueChange={(v) => set('currencyLocale', v)} disabled={!canEditSettings}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {LOCALES.map((l) => (
@@ -179,9 +179,9 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <CardDescription>Defaults applied across the system.</CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label>Tax Rate (%)</Label><Input disabled={!isAdmin} type="number" step="0.1" value={settings.taxRate} onChange={(e) => set('taxRate', e.target.value)} /></div>
-              <div className="space-y-1.5"><Label>Low Stock Threshold</Label><Input disabled={!isAdmin} type="number" value={settings.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} /></div>
-              <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input disabled={!isAdmin} type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Tax Rate (%)</Label><Input disabled={!canEditSettings} type="number" step="0.1" value={settings.taxRate} onChange={(e) => set('taxRate', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Low Stock Threshold</Label><Input disabled={!canEditSettings} type="number" value={settings.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} /></div>
+              <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input disabled={!canEditSettings} type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
             </CardContent>
           </Card>
         </div>
@@ -195,11 +195,11 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
             <CardContent className="space-y-4">
               <div className="space-y-1.5">
                 <Label>Header Message</Label>
-                <Input disabled={!isAdmin} value={settings.receiptHeader} onChange={(e) => set('receiptHeader', e.target.value)} placeholder="Thank you message" />
+                <Input disabled={!canEditSettings} value={settings.receiptHeader} onChange={(e) => set('receiptHeader', e.target.value)} placeholder="Thank you message" />
               </div>
               <div className="space-y-1.5">
                 <Label>Footer / Return Policy</Label>
-                <Input disabled={!isAdmin} value={settings.receiptFooter} onChange={(e) => set('receiptFooter', e.target.value)} placeholder="Return policy" />
+                <Input disabled={!canEditSettings} value={settings.receiptFooter} onChange={(e) => set('receiptFooter', e.target.value)} placeholder="Return policy" />
               </div>
               <div className="flex items-center justify-between rounded-xl border p-3">
                 <div>
@@ -208,7 +208,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                 </div>
                 <Switch
                   checked={settings.receiptShowBarcode !== 'false'}
-                  disabled={!isAdmin}
+                  disabled={!canEditSettings}
                   onCheckedChange={(v) => set('receiptShowBarcode', String(v))}
                 />
               </div>
@@ -245,8 +245,8 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                   <p className="font-semibold">{user.name}</p>
                   <p className="text-xs text-muted-foreground">@{user.username} · {user.email ?? 'no email'}</p>
                 </div>
-                <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${ROLE_BADGE[user.role]}`}>
-                  {ROLE_LABEL[user.role]}
+                <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${roleBadgeClass(user.role)}`}>
+                  {roleLabel(user.role, user.roleName)}
                 </span>
               </div>
             </CardContent>

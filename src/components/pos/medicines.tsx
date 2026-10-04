@@ -65,9 +65,9 @@ const LABEL_SIZES = {
 type LabelSize = keyof typeof LABEL_SIZES
 
 export function Medicines() {
-  const { user } = useUser()
+  const { user, can } = useUser()
   const storeSettings = useStoreSettings()
-  const canManage = user.role === 'admin' || user.role === 'pharmacist'
+  const canManage = can('medicines', 'create') || can('medicines', 'edit')
   const [meds, setMeds] = useState<Med[]>([])
   const [categories, setCategories] = useState<Category[]>([])
   const [suppliers, setSuppliers] = useState<Supplier[]>([])

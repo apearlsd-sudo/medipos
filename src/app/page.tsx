@@ -18,7 +18,7 @@ import { Reports } from '@/components/pos/reports'
 import { Settings } from '@/components/pos/settings'
 import { Users } from '@/components/pos/users'
 import { Login } from '@/components/pos/login'
-import { UserProvider, type AuthUser } from '@/components/pos/user-context'
+import { UserProvider, userCan, type AuthUser } from '@/components/pos/user-context'
 import { canAccessView, type ViewKey } from '@/components/pos/nav-config'
 import { setCurrencyConfig } from '@/lib/format'
 import { loadStoreSettings, type StoreSettingsMap } from '@/lib/store-settings'
@@ -133,7 +133,9 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    if (!user) return
+    // Stock alerts come from the dashboard API's inventory section — only fetch
+    // when the user may see both the dashboard and inventory widgets.
+    if (!user || !userCan(user, 'dashboard', 'view') || !userCan(user, 'inventory', 'view')) return
     const t = setTimeout(loadAlerts, 0)
     return () => clearTimeout(t)
   }, [loadAlerts, user])
@@ -169,8 +171,8 @@ export default function Home() {
     )
   }
 
-  // View guard: clamp to dashboard when role lacks access
-  const activeView: ViewKey = canAccessView(user.role, view) ? view : 'dashboard'
+  // View guard: clamp to dashboard when permissions lack access
+  const activeView: ViewKey = canAccessView(user, view) ? view : 'dashboard'
 
   return (
     <UserProvider user={user} logout={logout}>
@@ -184,6 +186,8 @@ export default function Home() {
           mobileOpen={mobileOpen}
           onMobileClose={() => setMobileOpen(false)}
           role={user.role}
+          roleName={user.roleName}
+          permissions={user.permissions}
           userName={user.name}
         />
 
@@ -195,7 +199,7 @@ export default function Home() {
             onGotoPOS={() => navigate('pos')}
             onGotoShifts={() => navigate('shifts')}
             alerts={alerts}
-            onAlertClick={() => navigate(canAccessView(user.role, 'inventory') ? 'inventory' : 'medicines')}
+            onAlertClick={() => navigate(canAccessView(user, 'inventory') ? 'inventory' : 'medicines')}
           />
 
           <main className="flex-1 p-4 sm:p-6">

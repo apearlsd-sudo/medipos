@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
+import { can, requireUser } from '@/lib/auth'
 import { nextShiftNo, computeShiftSummary } from '@/lib/shifts'
 
 /** GET /api/shifts — role-aware list. Admin/pharmacist see all; cashier sees own. */
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search')?.trim()
 
     const where: Record<string, unknown> = {}
-    if (gate.user.role === 'cashier') where.userId = gate.user.id
+    if (!can(gate.user, 'shifts', 'close')) where.userId = gate.user.id
     if (status && status !== 'all') where.status = status
     if (search) {
       where.OR = [{ shiftNo: { contains: search } }, { userName: { contains: search } }]

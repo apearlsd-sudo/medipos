@@ -3,8 +3,8 @@
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet'
-import { NAV_GROUPS, type Role, type ViewKey } from '@/components/pos/nav-config'
-import { ROLE_LABEL } from '@/components/pos/user-context'
+import { NAV_GROUPS, canAccessNavItem, type PermissionSubject, type ViewKey } from '@/components/pos/nav-config'
+import { roleLabel } from '@/components/pos/user-context'
 import {
   Boxes, ChartNoAxesColumn, ChevronLeft, ClipboardCheck, ClipboardList, FileHeart, LayoutDashboard, LayoutGrid,
   Pill, ReceiptText, Settings, ShieldCheck, ShoppingCart, Timer, Truck, Users, Activity,
@@ -22,13 +22,16 @@ interface SidebarProps {
   alertCount?: number
   mobileOpen: boolean
   onMobileClose: () => void
-  role?: Role | string
+  role?: string
+  roleName?: string
+  permissions?: string[]
   userName?: string
 }
 
-function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount, role, userName }: Omit<SidebarProps, 'mobileOpen' | 'onMobileClose'>) {
+function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount, role, roleName, permissions, userName }: Omit<SidebarProps, 'mobileOpen' | 'onMobileClose'>) {
+  const subject: PermissionSubject | null = role ? { role, permissions: permissions ?? [] } : null
   const groups = NAV_GROUPS
-    .map((g) => ({ ...g, items: g.items.filter((i) => !role || (i.roles as string[]).includes(role)) }))
+    .map((g) => ({ ...g, items: g.items.filter((i) => !subject || canAccessNavItem(subject, i)) }))
     .filter((g) => g.items.length > 0)
   const initials = (userName ?? 'User').split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
 
@@ -115,7 +118,7 @@ function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount,
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-white">{userName ?? 'User'}</p>
-              <p className="truncate text-xs text-teal-500/80">{role ? (ROLE_LABEL[role] ?? role) : ''}</p>
+              <p className="truncate text-xs text-teal-500/80">{role ? roleLabel(role, roleName) : ''}</p>
             </div>
           )}
         </div>

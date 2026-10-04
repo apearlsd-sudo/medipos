@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { buildStockTakeReport } from '@/lib/stock-take'
 
 /**
@@ -9,7 +9,7 @@ import { buildStockTakeReport } from '@/lib/stock-take'
  * per-product variance ranking sorted by absolute value impact.
  */
 export async function GET(req: NextRequest) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'stock_take', 'view')
   if (gate.response) return gate.response
   try {
     const { searchParams } = new URL(req.url)

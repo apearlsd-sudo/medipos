@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser, requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 
 export async function GET(req: NextRequest) {
-  const gate = await requireUser(req)
+  const gate = await requirePermission(req, 'purchases', 'view')
   if (gate.response) return gate.response
   try {
     const { searchParams } = new URL(req.url)
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'purchases', 'create')
   if (gate.response) return gate.response
   try {
     const body = await req.json()

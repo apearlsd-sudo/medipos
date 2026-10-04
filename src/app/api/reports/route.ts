@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 
 const DAY = 24 * 60 * 60 * 1000
 
 export async function GET(req: NextRequest) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'reports', 'view')
   if (gate.response) return gate.response
   try {
     const { searchParams } = new URL(req.url)

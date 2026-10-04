@@ -62,7 +62,7 @@ function VarianceBadge({ shift }: { shift: ShiftRecord }) {
 // ---------------------------------------------------------------------------
 
 export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
-  const { user } = useUser()
+  const { user, can } = useUser()
   const [current, setCurrent] = useState<{ shift: ShiftRecord; summary: ShiftSummaryData } | null>(null)
   const [history, setHistory] = useState<ShiftRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -296,7 +296,7 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
           <div className="flex items-center gap-2">
             <History className="h-5 w-5 text-teal-600 dark:text-teal-400" />
             <h2 className="text-lg font-bold">Shift History</h2>
-            {user.role !== 'cashier' && <Badge variant="outline" className="rounded-full text-xs">all staff</Badge>}
+            {can('shifts', 'close') && <Badge variant="outline" className="rounded-full text-xs">all staff</Badge>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search shift no or cashier…" className="w-full sm:w-56" aria-label="Search shifts" />

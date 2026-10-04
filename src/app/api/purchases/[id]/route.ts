@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser, requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireUser(req)
+  const gate = await requirePermission(req, 'purchases', 'view')
   if (gate.response) return gate.response
   try {
     const { id } = await params
@@ -20,7 +20,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'purchases', 'edit')
   if (gate.response) return gate.response
   try {
     const { id } = await params

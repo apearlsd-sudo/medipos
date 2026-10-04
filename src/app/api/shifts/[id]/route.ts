@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
+import { can, requireUser } from '@/lib/auth'
 import { computeShiftSummary } from '@/lib/shifts'
 
 /** GET /api/shifts/[id] — full shift detail incl. summary, transactions, products, hourly. */
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!shift) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
     // Cashiers may only inspect their own shifts
-    if (gate.user.role === 'cashier' && shift.userId !== gate.user.id) {
+    if (!can(gate.user, 'shifts', 'close') && shift.userId !== gate.user.id) {
       return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
     }
 

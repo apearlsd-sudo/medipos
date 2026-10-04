@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 import { nextStockTakeNo, refreshTakeCounters } from '@/lib/stock-take'
 
 /** GET /api/stock-takes?status=&search= — list count sessions with live aggregates. */
 export async function GET(req: NextRequest) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'stock_take', 'view')
   if (gate.response) return gate.response
   try {
     const { searchParams } = new URL(req.url)
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
  * Body: { title, scope: 'all' | 'category', categoryId?, note? }
  */
 export async function POST(req: NextRequest) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'stock_take', 'create')
   if (gate.response) return gate.response
   try {
     const body = await req.json().catch(() => ({}))

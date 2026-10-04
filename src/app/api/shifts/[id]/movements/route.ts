@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
+import { can, requireUser } from '@/lib/auth'
 
 /** POST /api/shifts/[id]/movements — record a cash drawer movement (addition | payout | drop). */
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!shift) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
     const isSelf = shift.userId === gate.user.id
-    const isManager = gate.user.role === 'admin' || gate.user.role === 'pharmacist'
+    const isManager = can(gate.user, 'shifts', 'close')
     if (!isSelf && !isManager) {
       return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
     }

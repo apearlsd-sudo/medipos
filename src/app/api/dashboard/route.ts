@@ -1,12 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireUser } from '@/lib/auth'
+import { can, requirePermission } from '@/lib/auth'
 
 const DAY = 24 * 60 * 60 * 1000
 
+/**
+ * GET /api/dashboard — role-based widgets.
+ * Each section is only included when the viewer's role grants the matching
+ * permission, so the payload itself enforces what each role can see.
+ */
 export async function GET(req: NextRequest) {
-  const gate = await requireUser(req)
+  const gate = await requirePermission(req, 'dashboard', 'view')
   if (gate.response) return gate.response
+  const user = gate.user
+  const canSales = can(user, 'sales', 'view')
+  const canPurchases = can(user, 'purchases', 'view')
+  const canInventory = can(user, 'inventory', 'view')
+  const canReports = can(user, 'reports', 'view')
+
   try {
     const now = new Date()
     const monthAgo = new Date(now.getTime() - 30 * DAY)
@@ -30,16 +41,20 @@ export async function GET(req: NextRequest) {
     ])
 
     // 14-day sales & purchases trend
-    const sales14 = await db.sale.findMany({
-      where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, saleStatus: { not: 'cancelled' } },
-      select: { total: true, createdAt: true },
-    })
-    const purchases14 = await db.purchase.findMany({
-      where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, status: { not: 'cancelled' } },
-      select: { totalAmount: true, createdAt: true },
-    })
+    const sales14 = canSales
+      ? await db.sale.findMany({
+          where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, saleStatus: { not: 'cancelled' } },
+          select: { total: true, createdAt: true },
+        })
+      : []
+    const purchases14 = canPurchases
+      ? await db.purchase.findMany({
+          where: { createdAt: { gte: new Date(now.getTime() - 13 * DAY) }, status: { not: 'cancelled' } },
+          select: { totalAmount: true, createdAt: true },
+        })
+      : []
 
-    const trend: Array<{ date: string; label: string; sales: number; purchases: number }> = []
+    const trend: Array<{ date: string; label: string; sales: number; purchases: number | null }> = []
     for (let d = 13; d >= 0; d--) {
       const dayStart = new Date(now.getTime() - d * DAY)
       dayStart.setHours(0, 0, 0, 0)
@@ -50,7 +65,7 @@ export async function GET(req: NextRequest) {
         date: dayStart.toISOString().slice(0, 10),
         label: dayStart.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }),
         sales: +daySales.toFixed(2),
-        purchases: +dayPurchases.toFixed(2),
+        purchases: canPurchases ? +dayPurchases.toFixed(2) : null,
       })
     }
 
@@ -102,25 +117,30 @@ export async function GET(req: NextRequest) {
     const outOfStock = allMeds.filter((m) => m.stockQty === 0).length
     const inventoryValue = allMeds.reduce((sum, m) => sum + m.stockQty * m.costPrice, 0)
 
-    return NextResponse.json({
-      stats: {
-        salesThisMonth: { total: +(salesThisMonth._sum.total ?? 0).toFixed(2), count: salesThisMonth._count, growth: growth(salesThisMonth._sum.total ?? 0, salesPrevMonth._sum.total ?? 0) },
-        salesThisWeek: { total: +(salesThisWeek._sum.total ?? 0).toFixed(2), count: salesThisWeek._count, growth: growth(salesThisWeek._sum.total ?? 0, salesPrevWeek._sum.total ?? 0) },
-        medicines: medicineCount,
-        customers: customerCount,
-        suppliers: supplierCount,
-        lowStockCount: allMeds.filter((m) => m.stockQty <= m.reorderLevel).length,
-        outOfStock,
-        expiringSoonCount: allMeds.filter((m) => m.expiryDate && m.expiryDate.getTime() - now.getTime() < 90 * DAY).length,
-        inventoryValue: +inventoryValue.toFixed(2),
-        pendingPurchases: { count: pendingPurchases._count, amount: +(pendingPurchases._sum.totalAmount ?? 0).toFixed(2) },
-      },
-      trend,
-      lowStock: lowStock.map((m) => ({ id: m.id, name: m.name, sku: m.sku, stockQty: m.stockQty, reorderLevel: m.reorderLevel, unit: m.unit, category: m.category.name })),
-      expiringSoon,
-      topSelling,
-      categoryDistribution,
-      recentSales: recentSales.map((s) => ({
+    // --- Role-based payload: only include sections this role may see ---
+    const stats: Record<string, unknown> = {
+      medicines: medicineCount,
+      customers: customerCount,
+      suppliers: supplierCount,
+    }
+    if (canSales) {
+      stats.salesThisMonth = { total: +(salesThisMonth._sum.total ?? 0).toFixed(2), count: salesThisMonth._count, growth: growth(salesThisMonth._sum.total ?? 0, salesPrevMonth._sum.total ?? 0) }
+      stats.salesThisWeek = { total: +(salesThisWeek._sum.total ?? 0).toFixed(2), count: salesThisWeek._count, growth: growth(salesThisWeek._sum.total ?? 0, salesPrevWeek._sum.total ?? 0) }
+    }
+    if (canInventory) {
+      stats.lowStockCount = allMeds.filter((m) => m.stockQty <= m.reorderLevel).length
+      stats.outOfStock = outOfStock
+      stats.expiringSoonCount = allMeds.filter((m) => m.expiryDate && m.expiryDate.getTime() - now.getTime() < 90 * DAY).length
+      stats.inventoryValue = +inventoryValue.toFixed(2)
+    }
+    if (canPurchases) {
+      stats.pendingPurchases = { count: pendingPurchases._count, amount: +(pendingPurchases._sum.totalAmount ?? 0).toFixed(2) }
+    }
+
+    const payload: Record<string, unknown> = { stats }
+    if (canSales) {
+      payload.trend = trend
+      payload.recentSales = recentSales.map((s) => ({
         id: s.id,
         invoiceNo: s.invoiceNo,
         customer: s.customer?.name ?? 'Walk-in Customer',
@@ -129,8 +149,18 @@ export async function GET(req: NextRequest) {
         paymentMethod: s.paymentMethod,
         itemCount: s.items.reduce((n, i) => n + i.qty, 0),
         createdAt: s.createdAt,
-      })),
-    })
+      }))
+    }
+    if (canInventory) {
+      payload.lowStock = lowStock.map((m) => ({ id: m.id, name: m.name, sku: m.sku, stockQty: m.stockQty, reorderLevel: m.reorderLevel, unit: m.unit, category: m.category.name }))
+      payload.expiringSoon = expiringSoon
+    }
+    if (canReports) {
+      payload.topSelling = topSelling
+      payload.categoryDistribution = categoryDistribution
+    }
+
+    return NextResponse.json(payload)
   } catch (e) {
     console.error('Dashboard API error', e)
     return NextResponse.json({ error: 'Failed to load dashboard data' }, { status: 500 })

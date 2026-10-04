@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { db } from '@/lib/db'
+import { moduleDef } from '@/lib/permissions'
 
 // ---------------------------------------------------------------------------
 // Password hashing (scrypt, no external deps)
@@ -65,32 +66,61 @@ export interface SessionUser {
   name: string
   email: string | null
   phone: string | null
-  role: string
+  role: string // denormalized role slug
+  roleId: string | null
+  roleName: string // display name of the role
+  isSuperAdmin: boolean
+  permissions: string[] // permission keys; ['*'] = super admin wildcard
   status: string
 }
 
 export const ROLE_WEIGHT: Record<string, number> = { cashier: 1, pharmacist: 2, admin: 3 }
+
+const FALLBACK_ROLE_NAME: Record<string, string> = {
+  admin: 'Administrator',
+  pharmacist: 'Pharmacist',
+  cashier: 'Cashier',
+}
 
 export async function getSessionUser(req: NextRequest): Promise<SessionUser | null> {
   const token = req.cookies.get(COOKIE_NAME)?.value
   if (!token) return null
   const session = parseSessionToken(token)
   if (!session) return null
-  const user = await db.user.findUnique({ where: { id: session.uid } })
+  const user = await db.user.findUnique({
+    where: { id: session.uid },
+    include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+  })
   if (!user || user.status !== 'active') return null
+  const isSuperAdmin = user.role === 'admin' || user.roleRef?.slug === 'admin'
   return {
     id: user.id,
     username: user.username,
     name: user.name,
     email: user.email,
     phone: user.phone,
-    role: user.role,
+    role: user.roleRef?.slug ?? user.role,
+    roleId: user.roleId,
+    roleName: user.roleRef?.name ?? FALLBACK_ROLE_NAME[user.role] ?? user.role,
+    isSuperAdmin,
+    permissions: isSuperAdmin ? ['*'] : (user.roleRef?.permissions ?? []).map((p) => p.key),
     status: user.status,
   }
 }
 
 export function hasRole(user: SessionUser | null, roles: string[]): boolean {
   return !!user && roles.includes(user.role)
+}
+
+/** Granular permission check. Super admin (wildcard) always passes. */
+export function can(
+  user: Pick<SessionUser, 'permissions' | 'isSuperAdmin'> | null | undefined,
+  module: string,
+  action: string,
+): boolean {
+  if (!user) return false
+  if (user.isSuperAdmin || user.permissions.includes('*')) return true
+  return user.permissions.includes(`${module}:${action}`)
 }
 
 // Response shortcuts ---------------------------------------------------------
@@ -124,6 +154,22 @@ export async function requireRole(req: NextRequest, roles: string[]): Promise<{ 
   return { user }
 }
 
+/** Requires a granular permission; returns user or a 401/403 response. */
+export async function requirePermission(req: NextRequest, module: string, action: string): Promise<{ user: SessionUser; response?: never } | { user?: never; response: NextResponse }> {
+  const user = await getSessionUser(req)
+  if (!user) return { response: unauthorized() }
+  if (!can(user, module, action)) {
+    const label = moduleDef(module)?.label ?? module
+    return {
+      response: NextResponse.json(
+        { error: `Access denied — your role (${user.roleName}) is missing the "${label} · ${action}" permission.` },
+        { status: 403 },
+      ),
+    }
+  }
+  return { user }
+}
+
 // Cookie helpers -------------------------------------------------------------
 
 export const sessionCookie = {
@@ -149,14 +195,36 @@ export function clearSessionCookie() {
   }
 }
 
-export function sanitizeUser(user: { id: string; username: string; name: string; email: string | null; phone: string | null; role: string; status: string; lastLoginAt: Date | null }) {
+type UserWithRole = {
+  id: string
+  username: string
+  name: string
+  email: string | null
+  phone: string | null
+  role: string
+  roleId: string | null
+  status: string
+  lastLoginAt: Date | null
+  roleRef?: {
+    name: string
+    slug: string
+    permissions: { key: string }[]
+  } | null
+}
+
+export function sanitizeUser(user: UserWithRole) {
+  const isSuperAdmin = user.role === 'admin' || user.roleRef?.slug === 'admin'
   return {
     id: user.id,
     username: user.username,
     name: user.name,
     email: user.email,
     phone: user.phone,
-    role: user.role,
+    role: user.roleRef?.slug ?? user.role,
+    roleId: user.roleId,
+    roleName: user.roleRef?.name ?? FALLBACK_ROLE_NAME[user.role] ?? user.role,
+    isSuperAdmin,
+    permissions: isSuperAdmin ? ['*'] : (user.roleRef?.permissions ?? []).map((p) => p.key),
     status: user.status,
     lastLoginAt: user.lastLoginAt,
   }

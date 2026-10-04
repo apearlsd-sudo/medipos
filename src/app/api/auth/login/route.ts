@@ -9,7 +9,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Username and password are required' }, { status: 400 })
     }
 
-    const user = await db.user.findUnique({ where: { username: String(username).trim().toLowerCase() } })
+    const user = await db.user.findUnique({
+      where: { username: String(username).trim().toLowerCase() },
+      include: { roleRef: { include: { permissions: { select: { key: true } } } } },
+    })
     if (!user || !verifyPassword(String(password), user.passwordHash)) {
       return NextResponse.json({ error: 'Invalid username or password' }, { status: 401 })
     }

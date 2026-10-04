@@ -14,11 +14,50 @@ model User {
   name        String
   email       String?
   phone       String?
-  role        String    @default("cashier") // admin | pharmacist | cashier
+  role        String    @default("cashier") // denormalized role slug (admin | pharmacist | cashier | custom)
+  roleRef     Role?     @relation(fields: [roleId], references: [id])
+  roleId      String?
   status      String    @default("active") // active | suspended
   lastLoginAt DateTime?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  slug        String       @unique // admin | pharmacist | cashier | inventory-clerk …
+  name        String
+  description String?
+  isSystem    Boolean      @default(false) // system roles cannot be deleted
+  permissions Permission[]
+  users       User[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Permission {
+  id       String @id @default(cuid())
+  key      String @unique // "medicines:create"
+  module   String // medicines
+  action   String // create
+  roles    Role[]
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String // role.created | role.updated | role.deleted | user.created | user.updated | user.deleted
+  actorId    String?
+  actorName  String
+  actorRole  String? // actor's role name at the time
+  targetType String // role | user
+  targetId   String?
+  targetName String?
+  summary    String // human-readable one-liner
+  changes    String? // JSON snapshot (permission diffs, role/status changes)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
 }
 
 model Category {

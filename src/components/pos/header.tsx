@@ -8,7 +8,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { ROLE_BADGE, ROLE_LABEL, useUser } from '@/components/pos/user-context'
+import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { fmtDuration } from '@/components/pos/shifts'
 import { Bell, LogOut, Menu, Moon, PackageX, Search, Settings, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
@@ -39,7 +39,7 @@ interface HeaderProps {
 export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShifts, alerts, onAlertClick }: HeaderProps) {
   const { resolvedTheme, setTheme } = useTheme()
   const [q, setQ] = useState('')
-  const { user, logout } = useUser()
+  const { user, logout, can } = useUser()
   const [activeShift, setActiveShift] = useState<ActiveShiftChip | null>(null)
   const [tick, setTick] = useState(0)
 
@@ -107,11 +107,13 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShi
           />
         </form>
 
-        {/* POS button */}
-        <Button onClick={onGotoPOS} className="hidden rounded-full bg-orange-500 hover:bg-orange-600 text-white sm:inline-flex" size="sm">
-          <ShoppingCart className="h-4 w-4" />
-          POS
-        </Button>
+        {/* POS button — only for roles that may sell */}
+        {can('pos', 'access') && (
+          <Button onClick={onGotoPOS} className="hidden rounded-full bg-orange-500 hover:bg-orange-600 text-white sm:inline-flex" size="sm">
+            <ShoppingCart className="h-4 w-4" />
+            POS
+          </Button>
+        )}
 
         {/* Theme toggle */}
         <Button
@@ -187,8 +189,8 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShi
                   <p className="truncate text-xs text-muted-foreground">@{user.username}</p>
                 </div>
               </div>
-              <span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${ROLE_BADGE[user.role]}`}>
-                <UserRound className="h-3 w-3" /> {ROLE_LABEL[user.role]}
+              <span className={`mt-2 inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${roleBadgeClass(user.role)}`}>
+                <UserRound className="h-3 w-3" /> {roleLabel(user.role, user.roleName)}
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />

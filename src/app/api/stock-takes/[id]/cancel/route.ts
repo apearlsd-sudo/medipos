@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requireRole } from '@/lib/auth'
+import { requirePermission } from '@/lib/auth'
 
 /**
  * PUT /api/stock-takes/[id]/cancel — abort an in-progress count session.
@@ -8,7 +8,7 @@ import { requireRole } from '@/lib/auth'
  * Body: { note? }
  */
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requireRole(req, ['admin', 'pharmacist'])
+  const gate = await requirePermission(req, 'stock_take', 'complete')
   if (gate.response) return gate.response
   try {
     const { id } = await params
