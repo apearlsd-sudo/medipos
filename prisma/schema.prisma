@@ -45,6 +45,8 @@ model Branch {
   shifts           Shift[]
   stockTakes       StockTake[]
   discountRequests DiscountRequest[]
+  expenses         Expense[]
+  quotations       Quotation[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 }
@@ -158,6 +160,7 @@ model Medicine {
   logs                 InventoryLog[]
   returnItems          StockReturnItem[]
   branchPrices         BranchPrice[]
+  quotationItems       QuotationItem[]
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
 }
@@ -179,6 +182,7 @@ model Customer {
   ledger      CustomerLedger[]
   loyaltyLogs LoyaltyLog[]
   claims      InsuranceClaim[]
+  quotations  Quotation[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -539,6 +543,88 @@ model StockTakeItem {
   countedAt     DateTime?
   note          String?
   createdAt     DateTime  @default(now())
+}
+
+// --- Tier 3: expenses & petty cash ------------------------------------------
+
+model ExpenseCategory {
+  id          String    @id @default(cuid())
+  name        String    @unique // Rent, Utilities, Salaries, Transport …
+  description String?
+  active      Boolean   @default(true)
+  expenses    Expense[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+}
+
+model Expense {
+  id             String          @id @default(cuid())
+  expenseNo      String          @unique // EXP-2026-0001
+  categoryId     String
+  category       ExpenseCategory @relation(fields: [categoryId], references: [id])
+  branchRef      Branch?         @relation(fields: [branchId], references: [id])
+  branchId       String?
+  description    String
+  amount         Float
+  paymentMethod  String          @default("cash") // cash | momo | card | bank
+  provider       String?         // momo provider: mtn | telecel | airteltigo
+  reference      String?         // momo txn id / cheque no
+  status         String          @default("completed") // completed | voided
+  note           String?
+  recordedById   String?
+  recordedByName String?
+  voidedById     String?
+  voidedByName   String?
+  voidedAt       DateTime?
+  clientRef      String?         @unique // offline idempotency key
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([createdAt])
+  @@index([categoryId])
+}
+
+// --- Tier 3: quotations ------------------------------------------------------
+
+model Quotation {
+  id               String          @id @default(cuid())
+  quoteNo          String          @unique // QTN-2026-0001
+  customerId       String?
+  customer         Customer?       @relation(fields: [customerId], references: [id])
+  customerName     String? // snapshot for walk-in / prospect quotes
+  branchRef        Branch?         @relation(fields: [branchId], references: [id])
+  branchId         String?
+  status           String          @default("draft") // draft | sent | accepted | declined | expired | converted | cancelled
+  subtotal         Float           @default(0)
+  discount         Float           @default(0)
+  tax              Float           @default(0)
+  total            Float           @default(0)
+  validUntil       DateTime?
+  note             String?
+  convertedSaleId  String? // set when the quote becomes a sale
+  convertedInvoice String?
+  createdById      String?
+  createdByName    String?
+  clientRef        String?         @unique // offline idempotency key
+  items            QuotationItem[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@index([status])
+}
+
+model QuotationItem {
+  id          String     @id @default(cuid())
+  quotationId String
+  quotation   Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  medicineId  String?
+  medicine    Medicine?  @relation(fields: [medicineId], references: [id])
+  name        String
+  sku         String?
+  qty         Int
+  unitPrice   Float
+  discount    Float      @default(0)
+  total       Float
 }
 
 model DiscountRequest {

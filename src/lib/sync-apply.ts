@@ -61,6 +61,14 @@ export async function applySyncOp(
       return applyInsurerUpsert(op, p)
     case 'stock.returned':
       return applyStockReturned(op, p)
+    case 'expense.created':
+      return applyExpenseCreated(op, p, opts)
+    case 'expense.voided':
+      return applyExpenseVoided(op, p)
+    case 'quotation.updated':
+      return applyQuotationUpdated(op, p, opts)
+    case 'quotation.status':
+      return applyQuotationStatus(op, p)
     default:
       return 'skipped'
   }
@@ -387,5 +395,155 @@ async function applyInsurerUpsert(op: WireOp, p: Record<string, unknown>): Promi
     note: str(p.note) || null,
   }
   await db.insurer.upsert({ where: { id }, create: { id, ...data }, update: data })
+  return 'ok'
+}
+
+// --- Tier 3: expenses & quotations --------------------------------------------
+
+async function applyExpenseCreated(op: WireOp, p: Record<string, unknown>, opts: { asHQ: boolean }): Promise<ApplyResult> {
+  const originId = str(p.id) || op.id
+  const existing = await db.expense.findUnique({ where: { id: originId } }).catch(() => null)
+  if (existing) return 'duplicate'
+  const amount = num(p.amount)
+  if (amount <= 0) return 'skipped'
+
+  // Per-node document numbering can collide across nodes (each branch counts
+  // its own rows) — mirror the sale convention: prefix the origin node id.
+  const localNo = opts.asHQ && op.nodeId !== 'HQ'
+    ? `${op.nodeId}:${str(p.expenseNo)}`
+    : str(p.expenseNo)
+
+  // Categories are node-local: resolve by id, then name, then create it so the
+  // replicated expense always lands with its category intact.
+  let categoryId = str(p.categoryId)
+  const categoryName = str(p.categoryName, 'Other')
+  const catById = categoryId ? await db.expenseCategory.findUnique({ where: { id: categoryId } }).catch(() => null) : null
+  if (!catById) {
+    const byName = await db.expenseCategory.findUnique({ where: { name: categoryName } }).catch(() => null)
+    if (byName) {
+      categoryId = byName.id
+    } else {
+      const created = await db.expenseCategory.create({ data: { name: categoryName } })
+      categoryId = created.id
+    }
+  }
+
+  await db.expense.create({
+    data: {
+      id: originId,
+      expenseNo: localNo || `SYNC-${originId.slice(-8)}`,
+      categoryId,
+      branchId: str(p.branchId) || null,
+      description: str(p.description, 'Synced expense'),
+      amount,
+      paymentMethod: str(p.paymentMethod, 'cash'),
+      provider: str(p.provider) || null,
+      reference: str(p.reference) || null,
+      status: str(p.status, 'completed'),
+      note: str(p.note) || null,
+      recordedByName: str(p.recordedByName, 'Sync'),
+      clientRef: `sync:${originId}`,
+      createdAt: date(p.createdAt) ?? new Date(),
+    },
+  })
+  publishLive(['sync', 'expense'], `Expense ${localNo} synced from ${op.nodeId}`, 'sync')
+  return 'ok'
+}
+
+async function applyExpenseVoided(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+  const id = str(p.id)
+  if (!id) return 'skipped'
+  const expense = await db.expense.findUnique({ where: { id } })
+  if (!expense) return 'skipped'
+  if (expense.status === 'voided') return 'duplicate'
+  await db.expense.update({
+    where: { id },
+    data: {
+      status: 'voided',
+      voidedByName: str(p.voidedByName, 'Sync'),
+      voidedAt: date(p.at) ?? new Date(),
+    },
+  })
+  return 'ok'
+}
+
+async function applyQuotationUpdated(op: WireOp, p: Record<string, unknown>, opts: { asHQ: boolean }): Promise<ApplyResult> {
+  const originId = str(p.id) || op.id
+  if (!originId) return 'skipped'
+  const items = Array.isArray(p.items) ? p.items : []
+
+  // Only link the customer when the receiving node actually has them.
+  const customerId = str(p.customerId)
+  const customer = customerId ? await db.customer.findUnique({ where: { id: customerId } }).catch(() => null) : null
+
+  const data = {
+    quoteNo: opts.asHQ && op.nodeId !== 'HQ'
+      ? `${op.nodeId}:${str(p.quoteNo)}`
+      : str(p.quoteNo, `QTN-${originId.slice(-8)}`),
+    customerId: customer?.id ?? null,
+    customerName: str(p.customerName) || customer?.name || null,
+    branchId: str(p.branchId) || null,
+    status: str(p.status, 'draft'),
+    subtotal: num(p.subtotal),
+    discount: num(p.discount),
+    tax: num(p.tax),
+    total: num(p.total),
+    validUntil: date(p.validUntil),
+    note: str(p.note) || null,
+    createdByName: str(p.createdByName, 'Sync'),
+  }
+
+  await db.$transaction(async (tx) => {
+    const existing = await tx.quotation.findUnique({ where: { id: originId } })
+    if (existing) {
+      // A status transition already applied here wins over a stale snapshot —
+      // never regress converted/expired/cancelled states.
+      const sticky = ['converted', 'expired', 'cancelled']
+      if (sticky.includes(existing.status) || existing.updatedAt > (date(p.updatedAt) ?? new Date(0))) {
+        return
+      }
+      await tx.quotation.update({ where: { id: originId }, data })
+      await tx.quotationItem.deleteMany({ where: { quotationId: originId } })
+    } else {
+      await tx.quotation.create({ data: { id: originId, ...data, clientRef: `sync:${originId}` } })
+    }
+    for (const it of items) {
+      const item = it as Record<string, unknown>
+      const mid = str(item.medicineId)
+      const med = mid ? await tx.medicine.findUnique({ where: { id: mid }, select: { id: true } }).catch(() => null) : null
+      await tx.quotationItem.create({
+        data: {
+          quotationId: originId,
+          medicineId: med?.id ?? null,
+          name: str(item.name, 'Item'),
+          sku: str(item.sku) || null,
+          qty: Math.trunc(num(item.qty, 1)),
+          unitPrice: num(item.unitPrice),
+          discount: num(item.discount),
+          total: num(item.total),
+        },
+      })
+    }
+  })
+  publishLive(['sync', 'quotation'], `Quotation ${data.quoteNo} synced from ${opts.asHQ ? 'branch' : 'HQ'}`, 'sync')
+  return 'ok'
+}
+
+async function applyQuotationStatus(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+  const id = str(p.id)
+  if (!id) return 'skipped'
+  const quote = await db.quotation.findUnique({ where: { id } })
+  if (!quote) return 'skipped'
+  const status = str(p.status, quote.status)
+  if (status === quote.status && !str(p.convertedSaleId)) return 'duplicate'
+  await db.quotation.update({
+    where: { id },
+    data: {
+      status,
+      convertedSaleId: str(p.convertedSaleId) || quote.convertedSaleId,
+      convertedInvoice: str(p.convertedInvoice) || quote.convertedInvoice,
+      updatedAt: date(p.at) ?? new Date(),
+    },
+  })
   return 'ok'
 }

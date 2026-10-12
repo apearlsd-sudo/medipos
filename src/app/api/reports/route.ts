@@ -58,6 +58,61 @@ export async function GET(req: NextRequest) {
     }
 
 
+    // ---- Expenses & net-position section ----------------------------------
+    if (section === 'expenses') {
+      const branchWhere = scope.branchId ? { branchId: scope.branchId } : {}
+      const [expenses, byCategory, byDay] = await Promise.all([
+        db.expense.findMany({
+          where: { createdAt: { gte: since }, ...branchWhere },
+          include: { category: { select: { name: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 200,
+        }),
+        db.expense.groupBy({ by: ['categoryId'], where: { createdAt: { gte: since }, status: 'completed', ...branchWhere }, _sum: { amount: true }, _count: true }),
+        db.expense.findMany({ where: { createdAt: { gte: since }, status: 'completed', ...branchWhere }, select: { amount: true, createdAt: true } }),
+      ])
+      const completed = expenses.filter((e) => e.status === 'completed')
+      const expensesTotal = +completed.reduce((s, e) => s + e.amount, 0).toFixed(2)
+      const cats = await db.expenseCategory.findMany({ where: { id: { in: byCategory.map((c) => c.categoryId) } }, select: { id: true, name: true } })
+
+      // Day series aligned with the reports window for overlay charting
+      const dayMap = new Map<string, { date: string; label: string; expenses: number }>()
+      for (let d = days - 1; d >= 0; d--) {
+        const day = new Date(Date.now() - d * DAY)
+        const key = day.toISOString().slice(0, 10)
+        dayMap.set(key, { date: key, label: day.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), expenses: 0 })
+      }
+      for (const e of byDay) {
+        const entry = dayMap.get(new Date(e.createdAt).toISOString().slice(0, 10))
+        if (entry) entry.expenses = +(entry.expenses + e.amount).toFixed(2)
+      }
+
+      return NextResponse.json({
+        section: 'expenses',
+        days,
+        scope: { branchId: scope.branchId, label: scope.label || 'All branches' },
+        total: expensesTotal,
+        voidedTotal: +expenses.filter((e) => e.status === 'voided').reduce((s, e) => s + e.amount, 0).toFixed(2),
+        count: completed.length,
+        byCategory: byCategory
+          .map((c) => ({ category: cats.find((x) => x.id === c.categoryId)?.name ?? 'Unknown', total: +(c._sum.amount ?? 0).toFixed(2), count: c._count }))
+          .sort((a, b) => b.total - a.total),
+        daily: [...dayMap.values()],
+        recent: expenses.slice(0, 40).map((e) => ({
+          id: e.id,
+          expenseNo: e.expenseNo,
+          category: e.category.name,
+          description: e.description,
+          amount: e.amount,
+          method: e.paymentMethod,
+          provider: e.provider,
+          status: e.status,
+          recordedByName: e.recordedByName,
+          createdAt: e.createdAt,
+        })),
+      })
+    }
+
     // Give the scope a human label when a specific branch is requested
     if (scope.branchId && !scope.label) {
       const branch = await db.branch.findUnique({ where: { id: scope.branchId }, select: { name: true } })

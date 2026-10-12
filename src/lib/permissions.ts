@@ -26,7 +26,7 @@ export interface PermissionDef {
 }
 
 // ---------------------------------------------------------------------------
-// Module definitions — 16 modules, 48 granular permissions
+// Module definitions — 21 modules, 61 granular permissions
 // ---------------------------------------------------------------------------
 
 const VIEW: PermissionActionDef = { action: 'view', label: 'View', description: 'View this module and its data' }
@@ -135,6 +135,26 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
     actions: [
       VIEW,
       { action: 'approve', label: 'Approve', description: 'Approve or reject large-discount requests and authorize them at the till' },
+    ],
+  },
+  {
+    group: 'Finance',
+    module: 'expenses',
+    label: 'Expenses & Petty Cash',
+    actions: [
+      VIEW,
+      { action: 'create', label: 'Record', description: 'Record expenses and petty-cash payouts' },
+      { action: 'void', label: 'Void', description: 'Void mistaken or duplicated expense entries' },
+    ],
+  },
+  {
+    group: 'Finance',
+    module: 'quotations',
+    label: 'Quotations',
+    actions: [
+      VIEW,
+      CREATE,
+      { action: 'convert', label: 'Convert', description: 'Accept quotes and convert them into sales' },
     ],
   },
   {
@@ -258,6 +278,12 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
     'prescriptions:view',
     'prescriptions:create',
     'prescriptions:verify',
+    'expenses:view',
+    'expenses:create',
+    'expenses:void',
+    'quotations:view',
+    'quotations:create',
+    'quotations:convert',
     'reports:view',
     'reports:export',
     'branches:view',
@@ -274,6 +300,9 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
     'customers:create',
     'prescriptions:view',
     'prescriptions:create',
+    'quotations:view',
+    'quotations:create',
+    'quotations:convert',
     'settings:view',
   ],
 }

@@ -12,9 +12,9 @@ import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, Boxes, Building2, CalendarClock, DollarSign, Download, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarClock, DollarSign, Download, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
-import { Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -43,7 +43,7 @@ interface ReportData {
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit'
+type ReportTab = 'overview' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
@@ -56,6 +56,8 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'payments', label: 'Payments & MoMo', icon: Smartphone },
   { key: 'claims', label: 'Insurance Claims', icon: ShieldCheck },
   { key: 'credit', label: 'Credit Aging', icon: HandCoins },
+  { key: 'analytics', label: 'Analytics Pack', icon: BarChart3 },
+  { key: 'expenses', label: 'Expenses & Net', icon: Wallet },
 ]
 
 export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
@@ -63,6 +65,9 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState('30')
   const [tab, setTab] = useState<ReportTab>('overview')
+  // caches fed by the lazy sections so CSV/PDF export works on those tabs
+  const [analyticsCache, setAnalyticsCache] = useState<AnalyticsData | null>(null)
+  const [expensesCache, setExpensesCache] = useState<ExpensesData | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -115,6 +120,18 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
           title: 'Purchase Summary',
           head: ['Reference', 'Supplier', 'Date', 'Total', 'Paid', 'Status'],
           body: data.purchaseStats.map((p) => [p.reference, p.supplier, fmtDate(p.date), p.total, p.paid, p.status.replace('_', ' ')]),
+        }
+      case 'analytics':
+        return {
+          title: 'Analytics — ABC Product Classes',
+          head: ['Product', 'Category', 'Units Sold', 'Revenue', 'Est. Profit', 'Revenue Share %', 'Cumulative %', 'Class'],
+          body: (analyticsCache?.abc ?? []).map((a) => [a.name, a.category, a.qtySold, a.revenue, a.profit, a.sharePct, a.cumulativePct, a.class]),
+        }
+      case 'expenses':
+        return {
+          title: 'Expenses by Category',
+          head: ['Category', 'Entries', 'Total'],
+          body: (expensesCache?.byCategory ?? []).map((c) => [c.category, c.count, c.total]),
         }
       default:
         return {
@@ -251,12 +268,17 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
 
       {/* ---------------- Payments & MoMo ---------------- */}
       {tab === 'payments' && <PaymentsSection days={days} />}
-
       {/* ---------------- Insurance claims ---------------- */}
       {tab === 'claims' && <ClaimsSection />}
 
       {/* ---------------- Credit aging ---------------- */}
       {tab === 'credit' && <CreditSection />}
+
+      {/* ---------------- Tier 3: analytics pack ---------------- */}
+      {tab === 'analytics' && <AnalyticsSection days={days} onData={setAnalyticsCache} />}
+
+      {/* ---------------- Tier 3: expenses & net position ---------------- */}
+      {tab === 'expenses' && <ExpensesSection days={days} onData={setExpensesCache} grossProfit={data?.summary.grossProfit ?? 0} />}
 
       {/* ---------------- Overview ---------------- */}
       {tab === 'overview' && (
@@ -833,5 +855,367 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
         </Table>
       </CardContent>
     </Card>
+  )
+}
+
+// ===========================================================================
+// Tier 3 — Analytics Pack
+// ===========================================================================
+
+interface AnalyticsData {
+  headline: {
+    revenue: number; cogs: number; profit: number; marginPct: number
+    transactions: number; avgValue: number; avgItems: number; singleItemShare: number
+    discountRate: number; identifiedShare: number; redemptionRate: number
+  }
+  profitTrend: Array<{ date: string; label: string; revenue: number; profit: number; marginPct: number; transactions: number }>
+  abc: Array<{ name: string; category: string; qtySold: number; revenue: number; profit: number; sharePct: number; cumulativePct: number; class: string }>
+  classCounts: { A: number; B: number; C: number }
+  hourly: Array<{ hour: number; label: string; revenue: number; transactions: number }>
+  weekday: Array<{ day: string; revenue: number; transactions: number }>
+  customers: { repeatCount: number; newCount: number; walkInShare: number; topCustomers: Array<{ id: string; name: string; spend: number; visits: number; points: number }> }
+  inventory: { deadStock: Array<{ name: string; qty: number; value: number }>; deadStockValue: number; lowCover: Array<{ name: string; qty: number; velocity: number; coverDays: number }> }
+}
+
+const ABC_STYLE: Record<string, string> = {
+  A: 'bg-teal-50 text-teal-700 dark:bg-teal-500/15 dark:text-teal-300',
+  B: 'bg-amber-50 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  C: 'bg-slate-100 text-slate-600 dark:bg-slate-500/15 dark:text-slate-300',
+}
+
+function AnalyticsSection({ days, onData }: { days: string; onData: (d: AnalyticsData) => void }) {
+  const [data, setData] = useState<AnalyticsData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    const run = () => {
+      setLoading(true)
+      fetch(`/api/analytics?days=${days}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j) => { if (alive && j && !j.error) { setData(j); onData(j) } })
+        .finally(() => { if (alive) setLoading(false) })
+    }
+    const t = setTimeout(run, 0)
+    return () => { alive = false; clearTimeout(t) }
+  }, [days, onData])
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
+    )
+  }
+
+  const h = data.headline
+  return (
+    <div className="space-y-4">
+      {/* Headline */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: 'Gross Profit', value: fmtMoney(h.profit), sub: `${h.marginPct}% margin · COGS ${fmtCompact(h.cogs)}` },
+          { label: 'Avg Basket', value: `${fmtMoney(h.avgValue)}`, sub: `${h.avgItems} units · ${h.singleItemShare}% single-item` },
+          { label: 'Discount Rate', value: `${h.discountRate}%`, sub: 'of transactions discounted' },
+          { label: 'Identified Buyers', value: `${h.identifiedShare}%`, sub: `${h.redemptionRate}% redeemed points` },
+        ].map((c) => (
+          <Card key={c.label} className="p-5">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{c.label}</p>
+            <p className="mt-1 text-2xl font-bold tracking-tight">{c.value}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">{c.sub}</p>
+          </Card>
+        ))}
+      </div>
+
+      {/* Profit trend */}
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Profit vs revenue — last {days} days</CardTitle></CardHeader>
+        <CardContent className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={data.profitTrend} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(120,120,120,0.15)" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={Math.max(2, Math.floor(data.profitTrend.length / 8))} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={54} tickFormatter={(v: number) => fmtCompact(v)} />
+              <Tooltip formatter={(v: number, n: string) => [fmtMoney(v), n]} labelStyle={{ fontSize: 11 }} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+              <Bar dataKey="revenue" name="Revenue" fill="#0d9488" opacity={0.28} radius={[3, 3, 0, 0]} />
+              <Line type="monotone" dataKey="profit" name="Profit" stroke="#0d9488" strokeWidth={2.5} dot={false} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* ABC analysis */}
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-semibold">ABC product classification</CardTitle>
+            <div className="flex gap-1.5 text-xs">
+              <span className="rounded-full bg-teal-50 px-2 py-0.5 font-semibold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">A: {data.classCounts.A}</span>
+              <span className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700 dark:bg-amber-500/15 dark:text-amber-300">B: {data.classCounts.B}</span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 font-semibold text-slate-600 dark:bg-slate-500/15 dark:text-slate-300">C: {data.classCounts.C}</span>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="mb-2 text-xs text-muted-foreground">Class A = top products driving 80% of revenue — protect their stock. Class C = the long tail.</p>
+            <div className="max-h-72 overflow-y-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Product</TableHead>
+                    <TableHead className="text-right">Revenue</TableHead>
+                    <TableHead className="text-right">Cum. %</TableHead>
+                    <TableHead className="text-center">Class</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.abc.map((a) => (
+                    <TableRow key={a.name}>
+                      <TableCell><p className="max-w-40 truncate font-medium">{a.name}</p><p className="text-xs text-muted-foreground">{a.category}</p></TableCell>
+                      <TableCell className="text-right">{fmtMoney(a.revenue)}</TableCell>
+                      <TableCell className="text-right">{a.cumulativePct}%</TableCell>
+                      <TableCell className="text-center">
+                        <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${ABC_STYLE[a.class]}`}>{a.class}</span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Time patterns */}
+        <div className="space-y-4">
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Busiest hours</CardTitle></CardHeader>
+            <CardContent className="h-44">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.hourly} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(120,120,120,0.15)" />
+                  <XAxis dataKey="label" tick={{ fontSize: 9 }} tickLine={false} axisLine={false} interval={1} />
+                  <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => fmtCompact(v)} />
+                  <Tooltip formatter={(v: number) => fmtMoney(v)} labelStyle={{ fontSize: 11 }} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                  <Bar dataKey="revenue" fill="#0d9488" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Day-of-week pattern</CardTitle></CardHeader>
+            <CardContent className="h-40">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={data.weekday} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(120,120,120,0.15)" />
+                  <XAxis dataKey="day" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+                  <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={44} tickFormatter={(v: number) => fmtCompact(v)} />
+                  <Tooltip formatter={(v: number) => fmtMoney(v)} labelStyle={{ fontSize: 11 }} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+                  <Bar dataKey="revenue" fill="#f59e0b" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      {/* Customers + inventory health */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold">Customer insights</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="mb-3 flex flex-wrap gap-2 text-xs">
+              <span className="rounded-full bg-teal-50 px-2.5 py-1 font-medium text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">{data.customers.repeatCount} repeat customers</span>
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 font-medium text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">{data.customers.newCount} new this period</span>
+              <span className="rounded-full bg-muted px-2.5 py-1 text-muted-foreground">{data.customers.walkInShare}% walk-in transactions</span>
+            </div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Top customer</TableHead>
+                  <TableHead className="text-center">Visits</TableHead>
+                  <TableHead className="text-center">Points</TableHead>
+                  <TableHead className="text-right">Spend</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.customers.topCustomers.map((c) => (
+                  <TableRow key={c.id}>
+                    <TableCell className="font-medium">{c.name}</TableCell>
+                    <TableCell className="text-center">{c.visits}</TableCell>
+                    <TableCell className="text-center">{c.points}</TableCell>
+                    <TableCell className="text-right font-semibold">{fmtMoney(c.spend)}</TableCell>
+                  </TableRow>
+                ))}
+                {data.customers.topCustomers.length === 0 && (
+                  <TableRow><TableCell colSpan={4} className="text-center text-sm text-muted-foreground">No identified customers in this period.</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Inventory health</CardTitle></CardHeader>
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Dead stock — {fmtMoney(data.inventory.deadStockValue)}</p>
+              <div className="space-y-1.5">
+                {data.inventory.deadStock.map((d) => (
+                  <div key={d.name} className="flex items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs">
+                    <span className="min-w-0 truncate font-medium">{d.name}</span>
+                    <span className="shrink-0 text-muted-foreground">{d.qty} · {fmtMoney(d.value)}</span>
+                  </div>
+                ))}
+                {data.inventory.deadStock.length === 0 && <p className="text-xs text-muted-foreground">Everything on the shelf sold at least once.</p>}
+              </div>
+            </div>
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Running out ≤30 days</p>
+              <div className="space-y-1.5">
+                {data.inventory.lowCover.map((c) => (
+                  <div key={c.name} className="flex items-center justify-between rounded-lg border px-2.5 py-1.5 text-xs">
+                    <span className="min-w-0 truncate font-medium">{c.name}</span>
+                    <span className="shrink-0 text-muted-foreground">{c.coverDays}d left · {c.velocity}/day</span>
+                  </div>
+                ))}
+                {data.inventory.lowCover.length === 0 && <p className="text-xs text-muted-foreground">No product is projected to run out within 30 days.</p>}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  )
+}
+
+// ===========================================================================
+// Tier 3 — Expenses & Net Position
+// ===========================================================================
+
+interface ExpensesData {
+  total: number
+  voidedTotal: number
+  count: number
+  byCategory: Array<{ category: string; total: number; count: number }>
+  daily: Array<{ date: string; label: string; expenses: number }>
+  recent: Array<{ id: string; expenseNo: string; category: string; description: string; amount: number; method: string; provider: string | null; status: string; recordedByName: string | null; createdAt: string }>
+}
+
+function ExpensesSection({ days, onData, grossProfit }: { days: string; onData: (d: ExpensesData) => void; grossProfit: number }) {
+  const [data, setData] = useState<ExpensesData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    const run = () => {
+      setLoading(true)
+      fetch(`/api/reports?section=expenses&days=${days}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j) => { if (alive && j && !j.error) { setData(j); onData(j) } })
+        .finally(() => { if (alive) setLoading(false) })
+    }
+    const t = setTimeout(run, 0)
+    return () => { alive = false; clearTimeout(t) }
+  }, [days, onData])
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
+    )
+  }
+
+  const net = +(grossProfit - data.total).toFixed(2)
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Expenses</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-red-600 dark:text-red-400">{fmtMoney(data.total)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{data.count} entries{data.voidedTotal > 0 ? ` · ${fmtMoney(data.voidedTotal)} voided` : ''}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Gross profit (trading)</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight">{fmtMoney(grossProfit)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">before overheads</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Net position</p>
+          <p className={`mt-1 text-2xl font-bold tracking-tight ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fmtMoney(net)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">gross profit − expenses</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Biggest cost</p>
+          <p className="mt-1 text-lg font-bold tracking-tight">{data.byCategory[0]?.category ?? '—'}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{data.byCategory[0] ? `${fmtMoney(data.byCategory[0].total)} · ${data.total > 0 ? ((data.byCategory[0].total / data.total) * 100).toFixed(0) : 0}% of spend` : 'no expenses recorded'}</p>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Expense outflow — last {days} days</CardTitle></CardHeader>
+        <CardContent className="h-56">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data.daily} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(120,120,120,0.15)" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={Math.max(2, Math.floor(data.daily.length / 8))} tickLine={false} axisLine={false} />
+              <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={54} tickFormatter={(v: number) => fmtCompact(v)} />
+              <Tooltip formatter={(v: number) => fmtMoney(v)} labelStyle={{ fontSize: 11 }} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+              <Bar dataKey="expenses" fill="#ef4444" opacity={0.75} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card className="lg:col-span-1">
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">By category</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {data.byCategory.map((c) => (
+              <div key={c.category}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="font-medium">{c.category} <span className="text-muted-foreground">({c.count})</span></span>
+                  <span className="text-muted-foreground">{fmtMoney(c.total)}</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                  <div className="h-full rounded-full bg-red-400" style={{ width: `${data.total > 0 ? Math.max(3, (c.total / data.total) * 100) : 3}%` }} />
+                </div>
+              </div>
+            ))}
+            {data.byCategory.length === 0 && <p className="text-sm text-muted-foreground">No expenses in the period.</p>}
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader className="pb-2"><CardTitle className="text-sm font-semibold">Recent expense entries</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Entry</TableHead>
+                  <TableHead className="hidden sm:table-cell">Method</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.recent.slice(0, 10).map((e) => (
+                  <TableRow key={e.id} className={e.status === 'voided' ? 'opacity-50' : undefined}>
+                    <TableCell>
+                      <p className="font-medium">{e.description}</p>
+                      <p className="text-xs text-muted-foreground">{e.expenseNo} · {e.category} · {fmtDate(e.createdAt)}{e.status === 'voided' ? ' · VOIDED' : ''}</p>
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">{paymentMethodLabel(e.method, e.provider)}</TableCell>
+                    <TableCell className="text-right font-semibold">{fmtMoney(e.amount)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
   )
 }

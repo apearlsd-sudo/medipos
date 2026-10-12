@@ -26,8 +26,14 @@ export type AuditAction =
   | 'branch.updated'
   | 'branch.deleted'
   | 'branch.price_updated'
+  // tier 3 — finance & quotations
+  | 'expense.voided'
+  | 'quotation.sent'
+  | 'quotation.accepted'
+  | 'quotation.declined'
+  | 'quotation.converted'
 
-export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine'
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine' | 'expense' | 'quotation'
 
 export interface AuditPriceChange {
   medicine: string
@@ -55,6 +61,11 @@ export interface AuditChanges {
   invoiceNo?: string
   // branch pricing
   priceChanges?: AuditPriceChange[]
+  // tier 3 — finance & quotations
+  expenseNo?: string
+  amount?: number
+  quoteNo?: string
+  total?: number
 }
 
 export async function logAudit(opts: {

@@ -9,6 +9,7 @@ import { fmtCompact, fmtMoney, fmtRelative, paymentMethodLabel } from '@/lib/for
 import { DASHBOARD_WIDGETS, parseWidgetConfig, widgetDef, widgetsForRole } from '@/lib/dashboard-widgets'
 import { useStoreSettings } from '@/lib/store-settings'
 import { WidgetsPanel } from '@/components/pos/dashboard-widgets-dialog'
+import { NetworkOverview } from '@/components/pos/network-overview'
 import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
@@ -399,6 +400,9 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
           </button>
         ))}
       </div>
+
+      {/* Tier 3: HQ consolidated network view (branches:view holders only) */}
+      <NetworkOverview />
 
       <WidgetsPanel open={customizeOpen} onOpenChange={setCustomizeOpen} onSaved={load} />
     </div>

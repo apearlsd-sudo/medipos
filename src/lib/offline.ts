@@ -30,6 +30,8 @@ const QUEUE_RULES: Array<{ method: string; prefix: string }> = [
   { method: 'PUT', prefix: '/api/medicines/' },
   { method: 'POST', prefix: '/api/customers' },
   { method: 'PUT', prefix: '/api/customers/' },
+  { method: 'POST', prefix: '/api/expenses' },
+  { method: 'POST', prefix: '/api/quotations' },
 ]
 
 const PING_MS = 10_000

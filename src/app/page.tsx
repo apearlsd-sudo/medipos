@@ -17,6 +17,8 @@ import { Inventory } from '@/components/pos/inventory'
 import { StockTake } from '@/components/pos/stock-take'
 import { Prescriptions } from '@/components/pos/prescriptions'
 import { Reports } from '@/components/pos/reports'
+import { Expenses } from '@/components/pos/expenses'
+import { Quotations } from '@/components/pos/quotations'
 import { Settings } from '@/components/pos/settings'
 import { Users } from '@/components/pos/users'
 import { Login } from '@/components/pos/login'
@@ -40,6 +42,8 @@ const VIEW_TITLES: Record<ViewKey, string> = {
   purchases: 'Purchases',
   sales: 'Sales & Invoices',
   approvals: 'Discount Approvals',
+  expenses: 'Expenses & Petty Cash',
+  quotations: 'Quotations',
   customers: 'Customers',
   suppliers: 'Suppliers',
   prescriptions: 'Prescriptions',
@@ -254,6 +258,8 @@ export default function Home() {
             {activeView === 'purchases' && <Purchases onPurchasesChanged={loadAlerts} />}
             {activeView === 'sales' && <Sales onSalesChanged={loadAlerts} storeSettings={settings} />}
             {activeView === 'approvals' && <Approvals />}
+            {activeView === 'expenses' && <Expenses />}
+            {activeView === 'quotations' && <Quotations />}
             {activeView === 'branches' && <Branches />}
             {activeView === 'customers' && <Customers />}
             {activeView === 'suppliers' && <Suppliers />}
