@@ -45,6 +45,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         sellingPrice: body.sellingPrice !== undefined ? Number(body.sellingPrice) : existing.sellingPrice,
         prescriptionRequired: body.prescriptionRequired !== undefined ? Boolean(body.prescriptionRequired) : existing.prescriptionRequired,
         insuranceCovered: body.insuranceCovered !== undefined ? Boolean(body.insuranceCovered) : existing.insuranceCovered,
+        innerUnit: body.innerUnit !== undefined ? (body.innerUnit || null) : existing.innerUnit,
+        innerQty: body.innerQty !== undefined ? Math.max(1, Number(body.innerQty) || 1) : existing.innerQty,
         location: body.location ?? existing.location,
         status: body.status ?? existing.status,
       },

@@ -87,7 +87,10 @@ export async function POST(req: NextRequest) {
     const tax = +((subtotal * taxRate) / 100).toFixed(2)
     const totalAmount = +(subtotal + tax).toFixed(2)
     const paidAmount = +Number(body.paidAmount ?? 0).toFixed(2)
-    const status = body.status ?? (paidAmount >= totalAmount ? 'paid' : paidAmount > 0 ? 'partially_paid' : 'pending')
+    // holdStock: a purchase-order DRAFT (e.g. from the reorder assistant) —
+    // recorded without receiving stock; stock arrives on the receive action.
+    const holdStock = body.holdStock === true
+    const status = body.status ?? (holdStock ? 'pending_receipt' : paidAmount >= totalAmount ? 'paid' : paidAmount > 0 ? 'partially_paid' : 'pending')
 
     const count = await db.purchase.count()
     const referenceNo = body.referenceNo || `PUR-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
@@ -106,11 +109,13 @@ export async function POST(req: NextRequest) {
         include: { items: true, supplier: true },
       })
 
-      for (const line of lines) {
-        await tx.medicine.update({ where: { id: line.medicineId }, data: { stockQty: { increment: line.qty } } })
-        await tx.inventoryLog.create({
-          data: { medicineId: line.medicineId, type: 'purchase_in', quantity: line.qty, reason: `Stock received via ${referenceNo}`, reference: referenceNo },
-        })
+      if (!holdStock) {
+        for (const line of lines) {
+          await tx.medicine.update({ where: { id: line.medicineId }, data: { stockQty: { increment: line.qty } } })
+          await tx.inventoryLog.create({
+            data: { medicineId: line.medicineId, type: 'purchase_in', quantity: line.qty, reason: `Stock received via ${referenceNo}`, reference: referenceNo },
+          })
+        }
       }
       return created
     })

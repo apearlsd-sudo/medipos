@@ -99,6 +99,8 @@ export async function POST(req: NextRequest) {
         sellingPrice: Number(body.sellingPrice ?? 0),
         prescriptionRequired: Boolean(body.prescriptionRequired),
         insuranceCovered: Boolean(body.insuranceCovered),
+        innerUnit: body.innerUnit || null,
+        innerQty: Math.max(1, Number(body.innerQty ?? 1)),
         location: body.location || null,
         status: body.status || 'active',
         branchId: await branchIdForWrite(gate.user, body.branchId),

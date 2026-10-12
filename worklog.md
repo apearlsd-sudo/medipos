@@ -295,3 +295,23 @@ Work Log:
 Stage Summary:
 - The platform rollback was fully recovered: all approved Tasks 1-20 functionality is present and proven again by the two E2E suites (40/40), and the four Tier 1 features are live on top. Known deferred niceties (flagged, not lost features): device-discovery card UI is minimal (pairing + tunnel setter live via API/Settings), per-page SSE live-refresh hooks not re-wired (SSE infra + bus restored; pages poll on action), transfers UI pending re-introduction, README/ARCHITECTURE docs not re-authored.
 - Ops note: environment tool caveat documented — [m byte-pair is eaten in bash tool outputs; use Write tool + chr(91) probes for byte-exact verification.
+
+---
+Task ID: 22-tier2-pack
+Agent: main
+Task: User: "implement all Tier 2 pack" — expiry & returns 2.0 (write-offs, quarantine, supplier returns, value-at-risk), pack-size breakdown selling, allergy & generic-substitution alerts at POS, reorder assistant → PO → receive.
+
+Work Log:
+- Schema: Medicine{innerUnit, innerQty, looseUnits, quarantineQty}, Customer.allergies, SaleItem.saleUnit, StockReturn + StockReturnItem models; db push OK.
+- Pack math (src/lib/packs.ts, pure): availableInner = stockQty×innerQty + looseUnits; selling inner units consumes looseUnits first, then breaks whole packs — stockQty stays integral. Sales POST plans per line against a working stock map; tx decrements packs + sets looseAfter and logs one sale_out per medicine in inner units. Sync mirror (applySaleCreated) runs the same math on the receiving node. Sync op 'stock.returned' mirrors write-offs/quarantine moves (incl. fromQuarantine).
+- Expiry & returns: /api/stock-returns (GET ledger + POST note: writeoff | supplier_return with per-line action incl. quarantine hold; cost-value totals; RET-YYYY-NNNN), /api/stock-returns/[id] PUT cancel → stock restored + restock logs; /api/quarantine GET desk + POST restore/writeoff/return_supplier; inventory movement badges for writeoff/quarantine_in/quarantine_out/restock; reports gains expiryRisk buckets (expired/30/60/90 cost value) + writeOffTotal per period + per-row valueAtRisk.
+- UI: stock-returns.tsx (write-off/return note builder with per-line "from quarantine" flag, history with cancel-and-restore, quarantine desk with restore/write-off/return actions) mounted as Inventory tab "Returns & Quarantine"; Reports → Expiry tab shows the five value-at-risk cards + Value at Risk column.
+- POS Tier 2: per-product quick "+1 {innerUnit}" add button, cart lines sell per pack or inner unit with per-unit price and stock caps (loose included), generic substitution chip per line (same genericName, cheaper, in stock — one-tap swap with savings), allergy alert banner (customer allergies vs cart name/generic/brand, pharmacist-checkout warning), sale payload carries saleUnit; receipt prints "(loose unit)" lines.
+- Reorder assistant: /api/reorder (velocity = sold/period; suggestedQty = ceil(velocity×leadTime + reorderLevel − onHand); only items projected at/below reorder level at lead-time end; grouped by supplier with estimated cost); purchases POST holdStock mode (PO draft, status pending_receipt, stock NOT incremented) + PUT action receive (idempotent, increments stock + purchase_in logs); Purchases UI: Reorder Assistant dialog (per-supplier groups, editable qtys, Create PO) + "Receive stock" action on pending_receipt rows.
+- Customers: allergies field (form + list chip + sync via customer.updated); medicines form: innerUnit + units-per-pack.
+- E2E: scripts/e2e-tier2.sh 17/17 (hermetic fixture — pack sales 25 tablets = 2 packs broken + 5 loose then 3 = 1 pack + 7 loose; write-off cost value; quarantine hold/restore/from-quarantine write-off; note cancel restores; VAR buckets; allergies stored; reorder suggestions → PO pending_receipt without stock change → receive +79 → double-receive 409). Tier 1 regression 24/24 after hermetic points reset (redemption clamp to remaining points proved en route).
+- tsc 0 src errors; eslint clean; build OK; relaunch HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY.
+- Commit: "feat(tier2): expiry & returns workflow, pack-size selling, allergy/generic alerts, reorder assistant".
+
+Stage Summary:
+- Tier 2 fully live on top of Tier 1 + the restored sync/offline stack; 41 E2E checks green across both suites. Deferred niceties: none for this pack — all four features are end-to-end (API + UI + sync + E2E).

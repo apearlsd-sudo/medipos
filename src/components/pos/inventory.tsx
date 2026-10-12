@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, ExpiryBadge, PageHeader, StockBadge, TableSkeleton } from '@/components/pos/shared'
+import { ReturnsAndQuarantine } from '@/components/pos/stock-returns'
 import { fmtDate, fmtRelative } from '@/lib/format'
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Boxes, History, TimerReset } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -46,6 +47,10 @@ const logTypeBadge: Record<string, string> = {
   adjustment: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400',
   return: 'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-400',
   initial: 'bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-500/10 dark:text-violet-400',
+  writeoff: 'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400',
+  quarantine_in: 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400',
+  quarantine_out: 'bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-500/10 dark:text-orange-400',
+  restock: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400',
 }
 
 export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void }) {
@@ -161,6 +166,7 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
           <TabsTrigger value="low" className="rounded-full">Low Stock ({lowStock.length + outOfStock.length})</TabsTrigger>
           <TabsTrigger value="expiry" className="rounded-full">Expiry Tracking ({expiring.length})</TabsTrigger>
           <TabsTrigger value="logs" className="rounded-full">Movement Logs</TabsTrigger>
+          <TabsTrigger value="returns" className="rounded-full">Returns &amp; Quarantine</TabsTrigger>
         </TabsList>
 
         <TabsContent value="low" className="mt-3">
@@ -197,6 +203,9 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
                   <SelectItem value="purchase_in">Purchase In</SelectItem>
                   <SelectItem value="adjustment">Adjustment</SelectItem>
                   <SelectItem value="return">Return</SelectItem>
+                  <SelectItem value="writeoff">Write-off</SelectItem>
+                  <SelectItem value="quarantine_in">Quarantine In</SelectItem>
+                  <SelectItem value="quarantine_out">Quarantine Out</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -237,6 +246,10 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
             </ScrollArea>
           </Card>
         </TabsContent>
+        <TabsContent value="returns" className="mt-3">
+          <ReturnsAndQuarantine />
+        </TabsContent>
+
       </Tabs>
 
       {/* Adjust dialog */}

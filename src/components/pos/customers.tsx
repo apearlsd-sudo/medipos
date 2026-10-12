@@ -30,6 +30,7 @@ interface Customer {
   balance: number
   insurerId: string | null
   insuranceNo: string | null
+  allergies: string | null
   insurer?: { id: string; name: string; coveragePercent: number; active: boolean } | null
   totalOrders: number
   totalSpent: number
@@ -55,7 +56,7 @@ interface LedgerEntry {
   createdAt: string
 }
 
-const empty = { name: '', email: '', phone: '', address: '', note: '', creditLimit: '0', insurerId: 'none', insuranceNo: '' }
+const empty = { name: '', email: '', phone: '', address: '', note: '', creditLimit: '0', insurerId: 'none', insuranceNo: '', allergies: '' }
 
 export function Customers() {
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -209,6 +210,7 @@ export function Customers() {
                           <div>
                             <p className="font-medium">{c.name}</p>
                             <p className="text-xs text-muted-foreground">{c.totalOrders} orders · {c.lastPurchase ? fmtRelative(c.lastPurchase) : 'never'}</p>
+                            {c.allergies && <p className="mt-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">⚠ {c.allergies}</p>}
                           </div>
                         </div>
                       </TableCell>
@@ -234,7 +236,7 @@ export function Customers() {
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => openBook(c)}><BookOpen className="h-4 w-4" /> Credit book</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => { setEditing(c); setForm({ name: c.name, email: c.email ?? '', phone: c.phone ?? '', address: c.address ?? '', note: c.note ?? '', creditLimit: String(c.creditLimit ?? 0), insurerId: c.insurerId ?? 'none', insuranceNo: c.insuranceNo ?? '' }); setDialogOpen(true) }}>
+                            <DropdownMenuItem onClick={() => { setEditing(c); setForm({ name: c.name, email: c.email ?? '', phone: c.phone ?? '', address: c.address ?? '', note: c.note ?? '', creditLimit: String(c.creditLimit ?? 0), insurerId: c.insurerId ?? 'none', insuranceNo: c.insuranceNo ?? '', allergies: c.allergies ?? '' }); setDialogOpen(true) }}>
                               <Pencil className="h-4 w-4" /> Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => remove(c)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>

@@ -56,6 +56,8 @@ bc=$(curl -s -c $B -X POST http://localhost:$BRPORT/api/auth/login -H 'Content-T
 
 AMA=$(curl -s -b $H http://localhost:3000/api/customers?search=Ama | jqpy "d['customers'][0]['id']")
 KOFI=$(curl -s -b $H http://localhost:3000/api/customers?search=Kofi | jqpy "d['customers'][0]['id']")
+# hermetic loyalty fixture: Kofi starts every run with 60 points
+python3 -c "import sqlite3; c=sqlite3.connect('db/custom.db'); c.execute('UPDATE Customer SET points=60 WHERE id=?', ('$KOFI',)); c.commit()" 
 MED=$(curl -s -b $H "http://localhost:3000/api/medicines?search=Paracetamol" | jqpy "d['medicines'][0]['id'] + '|' + str(d['medicines'][0]['sellingPrice']) + '|' + (d['medicines'][0].get('branchId') or '')")
 MEDID=$(echo "$MED" | cut -d'|' -f1); MEDP=$(echo "$MED" | cut -d'|' -f2); MAINBR=$(echo "$MED" | cut -d'|' -f3)
 echo "  (customer $AMA/$KOFI, med $MEDID @ $MEDP)"

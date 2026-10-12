@@ -6,6 +6,7 @@ import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
 import { recordSyncOp } from '@/lib/sync'
+import { planPackSale } from '@/lib/packs'
 import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider } from '@/lib/pos-finance'
 
 export async function GET(req: NextRequest) {
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   try {
     const body = await req.json()
-    const items: Array<{ medicineId: string; qty: number; unitPrice?: number; discount?: number }> = body.items ?? []
+    const items: Array<{ medicineId: string; qty: number; unitPrice?: number; discount?: number; saleUnit?: 'pack' | 'inner' }> = body.items ?? []
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: 'Sale must contain at least one item' }, { status: 400 })
     }
@@ -94,22 +95,29 @@ export async function POST(req: NextRequest) {
     const saleBranchId = await branchIdForWrite(gate.user, body.branchId)
     const branchPrices = await loadBranchPrices(saleBranchId)
 
-    // Validate stock availability
+    // Pack-aware stock planning: selling in inner units (e.g. tablets) takes
+    // loose units first, then breaks whole packs. stockQty stays integral.
+    const workingStock = new Map(meds.map((m) => [m.id, { stockQty: m.stockQty, looseUnits: m.looseUnits }]))
+    interface PlannedLine { medicineId: string; name: string; sku: string; qty: number; unitPrice: number; discount: number; total: number; covered: boolean; saleUnit: 'pack' | 'inner'; packs: number; looseAfter: number; innerTotal: number }
+    const lines: PlannedLine[] = []
     for (const item of items) {
       const med = medMap.get(item.medicineId)
       if (!med) return NextResponse.json({ error: `Medicine not found: ${item.medicineId}` }, { status: 404 })
-      if (med.stockQty < item.qty) {
-        return NextResponse.json({ error: `Insufficient stock for "${med.name}" — only ${med.stockQty} ${med.unit}(s) left` }, { status: 409 })
+      const work = workingStock.get(item.medicineId)!
+      const packSale = item.saleUnit === 'inner' && (med.innerQty ?? 1) > 1
+      const saleUnit: 'pack' | 'inner' = packSale ? 'inner' : 'pack'
+      const plan = planPackSale({ stockQty: work.stockQty, looseUnits: work.looseUnits, innerQty: med.innerQty ?? 1 }, saleUnit, item.qty)
+      if (!plan.ok) {
+        return NextResponse.json({ error: `Insufficient stock for "${med.name}" — ${plan.error}` }, { status: 409 })
       }
-    }
-
-    const lines = items.map((item) => {
-      const med = medMap.get(item.medicineId)!
-      const unitPrice = item.unitPrice ?? effectivePrice(med.sellingPrice, saleBranchId, med.id, branchPrices)
+      work.stockQty -= plan.packs
+      work.looseUnits = plan.looseAfter
+      const packPrice = item.unitPrice ?? effectivePrice(med.sellingPrice, saleBranchId, med.id, branchPrices)
+      const unitPrice = saleUnit === 'inner' ? +(packPrice / (med.innerQty ?? 1)).toFixed(2) : packPrice
       const disc = item.discount ?? 0
       const total = +(unitPrice * item.qty - disc).toFixed(2)
-      return { medicineId: med.id, name: med.name, sku: med.sku, qty: item.qty, unitPrice, discount: disc, total, covered: med.insuranceCovered }
-    })
+      lines.push({ medicineId: med.id, name: med.name, sku: med.sku, qty: item.qty, unitPrice, discount: disc, total, covered: med.insuranceCovered, saleUnit, packs: plan.packs, looseAfter: plan.looseAfter, innerTotal: plan.innerTotal })
+    }
 
     const subtotal = +lines.reduce((s, l) => s + l.total, 0).toFixed(2)
     const discount = +Number(body.discount ?? 0).toFixed(2)
@@ -276,16 +284,26 @@ export async function POST(req: NextRequest) {
           cashierName: body.cashierName || gate.user.name || 'Staff',
           note: body.note || null,
           clientRef,
-          items: { create: lines.map(({ covered: _covered, ...l }) => l) },
+          items: { create: lines.map(({ covered: _covered, packs: _p, looseAfter: _lo, innerTotal: _it, ...l }) => l) },
         },
         include: { items: true, customer: true, shift: { select: { shiftNo: true } }, branchRef: { select: { name: true } } },
       })
 
+      const deltas = new Map<string, { packs: number; looseAfter: number; innerTotal: number }>()
       for (const line of lines) {
-        await tx.medicine.update({ where: { id: line.medicineId }, data: { stockQty: { decrement: line.qty } } })
-        await tx.inventoryLog.create({
-          data: { medicineId: line.medicineId, type: 'sale_out', quantity: -line.qty, reason: `Sold in ${invoiceNo}`, reference: invoiceNo },
-        })
+        const d = deltas.get(line.medicineId) ?? { packs: 0, looseAfter: line.looseAfter, innerTotal: 0 }
+        d.packs += line.packs
+        d.looseAfter = line.looseAfter
+        d.innerTotal += line.innerTotal
+        deltas.set(line.medicineId, d)
+      }
+      for (const [mid, d] of deltas) {
+        await tx.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: d.packs }, looseUnits: d.looseAfter } })
+        if (d.innerTotal > 0) {
+          await tx.inventoryLog.create({
+            data: { medicineId: mid, type: 'sale_out', quantity: -d.innerTotal, reason: `Sold in ${invoiceNo}${d.packs ? ` (${d.packs} pack(s) + loose)` : ' (loose only)'}`, reference: invoiceNo },
+          })
+        }
       }
 
       // Credit sale → charge the customer's ledger
@@ -364,7 +382,7 @@ export async function POST(req: NextRequest) {
       cashierName: sale.created.cashierName,
       note: body.note || null,
       createdAt: sale.created.createdAt.toISOString(),
-      items: lines.map(({ covered: _c, ...l }) => l),
+      items: lines.map(({ covered: _c, packs: _p, looseAfter: _lo, ...l }) => l),
     })
     if (paymentMethod === 'credit' && customer) {
       void recordSyncOp('ledger.entry', invoiceNo, {

@@ -43,6 +43,9 @@ interface Medicine {
   effectiveSellingPrice?: number
   prescriptionRequired: boolean
   insuranceCovered?: boolean
+  innerUnit?: string | null
+  innerQty?: number
+  looseUnits?: number
 }
 
 interface Category { id: string; name: string }
@@ -56,6 +59,8 @@ interface CartLine {
   qty: number
   stockQty: number
   prescriptionRequired: boolean
+  saleUnit: 'pack' | 'inner'
+  innerQty: number
 }
 
 interface CustomerOption {
@@ -67,6 +72,7 @@ interface CustomerOption {
   balance?: number
   insurerId?: string | null
   insuranceNo?: string | null
+  allergies?: string | null
   insurer?: { id: string; name: string; coveragePercent: number; active: boolean } | null
 }
 
@@ -176,23 +182,41 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return list
   }, [meds, activeCat, search])
 
-  const addToCart = useCallback((m: Medicine, qty = 1) => {
-    if (m.stockQty <= 0) {
+  const addToCart = useCallback((m: Medicine, qty = 1, unit: 'pack' | 'inner' = 'pack') => {
+    const innerQty = Math.max(1, m.innerQty ?? 1)
+    const saleUnit: 'pack' | 'inner' = unit === 'inner' && innerQty > 1 ? 'inner' : 'pack'
+    const availInner = m.stockQty * innerQty + (m.looseUnits ?? 0)
+    if (m.stockQty <= 0 && availInner <= 0) {
       toast({ title: 'Out of stock', description: `${m.name} has no stock available.`, variant: 'destructive' })
       return
     }
+    if (saleUnit === 'inner' && availInner <= 0) {
+      toast({ title: 'No loose units', description: `${m.name} has no ${m.innerUnit ?? 'inner'} units to sell — add a full pack.`, variant: 'destructive' })
+      return
+    }
+    const packPrice = m.effectiveSellingPrice ?? m.sellingPrice
+    const unitPrice = saleUnit === 'inner' ? +(packPrice / innerQty).toFixed(2) : packPrice
+    const cap = saleUnit === 'inner' ? availInner : m.stockQty
     setCart((prev) => {
       const existing = prev.find((l) => l.medicineId === m.id)
       if (existing) {
-        if (existing.qty + qty > m.stockQty) {
-          toast({ title: 'Stock limit reached', description: `Only ${m.stockQty} ${m.unit}(s) of ${m.name} available.`, variant: 'destructive' })
+        if (existing.saleUnit !== saleUnit) {
+          toast({ title: 'Already in the cart', description: `${m.name} is in the cart per ${existing.saleUnit === 'inner' ? (m.innerUnit ?? 'inner unit') : m.unit} — remove it first to switch.`, variant: 'destructive' })
+          return prev
+        }
+        if (existing.qty + qty > cap) {
+          toast({ title: 'Stock limit reached', description: saleUnit === 'inner' ? `Only ${availInner} ${m.innerUnit ?? 'inner'} unit(s) available.` : `Only ${m.stockQty} ${m.unit}(s) available.`, variant: 'destructive' })
           return prev
         }
         return prev.map((l) => (l.medicineId === m.id ? { ...l, qty: l.qty + qty } : l))
       }
+      if (qty > cap) {
+        toast({ title: 'Stock limit reached', description: saleUnit === 'inner' ? `Only ${availInner} ${m.innerUnit ?? 'inner'} unit(s) available.` : `Only ${m.stockQty} ${m.unit}(s) available.`, variant: 'destructive' })
+        return prev
+      }
       return [
         ...prev,
-        { medicineId: m.id, name: m.name, sku: m.sku, unit: m.unit, unitPrice: m.effectiveSellingPrice ?? m.sellingPrice, qty, stockQty: m.stockQty, prescriptionRequired: m.prescriptionRequired },
+        { medicineId: m.id, name: m.name, sku: m.sku, unit: saleUnit === 'inner' ? (m.innerUnit ?? 'Tablet') : m.unit, unitPrice, qty, stockQty: cap, prescriptionRequired: m.prescriptionRequired, saleUnit, innerQty },
       ]
     })
   }, [])
@@ -260,6 +284,52 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return { points, value: +(points * pointsSettings.pointValue).toFixed(2) }
   }, [pointsInput, selectedCustomer, patientTotal, pointsSettings])
   const payable = useMemo(() => Math.max(0, +(patientTotal - redemption.value).toFixed(2)), [patientTotal, redemption.value])
+  // Tier 2: allergy conflicts (customer profile vs cart contents)
+  const allergyConflicts = useMemo(() => {
+    const raw = (selectedCustomer?.allergies ?? '').trim()
+    if (!raw) return [] as string[]
+    const tokens = raw.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean)
+    if (tokens.length === 0) return [] as string[]
+    const hits: string[] = []
+    for (const l of cart) {
+      const med = meds.find((m) => m.id === l.medicineId)
+      if (!med) continue
+      const hay = `${med.name} ${med.genericName ?? ''} ${med.brand ?? ''}`.toLowerCase()
+      for (const t of tokens) {
+        if (t.length >= 3 && hay.includes(t)) {
+          hits.push(`${l.name} ↔ "${t}"`)
+          break
+        }
+      }
+    }
+    return hits
+  }, [selectedCustomer, cart, meds])
+
+  // Tier 2: generic substitution suggestions (same generic, cheaper, different item)
+  const swapSuggestions = useMemo(() => {
+    const byGeneric = new Map<string, Medicine>()
+    for (const m of meds) {
+      const g = (m.genericName ?? '').trim().toLowerCase()
+      if (!g) continue
+      const cur = byGeneric.get(g)
+      const priceOf = (x: Medicine) => x.effectiveSellingPrice ?? x.sellingPrice
+      if (!cur || priceOf(m) < priceOf(cur)) byGeneric.set(g, m)
+    }
+    const out = new Map<string, { med: Medicine; save: number }>()
+    for (const l of cart) {
+      const med = meds.find((m) => m.id === l.medicineId)
+      if (!med) continue
+      const g = (med.genericName ?? '').trim().toLowerCase()
+      if (!g) continue
+      const alt = byGeneric.get(g)
+      if (!alt || alt.id === med.id) continue
+      const priceOf = (x: Medicine) => x.effectiveSellingPrice ?? x.sellingPrice
+      const save = +((priceOf(med) - priceOf(alt)) * l.qty).toFixed(2)
+      if (save > 0 && alt.stockQty > 0) out.set(l.medicineId, { med: alt, save })
+    }
+    return out
+  }, [cart, meds])
+
   const tenderedNumTier1 = Number(tendered) || 0
   const changeTier1 = Math.max(0, +(tenderedNumTier1 - payable).toFixed(2))
   const rxInCart = cart.some((l) => l.prescriptionRequired)
@@ -278,7 +348,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          items: cart.map((l) => ({ medicineId: l.medicineId, qty: l.qty, unitPrice: l.unitPrice })),
+          items: cart.map((l) => ({ medicineId: l.medicineId, qty: l.qty, unitPrice: l.unitPrice, saleUnit: l.saleUnit })),
           discount: discountValue,
           customerId: customerId === 'walkin' ? null : customerId,
           paymentMethod,
@@ -395,6 +465,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         unitPrice: l.unitPrice,
         qty: l.qty,
         stockQty: Number.MAX_SAFE_INTEGER, // validated server-side
+          saleUnit: 'pack' as const,
+          innerQty: 1,
         prescriptionRequired: false,
       })),
     )
@@ -505,8 +577,22 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                       </p>
                     </div>
                     {!out && (
-                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-600 text-white opacity-0 shadow transition group-hover:opacity-100">
-                        <Plus className="h-4 w-4" />
+                      <span className="flex items-center gap-1.5">
+                        {(m.innerQty ?? 1) > 1 && m.innerUnit && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); addToCart(m, 1, 'inner') }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); addToCart(m, 1, 'inner') } }}
+                            className="hidden rounded-full border border-teal-300 px-2 py-0.5 text-[10px] font-semibold text-teal-700 group-hover:inline-flex dark:border-teal-500/40 dark:text-teal-300"
+                            title={`Add 1 ${m.innerUnit}`}
+                          >
+                            +1 {m.innerUnit}
+                          </span>
+                        )}
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-600 text-white opacity-0 shadow transition group-hover:opacity-100">
+                          <Plus className="h-4 w-4" />
+                        </span>
                       </span>
                     )}
                   </div>
@@ -547,6 +633,16 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           )}
         </div>
 
+        {/* Tier 2: allergy alert */}
+        {allergyConflicts.length > 0 && (
+          <div className="flex items-start gap-2 border-b bg-red-50 px-4 py-2.5 text-xs font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300">
+            <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span>
+              <strong>Allergy alert for {selectedCustomer?.name}:</strong> {allergyConflicts.join('; ')}. Confirm with the pharmacist before completing this sale.
+            </span>
+          </div>
+        )}
+
         {/* Approved discount requests ready to load */}
         {approvedRequests.length > 0 && cart.length === 0 && (
           <button
@@ -570,8 +666,22 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                 <div key={l.medicineId} className="flex items-start gap-2 py-3">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{l.name}</p>
-                    <p className="text-xs text-muted-foreground tabular-nums">{fmtMoney(l.unitPrice)} × {l.qty} = <span className="font-semibold text-foreground">{fmtMoney(l.unitPrice * l.qty)}</span></p>
+                    <p className="text-xs text-muted-foreground tabular-nums">{fmtMoney(l.unitPrice)} / {l.unit} × {l.qty} = <span className="font-semibold text-foreground">{fmtMoney(l.unitPrice * l.qty)}</span></p>
                     {l.prescriptionRequired && <Badge variant="secondary" className="mt-1 rounded-full bg-sky-100 text-[10px] text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">Rx item</Badge>}
+                    {swapSuggestions.get(l.medicineId) && (
+                      <button
+                        onClick={() => {
+                          const s = swapSuggestions.get(l.medicineId)!
+                          const line = cart.find((x) => x.medicineId === l.medicineId)
+                          setCart((prev) => prev.filter((x) => x.medicineId !== l.medicineId))
+                          addToCart(s.med, line?.qty ?? 1, line?.saleUnit ?? 'pack')
+                          toast({ title: 'Switched to generic', description: `${s.med.name} — saved ${fmtMoney(s.save)} on this line.` })
+                        }}
+                        className="mt-1 block w-full rounded-lg bg-emerald-50 px-2 py-1 text-left text-[11px] font-medium text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300"
+                      >
+                        ⇄ Generic option: {swapSuggestions.get(l.medicineId)!.med.name} — save {fmtMoney(swapSuggestions.get(l.medicineId)!.save)}
+                      </button>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button variant="outline" size="icon" className="h-6.5 w-6.5 rounded-md" onClick={() => updateQty(l.medicineId, -1)} aria-label={`Decrease ${l.name}`}>

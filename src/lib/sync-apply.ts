@@ -12,6 +12,7 @@
 
 import { db } from '@/lib/db'
 import { publishLive } from '@/lib/live'
+import { planPackSale } from '@/lib/packs'
 
 export interface WireOp {
   id: string
@@ -58,6 +59,8 @@ export async function applySyncOp(
       return applyClaimStatus(op, p)
     case 'insurer.updated':
       return applyInsurerUpsert(op, p)
+    case 'stock.returned':
+      return applyStockReturned(op, p)
     default:
       return 'skipped'
   }
@@ -125,6 +128,8 @@ async function applySaleCreated(
     })
     // Mirror the stock decrement for items that exist locally (HQ keeps a
     // shadow of branch stock so dashboards can show network-wide levels).
+    // Pack-aware: inner-unit sales break packs via the same math as the origin.
+    const mirrors = new Map<string, { packs: number; looseAfter: number; innerTotal: number }>()
     for (const it of items) {
       const item = it as Record<string, unknown>
       const mid = str(item.medicineId)
@@ -135,9 +140,19 @@ async function applySaleCreated(
       // Only decrement when this node actually owns the stock (same branch
       // scope or HQ mirroring a branch sale into its own catalog copy).
       if (med.branchId && str(p.branchId) && med.branchId !== str(p.branchId)) continue
-      await tx.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: qty } } })
+      const saleUnit = str(item.saleUnit) === 'inner' ? 'inner' : 'pack'
+      const plan = planPackSale({ stockQty: med.stockQty, looseUnits: med.looseUnits, innerQty: med.innerQty ?? 1 }, saleUnit, qty)
+      if (!plan.ok) continue // mirror stock exhausted — the mirror can't go negative
+      const d = mirrors.get(mid) ?? { packs: 0, looseAfter: plan.looseAfter, innerTotal: 0 }
+      d.packs += plan.packs
+      d.looseAfter = plan.looseAfter
+      d.innerTotal += num(item.innerTotal, plan.innerTotal) || plan.innerTotal
+      mirrors.set(mid, d)
+    }
+    for (const [mid, d] of mirrors) {
+      await tx.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: d.packs }, looseUnits: d.looseAfter } })
       await tx.inventoryLog.create({
-        data: { medicineId: mid, type: 'sale_out', quantity: -qty, reason: `Synced sale ${localInvoice}`, reference: localInvoice },
+        data: { medicineId: mid, type: 'sale_out', quantity: -d.innerTotal, reason: `Synced sale ${localInvoice}`, reference: localInvoice },
       })
     }
   })
@@ -319,6 +334,45 @@ async function applyClaimStatus(op: WireOp, p: Record<string, unknown>): Promise
     },
   })
   return 'ok'
+}
+
+/** Mirrors a write-off / supplier return / quarantine from another node. */
+async function applyStockReturned(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+  const items = Array.isArray(p.items) ? p.items : []
+  const returnNo = str(p.returnNo, op.targetKey || 'RET')
+  let applied = 0
+  for (const it of items) {
+    const item = it as Record<string, unknown>
+    const mid = str(item.medicineId)
+    const qty = Math.trunc(num(item.qty, 0))
+    if (!mid || qty <= 0) continue
+    const med = await db.medicine.findUnique({ where: { id: mid } })
+    if (!med) continue
+    const fromQuarantine = item.fromQuarantine === true
+    if (fromQuarantine) {
+      if (med.quarantineQty < qty) continue
+      const action = str(item.action, 'writeoff')
+      await db.medicine.update({
+        where: { id: mid },
+        data: { quarantineQty: { decrement: qty } },
+      })
+      if (action !== 'restore') {
+        await db.inventoryLog.create({ data: { medicineId: mid, type: 'quarantine_out', quantity: -qty, reason: `Quarantine ${action} (synced ${returnNo})`, reference: returnNo } })
+      }
+      applied++
+      continue
+    }
+    if (med.stockQty < qty) continue
+    if (item.action === 'quarantine') {
+      await db.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: qty }, quarantineQty: { increment: qty } } })
+    } else {
+      await db.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: qty } } })
+      await db.inventoryLog.create({ data: { medicineId: mid, type: str(item.type, 'writeoff'), quantity: -qty, reason: `${str(item.reason, 'writeoff')} (synced ${returnNo})`, reference: returnNo } })
+    }
+    applied++
+  }
+  if (applied > 0) publishLive(['stock', 'sync'], `Stock adjustment synced from peer (${returnNo})`, 'sync')
+  return applied > 0 ? 'ok' : 'skipped'
 }
 
 async function applyInsurerUpsert(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {

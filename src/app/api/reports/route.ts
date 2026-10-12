@@ -170,7 +170,7 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.stockValue - a.stockValue)
       .slice(0, 20)
 
-    // Expiry report (expired + expiring within 120 days)
+    // Expiry report (expired + expiring within 120 days) with cost value at risk
     const expiryReport = meds
       .filter((m) => m.expiryDate && m.status !== 'discontinued')
       .map((m) => ({
@@ -180,10 +180,34 @@ export async function GET(req: NextRequest) {
         expiryDate: m.expiryDate,
         daysLeft: Math.ceil((new Date(m.expiryDate as Date).getTime() - Date.now()) / DAY),
         qty: m.stockQty,
+        unit: m.unit,
+        unitCost: m.costPrice,
+        valueAtRisk: +(m.stockQty * m.costPrice).toFixed(2),
       }))
       .filter((m) => m.daysLeft <= 120)
       .sort((a, b) => a.daysLeft - b.daysLeft)
-      .slice(0, 20)
+      .slice(0, 40)
+
+    // Value-at-risk buckets (cost value of sellable stock by expiry horizon)
+    const risk = { expired: 0, d30: 0, d60: 0, d90: 0 }
+    for (const m of meds) {
+      if (!m.expiryDate || m.status === 'discontinued' || m.stockQty <= 0) continue
+      const dl = Math.ceil((new Date(m.expiryDate as Date).getTime() - Date.now()) / DAY)
+      const v = +(m.stockQty * m.costPrice).toFixed(2)
+      if (dl <= 0) risk.expired = +(risk.expired + v).toFixed(2)
+      else if (dl <= 30) risk.d30 = +(risk.d30 + v).toFixed(2)
+      else if (dl <= 60) risk.d60 = +(risk.d60 + v).toFixed(2)
+      else if (dl <= 90) risk.d90 = +(risk.d90 + v).toFixed(2)
+    }
+
+    // Write-offs & returns in the period (money that left the shelf)
+    const writeOffs = await db.stockReturn.findMany({
+      where: { createdAt: { gte: since }, status: 'completed', ...(scope.branchId ? { branchId: scope.branchId } : {}) },
+      select: { returnNo: true, type: true, reason: true, totalValue: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    })
+    const writeOffTotal = +writeOffs.reduce((s, w) => s + w.totalValue, 0).toFixed(2)
 
     // Purchase summary
     const purchases = await db.purchase.findMany({
@@ -285,6 +309,9 @@ export async function GET(req: NextRequest) {
       productStats,
       stockValuation,
       expiryReport,
+      expiryRisk: risk,
+      writeOffs,
+      writeOffTotal,
       purchaseStats,
       branchBreakdown,
     })

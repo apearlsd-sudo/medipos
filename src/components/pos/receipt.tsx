@@ -28,7 +28,7 @@ export interface ReceiptSale {
   shiftNo?: string | null
   approvedByName?: string | null
   branchName?: string | null
-  items: Array<{ name: string; qty: number; unitPrice: number; total: number }>
+  items: Array<{ name: string; qty: number; unitPrice: number; total: number; saleUnit?: string }>
 }
 
 interface ThermalReceiptProps {
@@ -95,7 +95,7 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
             <tr key={i} style={{ verticalAlign: 'top' }}>
               <td style={{ padding: '2px 0' }}>
                 <div>{it.name}</div>
-                <div style={{ fontSize: '9.5px', color: '#333' }}>{it.qty} × {fmtMoney(it.unitPrice)}</div>
+                <div style={{ fontSize: '9.5px', color: '#333' }}>{it.qty} × {fmtMoney(it.unitPrice)}{it.saleUnit === 'inner' ? ' (loose unit)' : ''}</div>
               </td>
               <td style={{ padding: '2px 0', textAlign: 'right', whiteSpace: 'nowrap', fontWeight: 600 }}>{fmtMoney(it.total)}</td>
             </tr>

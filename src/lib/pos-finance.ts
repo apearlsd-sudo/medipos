@@ -47,6 +47,7 @@ export function customerWriteData(body: Record<string, unknown>) {
     creditLimit: body.creditLimit !== undefined ? Math.max(0, Number(body.creditLimit) || 0) : undefined,
     insurerId: body.insurerId !== undefined ? (typeof body.insurerId === 'string' && body.insurerId ? body.insurerId : null) : undefined,
     insuranceNo: body.insuranceNo !== undefined ? (typeof body.insuranceNo === 'string' && body.insuranceNo.trim() ? body.insuranceNo.trim() : null) : undefined,
+    allergies: body.allergies !== undefined ? (typeof body.allergies === 'string' && body.allergies.trim() ? body.allergies.trim() : null) : undefined,
   }
 }
 

@@ -735,7 +735,27 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
   }
 
   if (tab === 'expiry') {
+    const risk = (data as { expiryRisk?: { expired: number; d30: number; d60: number; d90: number } }).expiryRisk
+    const writeOffTotal = (data as { writeOffTotal?: number }).writeOffTotal
     return (
+      <div className="space-y-3">
+      {risk && (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {[
+            { label: 'Expired (sellable)', value: risk.expired, cls: 'text-red-600 dark:text-red-400' },
+            { label: 'Expiring ≤30 d', value: risk.d30, cls: 'text-amber-600 dark:text-amber-400' },
+            { label: '31–60 d', value: risk.d60, cls: 'text-amber-500' },
+            { label: '61–90 d', value: risk.d90, cls: 'text-sky-600 dark:text-sky-400' },
+            { label: 'Written off (period)', value: writeOffTotal ?? 0, cls: 'text-violet-600 dark:text-violet-400' },
+          ].map((c) => (
+            <Card key={c.label} className="p-4">
+              <p className="text-xs text-muted-foreground">{c.label}</p>
+              <p className={`mt-1 text-xl font-bold tabular-nums ${c.cls}`}>{fmtMoney(c.value)}</p>
+            </Card>
+          ))}
+        </div>
+      )}
+      <p className="px-1 text-xs text-muted-foreground">Cost value at risk (stock on hand × cost price) by expiry horizon. Write off or return dead stock from Inventory → Returns &amp; Quarantine to clear it.</p>
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -747,6 +767,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
                 <TableHead>Expiry Date</TableHead>
                 <TableHead className="text-center">Days Left</TableHead>
                 <TableHead className="text-center">Stock</TableHead>
+                <TableHead className="text-right hidden md:table-cell">Value at Risk</TableHead>
                 <TableHead className="text-center">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -759,6 +780,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
                   <TableCell className="tabular-nums">{fmtDate(m.expiryDate)}</TableCell>
                   <TableCell className="text-center font-semibold tabular-nums">{m.daysLeft <= 0 ? 0 : m.daysLeft}</TableCell>
                   <TableCell className="text-center tabular-nums">{m.qty}</TableCell>
+                  <TableCell className="hidden text-right font-semibold tabular-nums md:table-cell">{fmtMoney((m as { valueAtRisk?: number }).valueAtRisk ?? 0)}</TableCell>
                   <TableCell className="text-center">
                     <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold ${
                       m.daysLeft <= 0
@@ -777,6 +799,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
           </Table>
         </CardContent>
       </Card>
+      </div>
     )
   }
 

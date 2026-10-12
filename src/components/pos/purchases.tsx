@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
 import { fmtDate, fmtMoney } from '@/lib/format'
-import { ClipboardList, PackagePlus, Plus, Search, Trash2, Truck } from 'lucide-react'
+import { ClipboardList, PackagePlus, Plus, Search, Trash2, Truck, Sparkles } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -52,6 +52,94 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
   const [pickCost, setPickCost] = useState('')
   const [paidAmount, setPaidAmount] = useState('')
   const [note, setNote] = useState('')
+
+  // --- Tier 2: reorder assistant -----------------------------------------
+  const [reorderOpen, setReorderOpen] = useState(false)
+  const [suggestions, setSuggestions] = useState<SuggestionRow[]>([])
+  const [suggestLoading, setSuggestLoading] = useState(false)
+  const [creatingPO, setCreatingPO] = useState<string | null>(null)
+  const [qtyEdits, setQtyEdits] = useState<Record<string, string>>({})
+
+  interface SuggestionRow {
+    medicineId: string
+    name: string
+    sku: string
+    unit: string
+    supplierId: string | null
+    supplierName: string | null
+    stockQty: number
+    reorderLevel: number
+    soldInPeriod: number
+    velocityPerDay: number
+    leadTimeDays: number
+    projectedAtArrival: number
+    suggestedQty: number
+    unitCost: number
+    estimatedCost: number
+  }
+  interface SuggestionGroup {
+    supplierId: string | null
+    supplierName: string
+    items: SuggestionRow[]
+    estimatedCost: number
+  }
+
+  const loadSuggestions = useCallback(async () => {
+    setSuggestLoading(true)
+    try {
+      const res = await fetch('/api/reorder?days=30&leadTimeDays=14', { cache: 'no-store' })
+      const json = await res.json()
+      setSuggestions(json.rows ?? [])
+      setQtyEdits(Object.fromEntries((json.rows ?? []).map((r: SuggestionRow) => [r.medicineId, String(r.suggestedQty)])))
+    } finally {
+      setSuggestLoading(false)
+    }
+  }, [])
+
+  const groups: SuggestionGroup[] = (() => {
+    const map = new Map<string, SuggestionGroup>()
+    for (const r of suggestions) {
+      const key = r.supplierId ?? 'none'
+      const g = map.get(key) ?? { supplierId: r.supplierId, supplierName: r.supplierName ?? 'Unassigned supplier', items: [], estimatedCost: 0 }
+      g.items.push(r)
+      g.estimatedCost = +(g.estimatedCost + r.estimatedCost).toFixed(2)
+      map.set(key, g)
+    }
+    return [...map.values()]
+  })()
+
+  const createPOFromGroup = async (g: SuggestionGroup) => {
+    setCreatingPO(g.supplierId ?? 'none')
+    try {
+      const items = g.items
+        .map((r) => ({ medicineId: r.medicineId, qty: Math.max(1, Number(qtyEdits[r.medicineId] ?? r.suggestedQty) || 1), unitCost: r.unitCost }))
+        .filter((i) => i.qty > 0)
+      const res = await fetch('/api/purchases', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supplierId: g.supplierId, holdStock: true, note: 'Created from reorder assistant — receive stock on delivery', items }),
+      })
+      const json = await res.json()
+      if (!res.ok) { toast({ title: 'PO failed', description: json.error, variant: 'destructive' }); return }
+      toast({ title: `PO #${json.purchase.referenceNo} created`, description: `${items.length} item(s), ${fmtMoney(json.purchase.totalAmount)} — receive stock when it arrives.` })
+      setSuggestions((prev) => prev.filter((r) => !g.items.some((i) => i.medicineId === r.medicineId)))
+      load()
+    } finally {
+      setCreatingPO(null)
+    }
+  }
+
+  const receivePO = async (p: Purchase) => {
+    const res = await fetch(`/api/purchases/${p.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'receive' }),
+    })
+    const json = await res.json()
+    if (!res.ok) { toast({ title: 'Receive failed', description: json.error, variant: 'destructive' }); return }
+    toast({ title: `#${p.referenceNo} received`, description: `${json.received} line(s) added to stock.` })
+    load()
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -162,9 +250,14 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
         title="Purchases"
         breadcrumb="Purchases"
         actions={
-          <Button onClick={() => setDialogOpen(true)} className="rounded-full bg-teal-600 hover:bg-teal-700">
-            <Plus className="h-4 w-4" /> New Purchase
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => { setReorderOpen(true); loadSuggestions() }} className="rounded-full">
+              <Sparkles className="h-4 w-4 text-teal-600" /> Reorder Assistant
+            </Button>
+            <Button onClick={() => setDialogOpen(true)} className="rounded-full bg-teal-600 hover:bg-teal-700">
+              <Plus className="h-4 w-4" /> New Purchase
+            </Button>
+          </>
         }
       />
 
@@ -225,6 +318,11 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
                       <TableCell className="text-right tabular-nums">{p.dueAmount > 0 ? <span className="text-red-500">{fmtMoney(p.dueAmount)}</span> : '—'}</TableCell>
                       <TableCell className="text-center"><StatusBadge status={p.status} /></TableCell>
                       <TableCell className="text-right">
+                        {p.status === 'pending_receipt' && (
+                          <Button variant="outline" size="sm" className="mr-1.5 h-8 rounded-full bg-teal-50 text-xs text-teal-700 dark:bg-teal-500/10 dark:text-teal-300" onClick={() => receivePO(p)}>
+                            <PackagePlus className="h-3.5 w-3.5" /> Receive stock
+                          </Button>
+                        )}
                         {p.dueAmount > 0 && (
                           <Button variant="outline" size="sm" className="h-8 rounded-full text-xs" onClick={() => markPaid(p)}>
                             <PackagePlus className="h-3.5 w-3.5" /> Settle
@@ -247,6 +345,60 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
           </ScrollArea>
         )}
       </Card>
+
+      {/* Reorder assistant dialog */}
+      <Dialog open={reorderOpen} onOpenChange={setReorderOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Sparkles className="h-4 w-4 text-teal-600" /> Reorder Assistant</DialogTitle>
+            <DialogDescription>
+              Based on the last 30 days of sales velocity and a 14-day supplier lead time: items whose stock would fall to/below the reorder level before a new order arrives. Create POs per supplier — stock is added when you receive them.
+            </DialogDescription>
+          </DialogHeader>
+          {suggestLoading ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Crunching sales velocity…</p>
+          ) : groups.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Nothing needs reordering right now — every item projects above its reorder level.</p>
+          ) : (
+            <div className="space-y-4">
+              {groups.map((g) => (
+                <div key={g.supplierId ?? 'none'} className="rounded-xl border">
+                  <div className="flex items-center justify-between border-b bg-muted/40 px-3 py-2">
+                    <p className="text-sm font-semibold">{g.supplierName} <span className="text-xs font-normal text-muted-foreground">· {g.items.length} item(s)</span></p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold tabular-nums">{fmtMoney(g.estimatedCost)}</span>
+                      <Button size="sm" className="h-8 rounded-full bg-teal-600 text-xs hover:bg-teal-700" disabled={creatingPO === (g.supplierId ?? 'none')} onClick={() => createPOFromGroup(g)}>
+                        {creatingPO === (g.supplierId ?? 'none') ? 'Creating…' : 'Create PO'}
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="divide-y">
+                    {g.items.map((r) => (
+                      <div key={r.medicineId} className="flex items-center gap-2 px-3 py-2 text-sm">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium">{r.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            on hand {r.stockQty} {r.unit} · min {r.reorderLevel} · sold {r.soldInPeriod} in 30 d ({r.velocityPerDay}/day) · would be {r.projectedAtArrival} at arrival
+                          </p>
+                        </div>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={qtyEdits[r.medicineId] ?? String(r.suggestedQty)}
+                          onChange={(e) => setQtyEdits((q) => ({ ...q, [r.medicineId]: e.target.value }))}
+                          className="h-8 w-20 tabular-nums"
+                          aria-label={`Order quantity for ${r.name}`}
+                        />
+                        <span className="w-20 text-right text-xs text-muted-foreground tabular-nums">{fmtMoney(r.unitCost * (Number(qtyEdits[r.medicineId] ?? r.suggestedQty) || 0))}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* New purchase dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

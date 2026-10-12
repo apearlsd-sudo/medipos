@@ -44,6 +44,8 @@ interface Med {
   sellingPrice: number
   prescriptionRequired: boolean
   insuranceCovered: boolean
+  innerUnit: string | null
+  innerQty: number
   location: string | null
   status: string
 }
@@ -54,7 +56,7 @@ interface Supplier { id: string; name: string }
 const emptyForm = {
   name: '', genericName: '', brand: '', sku: '', barcode: '', categoryId: '', supplierId: '', unit: 'Box',
   batchNumber: '', expiryDate: '', stockQty: '0', reorderLevel: '20', costPrice: '0', sellingPrice: '0',
-  prescriptionRequired: false, insuranceCovered: false, location: '', status: 'active',
+  prescriptionRequired: false, insuranceCovered: false, innerUnit: '', innerQty: '1', location: '', status: 'active',
 }
 
 const LABEL_SIZES = {
@@ -134,6 +136,7 @@ export function Medicines() {
       expiryDate: m.expiryDate ? m.expiryDate.slice(0, 10) : '', stockQty: String(m.stockQty), reorderLevel: String(m.reorderLevel),
       costPrice: String(m.costPrice), sellingPrice: String(m.sellingPrice), prescriptionRequired: m.prescriptionRequired,
       insuranceCovered: m.insuranceCovered,
+      innerUnit: m.innerUnit ?? '', innerQty: String(m.innerQty ?? 1),
       location: m.location ?? '', status: m.status,
     })
     setDialogOpen(true)
@@ -149,6 +152,7 @@ export function Medicines() {
         stockQty: Number(form.stockQty), reorderLevel: Number(form.reorderLevel),
         costPrice: Number(form.costPrice), sellingPrice: Number(form.sellingPrice),
         expiryDate: form.expiryDate || null,
+        innerQty: Math.max(1, Number(form.innerQty) || 1),
       }
       const res = await fetch(editing ? `/api/medicines/${editing.id}` : '/api/medicines', {
         method: editing ? 'PUT' : 'POST',
@@ -435,6 +439,18 @@ export function Medicines() {
                 <p className="text-xs text-muted-foreground">Customers need a valid prescription to buy this medicine.</p>
               </div>
               <Switch checked={form.prescriptionRequired} onCheckedChange={(v) => set('prescriptionRequired', v)} />
+            </div>
+            <div className="grid grid-cols-2 gap-3 rounded-lg border p-3 sm:col-span-2">
+              <div className="space-y-1.5">
+                <Label>Inner Unit (optional)</Label>
+                <Input value={form.innerUnit} onChange={(e) => set('innerUnit', e.target.value)} placeholder="e.g. Tablet, Strip, Vial" />
+                <p className="text-xs text-muted-foreground">Sell loose units out of opened packs.</p>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Units per Pack</Label>
+                <Input type="number" min={1} value={form.innerQty} onChange={(e) => set('innerQty', e.target.value)} className="tabular-nums" />
+                <p className="text-xs text-muted-foreground">1 Box = 10 Tablet ⇒ innerQty 10.</p>
+              </div>
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3 sm:col-span-2">
               <div>

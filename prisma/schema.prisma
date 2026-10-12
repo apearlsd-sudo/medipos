@@ -120,6 +120,7 @@ model Supplier {
   address       String?
   medicines     Medicine[]
   purchases     Purchase[]
+  stockReturns  StockReturn[]
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 }
@@ -146,11 +147,16 @@ model Medicine {
   sellingPrice         Float          @default(0)
   prescriptionRequired Boolean        @default(false)
   insuranceCovered   Boolean        @default(false) // item is on the insurer's covered formulary
+  innerUnit          String?        // sellable sub-unit, e.g. Tablet inside a Box
+  innerQty           Int            @default(1)   // how many inner units per stock unit
+  looseUnits         Int            @default(0)   // opened-pack loose inner units on hand
+  quarantineQty      Int            @default(0)   // units held aside (expired/damaged, not sellable)
   location             String?
   status               String         @default("active")
   saleItems            SaleItem[]
   purchaseItems        PurchaseItem[]
   logs                 InventoryLog[]
+  returnItems          StockReturnItem[]
   branchPrices         BranchPrice[]
   createdAt            DateTime       @default(now())
   updatedAt            DateTime       @updatedAt
@@ -168,6 +174,7 @@ model Customer {
   insurerId   String?
   insurer     Insurer? @relation(fields: [insurerId], references: [id])
   insuranceNo String? // NHIS / private insurance membership number
+  allergies   String? // comma-separated allergy flags matched at POS
   sales       Sale[]
   ledger      CustomerLedger[]
   loyaltyLogs LoyaltyLog[]
@@ -291,6 +298,7 @@ model SaleItem {
   unitPrice  Float
   discount   Float     @default(0)
   total      Float
+  saleUnit   String    @default("pack") // pack | inner (loose-unit selling)
 }
 
 model Purchase {
@@ -406,6 +414,43 @@ model DiscoveredNode {
 model NodeSetting {
   key   String @id
   value String
+}
+
+model StockReturn {
+  id            String            @id @default(cuid())
+  returnNo      String            @unique // RET-2026-0001
+  type          String            @default("writeoff") // writeoff | supplier_return
+  reason        String            @default("expired") // expired | damaged | recalled | other
+  status        String            @default("completed") // completed | cancelled
+  supplierId    String?
+  supplier      Supplier?         @relation(fields: [supplierId], references: [id])
+  branchId      String?
+  totalValue    Float             @default(0) // cost value of the removed stock
+  note          String?
+  createdById   String?
+  createdByName String?
+  items         StockReturnItem[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([createdAt])
+}
+
+model StockReturnItem {
+  id          String      @id @default(cuid())
+  returnId    String
+  return      StockReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  medicineId  String?
+  medicine    Medicine?   @relation(fields: [medicineId], references: [id])
+  name        String
+  sku         String?
+  batchNumber String?
+  expiryDate  DateTime?
+  qty         Int
+  unitCost    Float       @default(0)
+  value       Float       @default(0)
+  action      String      @default("writeoff") // writeoff | return_supplier | quarantine
+  fromQuarantine Boolean  @default(false) // qty came out of Medicine.quarantineQty
 }
 
 model Shift {
