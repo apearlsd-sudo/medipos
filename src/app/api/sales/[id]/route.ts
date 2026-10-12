@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { recordSyncOp } from '@/lib/sync'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requirePermission(req, 'sales', 'view')
@@ -20,13 +21,34 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requirePermission(req, 'sales', 'delete')
+  const gate = await requirePermission(req, 'sales', 'view')
   if (gate.response) return gate.response
   try {
     const { id } = await params
     const body = await req.json()
     const existing = await db.sale.findUnique({ where: { id } })
     if (!existing) return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
+
+    // MoMo reconciliation: confirm the money actually arrived
+    if (body.action === 'verify-payment') {
+      const due = +(existing.total - existing.insuranceAmount - existing.pointsValue).toFixed(2)
+      const sale = await db.sale.update({
+        where: { id },
+        data: { paymentStatus: 'paid', paidAmount: due },
+        include: { items: true, customer: true },
+      })
+      void recordSyncOp('sale.verified', existing.invoiceNo, { id, status: 'paid', paidAmount: due, at: new Date().toISOString() })
+      return NextResponse.json({ sale })
+    }
+    if (body.action === 'flag-payment') {
+      const sale = await db.sale.update({
+        where: { id },
+        data: { paymentStatus: 'flagged', note: typeof body.note === 'string' ? body.note : existing.note },
+        include: { items: true, customer: true },
+      })
+      void recordSyncOp('sale.verified', existing.invoiceNo, { id, status: 'flagged', at: new Date().toISOString() })
+      return NextResponse.json({ sale })
+    }
 
     const paidAmount = body.paidAmount !== undefined ? Number(body.paidAmount) : existing.paidAmount
     const paymentStatus =

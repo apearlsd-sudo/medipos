@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { recordSyncOp } from '@/lib/sync'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'inventory', 'view')
@@ -32,6 +33,16 @@ export async function POST(req: NextRequest) {
     const qty = Number(quantity)
     if (!qty || qty <= 0) return NextResponse.json({ error: 'Quantity must be greater than 0' }, { status: 400 })
 
+    // --- offline idempotency: replayed adjustments never double-apply ----
+    const clientRef = typeof body.clientRef === 'string' && body.clientRef.trim() ? body.clientRef.trim() : null
+    if (clientRef) {
+      const dup = await db.inventoryLog.findUnique({ where: { clientRef }, include: { medicine: { select: { name: true, sku: true, unit: true } } } })
+      if (dup) {
+        const med = await db.medicine.findUnique({ where: { id: dup.medicineId ?? '' } })
+        return NextResponse.json({ medicine: med, log: dup, deduped: true }, { status: 200 })
+      }
+    }
+
     const med = await db.medicine.findUnique({ where: { id: medicineId } })
     if (!med) return NextResponse.json({ error: 'Medicine not found' }, { status: 404 })
 
@@ -46,9 +57,14 @@ export async function POST(req: NextRequest) {
         data: { stockQty: { increment: delta } },
       })
       const log = await tx.inventoryLog.create({
-        data: { medicineId, type: 'adjustment', quantity: delta, reason: reason || (delta > 0 ? 'Stock added' : 'Stock removed'), reference: `ADJ-${Date.now().toString().slice(-6)}` },
+        data: { medicineId, type: 'adjustment', quantity: delta, reason: reason || (delta > 0 ? 'Stock added' : 'Stock removed'), reference: `ADJ-${Date.now().toString().slice(-6)}`, clientRef },
       })
       return { updated, log }
+    })
+
+    void recordSyncOp('inventory.adjusted', result.log.reference, {
+      id: result.log.id, medicineId, quantity: delta, type: 'adjustment',
+      reason: result.log.reason, reference: result.log.reference,
     })
 
     return NextResponse.json({ medicine: result.updated, log: result.log }, { status: 201 })

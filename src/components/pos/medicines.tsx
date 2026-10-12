@@ -43,6 +43,7 @@ interface Med {
   costPrice: number
   sellingPrice: number
   prescriptionRequired: boolean
+  insuranceCovered: boolean
   location: string | null
   status: string
 }
@@ -53,7 +54,7 @@ interface Supplier { id: string; name: string }
 const emptyForm = {
   name: '', genericName: '', brand: '', sku: '', barcode: '', categoryId: '', supplierId: '', unit: 'Box',
   batchNumber: '', expiryDate: '', stockQty: '0', reorderLevel: '20', costPrice: '0', sellingPrice: '0',
-  prescriptionRequired: false, location: '', status: 'active',
+  prescriptionRequired: false, insuranceCovered: false, location: '', status: 'active',
 }
 
 const LABEL_SIZES = {
@@ -132,6 +133,7 @@ export function Medicines() {
       categoryId: m.categoryId, supplierId: m.supplierId ?? '', unit: m.unit, batchNumber: m.batchNumber ?? '',
       expiryDate: m.expiryDate ? m.expiryDate.slice(0, 10) : '', stockQty: String(m.stockQty), reorderLevel: String(m.reorderLevel),
       costPrice: String(m.costPrice), sellingPrice: String(m.sellingPrice), prescriptionRequired: m.prescriptionRequired,
+      insuranceCovered: m.insuranceCovered,
       location: m.location ?? '', status: m.status,
     })
     setDialogOpen(true)
@@ -433,6 +435,13 @@ export function Medicines() {
                 <p className="text-xs text-muted-foreground">Customers need a valid prescription to buy this medicine.</p>
               </div>
               <Switch checked={form.prescriptionRequired} onCheckedChange={(v) => set('prescriptionRequired', v)} />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3 sm:col-span-2">
+              <div>
+                <Label>Insurance Covered</Label>
+                <p className="text-xs text-muted-foreground">On the insurer formulary — insured customers get co-pay splitting at checkout.</p>
+              </div>
+              <Switch checked={form.insuranceCovered} onCheckedChange={(v) => set('insuranceCovered', v)} />
             </div>
             {editing && (
               <div className="space-y-1.5 sm:col-span-2">

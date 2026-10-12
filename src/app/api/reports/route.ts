@@ -13,6 +13,50 @@ export async function GET(req: NextRequest) {
     const days = Math.min(Number(searchParams.get('days') ?? 30), 120)
     const since = new Date(Date.now() - days * DAY)
     const scope = resolveBranchScope(gate.user, searchParams)
+    const section = searchParams.get('section')
+
+    // ---- Payments & MoMo reconciliation section --------------------------
+    if (section === 'payments') {
+      const branchWhere = scope.branchId ? { branchId: scope.branchId } : {}
+      const [sales, methodAgg] = await Promise.all([
+        db.sale.findMany({
+          where: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' }, paymentMethod: 'momo', ...branchWhere },
+          include: { customer: { select: { name: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 400,
+        }),
+        db.sale.groupBy({
+          by: ['paymentMethod', 'paymentProvider'],
+          where: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' }, ...branchWhere },
+          _sum: { total: true, paidAmount: true },
+          _count: true,
+        }),
+      ])
+      const methods = methodAgg.map((m) => ({
+        method: m.paymentMethod,
+        provider: m.paymentProvider,
+        count: m._count,
+        total: +(m._sum.total ?? 0).toFixed(2),
+        collected: +(m._sum.paidAmount ?? 0).toFixed(2),
+      }))
+      return NextResponse.json({
+        section: 'payments',
+        methods,
+        momo: sales.map((s) => ({
+          id: s.id,
+          invoiceNo: s.invoiceNo,
+          customer: s.customer?.name ?? 'Walk-in',
+          provider: s.paymentProvider,
+          reference: s.paymentReference,
+          amount: +(s.total - s.insuranceAmount - s.pointsValue).toFixed(2),
+          status: s.paymentStatus,
+          cashierName: s.cashierName,
+          createdAt: s.createdAt,
+        })),
+        momoPending: sales.filter((s) => s.paymentStatus === 'pending').length,
+      })
+    }
+
 
     // Give the scope a human label when a specific branch is requested
     if (scope.branchId && !scope.label) {

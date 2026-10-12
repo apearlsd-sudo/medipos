@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { recordSyncOp } from '@/lib/sync'
+import { customerWriteData } from '@/lib/pos-finance'
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requirePermission(req, 'customers', 'edit')
@@ -12,12 +14,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       where: { id },
       data: {
         name: body.name !== undefined ? String(body.name).trim() : undefined,
-        email: body.email,
-        phone: body.phone,
-        address: body.address,
-        note: body.note,
+        ...customerWriteData(body),
       },
     })
+    void recordSyncOp('customer.updated', customer.name, { id: customer.id, name: customer.name, email: customer.email, phone: customer.phone, address: customer.address, note: customer.note, creditLimit: customer.creditLimit, insurerId: customer.insurerId, insuranceNo: customer.insuranceNo })
     return NextResponse.json({ customer })
   } catch (e) {
     console.error('Customer PUT error', e)

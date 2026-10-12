@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { PageHeader } from '@/components/pos/shared'
 import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { TwoFactorCard } from '@/components/pos/security-settings'
+import { CommerceCards } from '@/components/pos/commerce-settings'
 import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
@@ -225,6 +226,8 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
         </div>
 
         <div className="space-y-4">
+          <CommerceCards canEdit={canEditSettings} />
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base"><Printer className="h-4 w-4 text-teal-500" /> Thermal Receipt</CardTitle>

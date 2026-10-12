@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requireUser, requirePermission } from '@/lib/auth'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 import { loadBranchPrices } from '@/lib/pricing'
+import { recordSyncOp } from '@/lib/sync'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -97,6 +98,7 @@ export async function POST(req: NextRequest) {
         costPrice: Number(body.costPrice ?? 0),
         sellingPrice: Number(body.sellingPrice ?? 0),
         prescriptionRequired: Boolean(body.prescriptionRequired),
+        insuranceCovered: Boolean(body.insuranceCovered),
         location: body.location || null,
         status: body.status || 'active',
         branchId: await branchIdForWrite(gate.user, body.branchId),
@@ -109,6 +111,14 @@ export async function POST(req: NextRequest) {
         data: { medicineId: med.id, type: 'initial', quantity: med.stockQty, reason: 'Initial stock on creation', reference: med.sku },
       })
     }
+
+    void recordSyncOp('medicine.created', med.sku, {
+      id: med.id, name: med.name, genericName: med.genericName, brand: med.brand, sku: med.sku, barcode: med.barcode,
+      categoryId: med.categoryId, supplierId: med.supplierId, unit: med.unit, batchNumber: med.batchNumber,
+      expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
+      prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
+      status: med.status, stockQty: med.stockQty,
+    })
 
     return NextResponse.json({ medicine: med }, { status: 201 })
   } catch (e) {

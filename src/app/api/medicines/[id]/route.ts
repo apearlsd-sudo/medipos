@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requireUser, requirePermission } from '@/lib/auth'
+import { recordSyncOp } from '@/lib/sync'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireUser(req)
@@ -43,6 +44,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         costPrice: body.costPrice !== undefined ? Number(body.costPrice) : existing.costPrice,
         sellingPrice: body.sellingPrice !== undefined ? Number(body.sellingPrice) : existing.sellingPrice,
         prescriptionRequired: body.prescriptionRequired !== undefined ? Boolean(body.prescriptionRequired) : existing.prescriptionRequired,
+        insuranceCovered: body.insuranceCovered !== undefined ? Boolean(body.insuranceCovered) : existing.insuranceCovered,
         location: body.location ?? existing.location,
         status: body.status ?? existing.status,
       },
@@ -55,6 +57,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         data: { medicineId: med.id, type: 'adjustment', quantity: diff, reason: body.adjustReason || 'Manual stock edit', reference: med.sku },
       })
     }
+
+    void recordSyncOp('medicine.updated', med.sku, {
+      id: med.id, name: med.name, genericName: med.genericName, brand: med.brand, sku: med.sku, barcode: med.barcode,
+      categoryId: med.categoryId, supplierId: med.supplierId, unit: med.unit, batchNumber: med.batchNumber,
+      expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
+      prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
+      status: med.status,
+    })
 
     return NextResponse.json({ medicine: med })
   } catch (e) {

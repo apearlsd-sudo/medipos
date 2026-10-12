@@ -166,10 +166,23 @@ export const growthColor = (g: number) => (g >= 0 ? 'text-emerald-600 dark:text-
 export const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
   { value: 'card', label: 'Card' },
-  { value: 'mobile_money', label: 'Mobile Money' },
-  { value: 'insurance', label: 'Insurance' },
+  { value: 'momo', label: 'MoMo' },
+  { value: 'credit', label: 'Credit' },
 ] as const
 
-export const paymentMethodLabel = (m: string) => PAYMENT_METHODS.find((p) => p.value === m)?.label ?? m
+export const MOMO_PROVIDERS = [
+  { value: 'mtn', label: 'MTN MoMo' },
+  { value: 'telecel', label: 'Telecel Cash' },
+  { value: 'airteltigo', label: 'AirtelTigo' },
+] as const
+
+export const paymentMethodLabel = (m: string, provider?: string | null) => {
+  const base = PAYMENT_METHODS.find((p) => p.value === m)?.label ?? m
+  if (m === 'momo' && provider) {
+    const p = MOMO_PROVIDERS.find((x) => x.value === provider)?.label ?? provider
+    return `MoMo · ${p}`
+  }
+  return base
+}
 
 export const UNITS = ['Box', 'Pack', 'Bottle', 'Tube', 'Vial', 'Piece', 'Sachet', 'Strip'] as const

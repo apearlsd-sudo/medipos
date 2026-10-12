@@ -5,6 +5,8 @@ import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/disc
 import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
+import { recordSyncOp } from '@/lib/sync'
+import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider } from '@/lib/pos-finance'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'sales', 'view')
@@ -43,7 +45,13 @@ export async function GET(req: NextRequest) {
         total: s.total,
         paidAmount: s.paidAmount,
         paymentMethod: s.paymentMethod,
+        paymentProvider: s.paymentProvider,
+        paymentReference: s.paymentReference,
         paymentStatus: s.paymentStatus,
+        pointsEarned: s.pointsEarned,
+        pointsRedeemed: s.pointsRedeemed,
+        pointsValue: s.pointsValue,
+        insuranceAmount: s.insuranceAmount,
         saleStatus: s.saleStatus,
         cashierName: s.cashierName,
         approvedByName: s.approvedByName,
@@ -68,6 +76,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Sale must contain at least one item' }, { status: 400 })
     }
 
+    // --- offline idempotency: a replayed sale returns the original -------
+    const clientRef = typeof body.clientRef === 'string' && body.clientRef.trim() ? body.clientRef.trim() : null
+    if (clientRef) {
+      const dup = await db.sale.findUnique({
+        where: { clientRef },
+        include: { items: true, customer: true, shift: { select: { shiftNo: true } }, branchRef: { select: { name: true } } },
+      })
+      if (dup) return NextResponse.json({ sale: dup, deduped: true }, { status: 200 })
+    }
+
     const medIds = items.map((i) => i.medicineId)
     const meds = await db.medicine.findMany({ where: { id: { in: medIds } } })
     const medMap = new Map(meds.map((m) => [m.id, m]))
@@ -90,7 +108,7 @@ export async function POST(req: NextRequest) {
       const unitPrice = item.unitPrice ?? effectivePrice(med.sellingPrice, saleBranchId, med.id, branchPrices)
       const disc = item.discount ?? 0
       const total = +(unitPrice * item.qty - disc).toFixed(2)
-      return { medicineId: med.id, name: med.name, sku: med.sku, qty: item.qty, unitPrice, discount: disc, total }
+      return { medicineId: med.id, name: med.name, sku: med.sku, qty: item.qty, unitPrice, discount: disc, total, covered: med.insuranceCovered }
     })
 
     const subtotal = +lines.reduce((s, l) => s + l.total, 0).toFixed(2)
@@ -99,6 +117,72 @@ export async function POST(req: NextRequest) {
     const taxRate = Number(body.taxRate ?? 2.5)
     const tax = +(((subtotal - discount) * taxRate) / 100).toFixed(2)
     const total = +(subtotal - discount + tax).toFixed(2)
+
+    // --- Tier 1: customer-dependent paths ---------------------------------
+    const paymentMethod = ['cash', 'card', 'momo', 'credit'].includes(body.paymentMethod) ? body.paymentMethod : 'cash'
+    type CustomerWithInsurer = import('@prisma/client').Prisma.CustomerGetPayload<{ include: { insurer: true } }>
+    let customer: CustomerWithInsurer | null = null
+    if (body.customerId) {
+      customer = await db.customer.findUnique({ where: { id: body.customerId }, include: { insurer: true } })
+      if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+    }
+
+    // Insurance co-pay split (customer must carry an active insurer)
+    let insurance: ReturnType<typeof splitInsurance> | null = null
+    const useInsurance = body.useInsurance === true
+    if (useInsurance && customer?.insurer && customer.insurer.active) {
+      insurance = splitInsurance(lines, discount, customer.insurer.coveragePercent, customer.insurer.name)
+    }
+    const patientTotal = insurance ? insurance.patientTotal : total
+
+    // Loyalty redemption (against the patient's share)
+    const loyalty = await loyaltySettings()
+    const requestedPoints = Math.max(0, Math.trunc(Number(body.pointsRedeem ?? 0)))
+    const redemption = customer && customer.points > 0
+      ? resolveRedemption(requestedPoints, customer.points, patientTotal, loyalty)
+      : { points: 0, value: 0 }
+    const due = +(patientTotal - redemption.value).toFixed(2)
+
+    // --- payment resolution ------------------------------------------------
+    let paidAmount = 0
+    let changeAmount = 0
+    let paymentStatus = 'paid'
+    let paymentProvider: string | null = null
+    let paymentReference: string | null = null
+
+    if (paymentMethod === 'cash') {
+      paidAmount = Number(body.paidAmount ?? due)
+      changeAmount = +Math.max(0, paidAmount - due).toFixed(2)
+      paidAmount = Math.min(paidAmount, due)
+      paymentStatus = paidAmount >= due - 0.001 ? 'paid' : paidAmount > 0 ? 'partially_paid' : 'pending'
+    } else if (paymentMethod === 'card') {
+      paidAmount = due
+      paymentStatus = 'paid'
+    } else if (paymentMethod === 'momo') {
+      if (!isMomoProvider(body.paymentProvider)) {
+        return NextResponse.json({ error: 'Choose a Mobile Money provider (MTN, Telecel or AirtelTigo).' }, { status: 400 })
+      }
+      paymentProvider = body.paymentProvider
+      paymentReference = typeof body.paymentReference === 'string' && body.paymentReference.trim() ? body.paymentReference.trim() : null
+      // a captured txn reference is trusted; otherwise the sale waits in the
+      // MoMo reconciliation queue until someone verifies the money arrived
+      paymentStatus = paymentReference ? 'paid' : 'pending'
+      paidAmount = paymentReference ? due : 0
+    } else if (paymentMethod === 'credit') {
+      if (!customer) return NextResponse.json({ error: 'Credit sales need a customer — select one first.' }, { status: 400 })
+      if (customer.creditLimit <= 0) {
+        return NextResponse.json({ error: `${customer.name} has no credit limit set — allow credit in their profile first.` }, { status: 400 })
+      }
+      const balance = await creditBalance(customer.id)
+      if (+(balance + due).toFixed(2) > customer.creditLimit) {
+        return NextResponse.json(
+          { error: `Credit limit exceeded — ${customer.name} owes ${balance.toFixed(2)} of a ${customer.creditLimit.toFixed(2)} limit; this sale would bring them to ${(balance + due).toFixed(2)}.` },
+          { status: 402 },
+        )
+      }
+      paymentStatus = 'pending'
+      paidAmount = 0
+    }
 
     // --- Large-discount approval gate -------------------------------------
     const settingRows = await db.storeSetting.findMany({
@@ -117,7 +201,6 @@ export async function POST(req: NextRequest) {
       const requestId = body.discountRequestId as string | undefined
 
       if (approval?.username && approval?.password) {
-        // On-the-spot authorization: a manager signs the sale with their credentials
         const manager = await verifyApprover(approval.username, approval.password)
         if (!manager) {
           return NextResponse.json(
@@ -128,7 +211,6 @@ export async function POST(req: NextRequest) {
         approvedById = manager.id
         approvedByName = manager.name
       } else if (requestId) {
-        // Pre-approved request path
         const request = await db.discountRequest.findUnique({ where: { id: requestId } })
         if (!request || request.status !== 'approved' || request.saleId) {
           return NextResponse.json(
@@ -155,11 +237,6 @@ export async function POST(req: NextRequest) {
     }
     // -----------------------------------------------------------------------
 
-    const paymentMethod = body.paymentMethod ?? 'cash'
-    const paidAmount = paymentMethod === 'cash' ? Number(body.paidAmount ?? total) : total
-    const paymentStatus = body.paymentStatus ?? (paidAmount >= total ? 'paid' : paidAmount > 0 ? 'partially_paid' : 'pending')
-    const changeAmount = paymentMethod === 'cash' ? Math.max(0, +(paidAmount - total).toFixed(2)) : 0
-
     // Generate invoice number
     const count = await db.sale.count()
     const invoiceNo = `INV-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
@@ -170,25 +247,36 @@ export async function POST(req: NextRequest) {
       orderBy: { startedAt: 'desc' },
     })
 
+    // Loyalty earn: on what the patient actually pays now (not on credit)
+    const earnsPoints = paymentStatus === 'paid' && due > 0
+    const pointsEarned = earnsPoints && customer ? earnFor(due, loyalty) : 0
+
     const sale = await db.$transaction(async (tx) => {
       const created = await tx.sale.create({
         data: {
           invoiceNo,
-          customerId: body.customerId || null,
+          customerId: customer?.id ?? null,
           shiftId: openShift?.id ?? null,
           branchId: saleBranchId,
           approvedById,
           approvedByName,
           discountRequestId,
           subtotal, discount, tax, total,
-          paidAmount: Math.min(paidAmount, total),
+          paidAmount,
           changeAmount,
           paymentMethod,
+          paymentProvider,
+          paymentReference,
           paymentStatus,
+          pointsEarned,
+          pointsRedeemed: redemption.points,
+          pointsValue: redemption.value,
+          insuranceAmount: insurance?.insuranceAmount ?? 0,
           saleStatus: 'completed',
           cashierName: body.cashierName || gate.user.name || 'Staff',
           note: body.note || null,
-          items: { create: lines },
+          clientRef,
+          items: { create: lines.map(({ covered: _covered, ...l }) => l) },
         },
         include: { items: true, customer: true, shift: { select: { shiftNo: true } }, branchRef: { select: { name: true } } },
       })
@@ -200,12 +288,98 @@ export async function POST(req: NextRequest) {
         })
       }
 
+      // Credit sale → charge the customer's ledger
+      if (paymentMethod === 'credit' && customer) {
+        await tx.customerLedger.create({
+          data: {
+            customerId: customer.id,
+            branchId: saleBranchId,
+            saleId: created.id,
+            saleInvoice: invoiceNo,
+            type: 'charge',
+            amount: due,
+            note: `Credit sale ${invoiceNo}`,
+            createdById: gate.user.id,
+            createdByName: gate.user.name,
+          },
+        })
+      }
+
+      // Loyalty movements
+      if (customer && (redemption.points > 0 || pointsEarned > 0)) {
+        if (redemption.points > 0) {
+          await tx.loyaltyLog.create({
+            data: { customerId: customer.id, branchId: saleBranchId, saleId: created.id, type: 'redeem', points: -redemption.points, note: `Redeemed on ${invoiceNo}` },
+          })
+        }
+        if (pointsEarned > 0) {
+          await tx.loyaltyLog.create({
+            data: { customerId: customer.id, branchId: saleBranchId, saleId: created.id, type: 'earn', points: pointsEarned, note: `Earned on ${invoiceNo}` },
+          })
+        }
+        await tx.customer.update({
+          where: { id: customer.id },
+          data: { points: { increment: pointsEarned - redemption.points } },
+        })
+      }
+
+      // Insurance claim for the insurer's share
+      let claimNo: string | null = null
+      if (insurance && insurance.insuranceAmount > 0 && customer) {
+        const cCount = await tx.insuranceClaim.count()
+        claimNo = `CLM-${new Date().getFullYear()}-${String(cCount + 1).padStart(4, '0')}`
+        await tx.insuranceClaim.create({
+          data: {
+            claimNo,
+            saleId: created.id,
+            saleInvoice: invoiceNo,
+            customerId: customer.id,
+            insurerId: customer.insurerId!,
+            branchId: saleBranchId,
+            claimAmount: insurance.insuranceAmount,
+            status: 'pending',
+          },
+        })
+      }
+
       // Mark a redeemed approval request as used
       if (discountRequestId) {
         await tx.discountRequest.update({ where: { id: discountRequestId }, data: { status: 'used', saleId: created.id } })
       }
-      return created
+      return { created, claimNo }
     })
+
+    // Fire-and-forget: replicate to the other node (branch⇄HQ sync)
+    void recordSyncOp('sale.created', invoiceNo, {
+      id: sale.created.id,
+      invoiceNo,
+      customerId: customer?.id ?? null,
+      branchId: saleBranchId,
+      subtotal, discount, tax, total,
+      paidAmount, changeAmount,
+      paymentMethod, paymentProvider, paymentReference, paymentStatus,
+      pointsEarned, pointsRedeemed: redemption.points, pointsValue: redemption.value,
+      insuranceAmount: insurance?.insuranceAmount ?? 0,
+      saleStatus: 'completed',
+      cashierName: sale.created.cashierName,
+      note: body.note || null,
+      createdAt: sale.created.createdAt.toISOString(),
+      items: lines.map(({ covered: _c, ...l }) => l),
+    })
+    if (paymentMethod === 'credit' && customer) {
+      void recordSyncOp('ledger.entry', invoiceNo, {
+        customerId: customer.id, branchId: saleBranchId, saleId: sale.created.id, saleInvoice: invoiceNo,
+        type: 'charge', amount: due, note: `Credit sale ${invoiceNo}`, createdByName: gate.user.name,
+        createdAt: new Date().toISOString(),
+      })
+    }
+    if (customer && (redemption.points > 0 || pointsEarned > 0)) {
+      void recordSyncOp('loyalty.entry', invoiceNo, {
+        customerId: customer.id, branchId: saleBranchId, saleId: sale.created.id,
+        type: redemption.points > 0 ? 'redeem' : 'earn', points: pointsEarned - redemption.points,
+        note: `Points movement on ${invoiceNo}`, createdAt: new Date().toISOString(),
+      })
+    }
 
     // Audit-trail entries for the discount approval workflow (fire-and-forget)
     if (discountRequestId) {
@@ -216,7 +390,7 @@ export async function POST(req: NextRequest) {
         targetType: 'discount_request',
         targetId: discountRequestId,
         targetName: usedRequest?.requestCode ?? discountRequestId,
-        summary: `${gate.user.name} completed ${invoiceNo} using pre-approved discount request ${usedRequest?.requestCode ?? discountRequestId} (${usedRequest?.discountPct ?? 0}% — ${(usedRequest?.discountValue ?? discount).toFixed(2)})`,
+        summary: `${gate.user.name} completed ${invoiceNo} using pre-approved discount request ${usedRequest?.requestCode ?? discountRequestId}`,
         changes: { invoiceNo, discountValue: discount, method: 'pre_approved' },
       })
     } else if (approvedById) {
@@ -224,14 +398,23 @@ export async function POST(req: NextRequest) {
         actor: gate.user,
         action: 'discount.approved',
         targetType: 'sale',
-        targetId: sale.id,
+        targetId: sale.created.id,
         targetName: invoiceNo,
         summary: `Large discount (${pctOfSubtotal.toFixed(1)}% — ${discount.toFixed(2)}) on ${invoiceNo} authorized on the spot by ${approvedByName ?? 'a manager'}`,
         changes: { invoiceNo, discountValue: discount, discountPct: +pctOfSubtotal.toFixed(2), subtotal, method: 'on_the_spot' },
       })
     }
 
-    return NextResponse.json({ sale }, { status: 201 })
+    return NextResponse.json(
+      {
+        sale: sale.created,
+        claimNo: sale.claimNo,
+        insurance: insurance ?? undefined,
+        loyalty: customer ? { earned: pointsEarned, redeemed: redemption.points, value: redemption.value, balance: customer.points + pointsEarned - redemption.points } : undefined,
+        due,
+      },
+      { status: 201 },
+    )
   } catch (e) {
     console.error('Sales POST error', e)
     return NextResponse.json({ error: 'Failed to create sale' }, { status: 500 })

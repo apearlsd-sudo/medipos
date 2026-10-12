@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -145,6 +145,7 @@ model Medicine {
   costPrice            Float          @default(0)
   sellingPrice         Float          @default(0)
   prescriptionRequired Boolean        @default(false)
+  insuranceCovered   Boolean        @default(false) // item is on the insurer's covered formulary
   location             String?
   status               String         @default("active")
   saleItems            SaleItem[]
@@ -156,15 +157,91 @@ model Medicine {
 }
 
 model Customer {
-  id        String   @id @default(cuid())
-  name      String
-  email     String?
-  phone     String?
-  address   String?
-  note      String?
-  sales     Sale[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  note        String?
+  creditLimit Float    @default(0) // 0 = credit sales not allowed
+  points      Int      @default(0) // loyalty points balance
+  insurerId   String?
+  insurer     Insurer? @relation(fields: [insurerId], references: [id])
+  insuranceNo String? // NHIS / private insurance membership number
+  sales       Sale[]
+  ledger      CustomerLedger[]
+  loyaltyLogs LoyaltyLog[]
+  claims      InsuranceClaim[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Insurer {
+  id              String   @id @default(cuid())
+  name            String   @unique
+  shortCode       String?
+  phone           String?
+  coveragePercent Float    @default(80) // % of a covered item's price the insurer pays
+  active          Boolean  @default(true)
+  note            String?
+  customers       Customer[]
+  claims          InsuranceClaim[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model CustomerLedger {
+  id            String   @id @default(cuid())
+  customerId    String
+  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branchId      String?
+  saleId        String? // set when the entry originates from a sale
+  saleInvoice   String?
+  type          String // charge | payment | adjustment
+  amount        Float // positive; charge adds to what the customer owes, payment reduces it
+  method        String? // payment method (cash | momo | card) for payments
+  reference     String? // momo txn id / receipt reference
+  note          String?
+  createdById   String?
+  createdByName String?
+  createdAt     DateTime @default(now())
+
+  @@index([customerId, createdAt])
+}
+
+model LoyaltyLog {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  branchId   String?
+  saleId     String?
+  type       String // earn | redeem | adjust
+  points     Int // signed delta applied to the customer's balance
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([customerId])
+}
+
+model InsuranceClaim {
+  id          String    @id @default(cuid())
+  claimNo     String    @unique // CLM-2026-0001
+  saleId      String
+  saleInvoice String?
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id])
+  insurerId   String
+  insurer     Insurer   @relation(fields: [insurerId], references: [id])
+  branchId    String?
+  claimAmount Float     @default(0)
+  status      String    @default("pending") // pending | submitted | paid | rejected
+  submittedAt DateTime?
+  paidAt      DateTime?
+  note        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status])
 }
 
 model Sale {
@@ -186,10 +263,17 @@ model Sale {
   paidAmount        Float      @default(0)
   changeAmount      Float      @default(0)
   paymentMethod     String     @default("cash")
+  paymentProvider   String? // momo provider: mtn | telecel | airteltigo
+  paymentReference  String? // momo / insurance txn reference
   paymentStatus     String     @default("paid")
+  pointsEarned      Int        @default(0) // loyalty points awarded for this sale
+  pointsRedeemed    Int        @default(0) // loyalty points spent on this sale
+  pointsValue       Float      @default(0) // currency value of redeemed points
+  insuranceAmount   Float      @default(0) // portion billed to the insurer
   saleStatus        String     @default("completed")
   cashierName       String     @default("Admin User")
   note              String?
+  clientRef         String?    @unique // offline idempotency key
   items             SaleItem[]
   createdAt         DateTime   @default(now())
   updatedAt         DateTime   @updatedAt
@@ -263,12 +347,64 @@ model InventoryLog {
   quantity   Int
   reason     String?
   reference  String?
+  clientRef  String?   @unique // offline idempotency key
   createdAt  DateTime  @default(now())
 }
 
 model StoreSetting {
   id    String @id @default(cuid())
   key   String @unique
+  value String
+}
+
+// --- multi-node sync (offline-first replication) -----------------------------
+
+model SyncOp {
+  id        String   @id @default(cuid())
+  nodeId    String // originating node (HQ or branch id)
+  seq       Int // per-node monotonically increasing sequence
+  op        String // sale.created | medicine.updated | inventory.adjusted | ledger.entry | ...
+  targetKey String? // human key (invoice no, sku, ...) for logs
+  payload   String // JSON snapshot of the operation
+  appliedAt DateTime? // set once this op has been replicated out
+  createdAt DateTime @default(now())
+
+  @@index([nodeId, seq])
+}
+
+model SyncNode {
+  id          String    @id // branch node id
+  name        String
+  lastSeenAt  DateTime?
+  lastPushSeq Int       @default(0)
+  opsApplied  Int       @default(0)
+  createdAt   DateTime  @default(now())
+}
+
+model SyncState {
+  id            String    @id // HQ_NODE_ID - cursor row per branch<->HQ pair
+  lastPulledSeq Int       @default(0)
+  lastPushedSeq Int       @default(0)
+  lastSyncAt    DateTime?
+  lastError     String?
+}
+
+model DiscoveredNode {
+  id        String   @id @default(cuid())
+  nodeId    String   @unique
+  name      String
+  role      String   @default("branch") // hq | branch
+  source    String   @default("lan") // lan | internet | live | manual
+  lanIp     String?
+  httpUrl   String?
+  tunnelUrl String?
+  version   String?
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now())
+}
+
+model NodeSetting {
+  key   String @id
   value String
 }
 

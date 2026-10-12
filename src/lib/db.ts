@@ -11,3 +11,11 @@ export const db =
   })
 
 if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = db
+
+// Boot the device mesh once per process (UDP LAN discovery + branch live
+// link). Fire-and-forget: transports are best-effort and never block queries.
+if (typeof window === 'undefined' && process.env.NEXT_PHASE !== 'phase-production-build') {
+  void import('@/lib/mesh')
+    .then((m) => m.ensureMesh())
+    .catch(() => {})
+}

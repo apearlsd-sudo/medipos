@@ -14,6 +14,15 @@ export interface ReceiptSale {
   paidAmount: number
   changeAmount: number
   paymentMethod: string
+  paymentProvider?: string | null
+  paymentReference?: string | null
+  paymentStatus?: string
+  pointsEarned?: number
+  pointsRedeemed?: number
+  pointsValue?: number
+  insuranceAmount?: number
+  customerCreditBalance?: number | null
+  offlineQueued?: boolean
   cashierName?: string
   customerName?: string | null
   shiftNo?: string | null
@@ -94,6 +103,13 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
         </tbody>
       </table>
 
+      {/* Offline queued badge (Task 17): sale saved on this device, sync pending */}
+      {sale.offlineQueued && (
+        <div style={{ textAlign: 'center', margin: '4px 0', border: '1.5px dashed #b45309', color: '#b45309', padding: '3px 0', fontSize: '10px', fontWeight: 700, letterSpacing: '0.5px' }}>
+          QUEUED — PENDING SYNC
+        </div>
+      )}
+
       <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
 
       {/* Totals */}
@@ -114,9 +130,35 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 700, margin: '4px 0' }}>
         <span>TOTAL</span><span>{fmtMoney(sale.total)}</span>
       </div>
+      {!!sale.insuranceAmount && sale.insuranceAmount > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+          <span>Insurance claim</span><span>-{fmtMoney(sale.insuranceAmount)}</span>
+        </div>
+      )}
+      {!!sale.pointsValue && sale.pointsValue > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+          <span>Points redeemed ({sale.pointsRedeemed})</span><span>-{fmtMoney(sale.pointsValue)}</span>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-        <span>Paid ({paymentMethodLabel(sale.paymentMethod)})</span><span>{fmtMoney(sale.paidAmount)}</span>
+        <span>Paid ({paymentMethodLabel(sale.paymentMethod, sale.paymentProvider)})</span><span>{fmtMoney(sale.paidAmount)}</span>
       </div>
+      {sale.paymentMethod === 'momo' && sale.paymentReference && (
+        <div style={{ fontSize: '9.5px', color: '#333' }}>MoMo ref: {sale.paymentReference}{sale.paymentStatus === 'pending' ? ' (verifying)' : ''}</div>
+      )}
+      {sale.paymentMethod === 'credit' && (
+        <div style={{ fontSize: '9.5px', color: '#333' }}>Charged to credit account</div>
+      )}
+      {typeof sale.customerCreditBalance === 'number' && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', fontWeight: 700 }}>
+          <span>Credit balance</span><span>{fmtMoney(sale.customerCreditBalance)}</span>
+        </div>
+      )}
+      {!!sale.pointsEarned && sale.pointsEarned > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+          <span>Points earned</span><span>+{sale.pointsEarned}</span>
+        </div>
+      )}
       {sale.changeAmount > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', fontWeight: 700 }}>
           <span>Change</span><span>{fmtMoney(sale.changeAmount)}</span>

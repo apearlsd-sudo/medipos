@@ -23,6 +23,8 @@ import { Login } from '@/components/pos/login'
 import { UserProvider, userCan, type AuthUser } from '@/components/pos/user-context'
 import { canAccessView, type ViewKey } from '@/components/pos/nav-config'
 import { setCurrencyConfig } from '@/lib/format'
+import { createAppFetch } from '@/lib/offline'
+import { OfflineBanner } from '@/components/pos/offline-banner'
 import { loadStoreSettings, type StoreSettingsMap } from '@/lib/store-settings'
 import { Activity, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -84,7 +86,8 @@ export default function Home() {
   // super admin's selected branch so every module reads branch-filtered data.
   useEffect(() => {
     const rawFetch = window.fetch.bind(window)
-    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Layer 1: branch-scoping injection for the super admin's selected branch
+    const scopedFetch: typeof fetch = async (input, init) => {
       let req = input
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
       if (typeof input === 'string' && input.startsWith('/api/') && method === 'GET') {
@@ -96,13 +99,15 @@ export default function Home() {
           }
         }
       }
-      const res = await rawFetch(req, init)
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.pathname : input.url
-      if (res.status === 401 && !url.includes('/api/auth/') && userRef.current) {
-        setUser(null)
-      }
-      return res
+      return rawFetch(req, init)
     }
+    // Layer 2: the workstation offline engine — IndexedDB GET cache + idempotent
+    // outbox, health-ping reconnect, exactly-once replay on the server
+    window.fetch = createAppFetch(scopedFetch, {
+      onAuthLost: () => {
+        if (userRef.current) setUser(null)
+      },
+    })
     return () => {
       window.fetch = rawFetch
     }
@@ -116,7 +121,7 @@ export default function Home() {
     let alive = true
     Promise.all([
       fetch('/api/auth/me', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : { user: null })).catch(() => ({ user: null })),
-      loadStoreSettings().catch(() => ({})),
+      loadStoreSettings().catch(() => ({} as StoreSettingsMap)),
     ]).then(([me, store]) => {
       if (!alive) return
       if (me.user) setUser(me.user)
@@ -235,6 +240,8 @@ export default function Home() {
             alerts={alerts}
             onAlertClick={() => navigate(canAccessView(user, 'inventory') ? 'inventory' : 'medicines')}
           />
+
+          <OfflineBanner />
 
           <main key={branchKey} className="flex-1 p-4 sm:p-6">
             {activeView === 'dashboard' && <Dashboard onNavigate={navigate} />}

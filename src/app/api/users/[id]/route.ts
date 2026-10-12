@@ -19,7 +19,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params
     const body = await req.json()
-    const existing = await db.user.findUnique({ where: { id } })
+    const existing = await db.user.findUnique({ where: { id }, include: { roleRef: { select: { name: true } } } })
     if (!existing) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
     const data: Record<string, unknown> = {}

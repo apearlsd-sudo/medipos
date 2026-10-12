@@ -1,0 +1,20 @@
+[Unit]
+Description=MediPOS sync hub (WebSocket live link + reverse proxy, :3003)
+After=network.target medipos.service
+
+[Service]
+Type=simple
+WorkingDirectory=__ROOT__
+ExecStart=__RUNNER__ __ROOT__/mini-services/sync-hub/index.mjs
+Environment=NODE_ENV=production
+Environment=MEDIPOS_HUB_PORT=3003
+Environment=MEDIPOS_APP_URL=http://127.0.0.1:3000
+Environment=SYNC_NODE_ID=HQ
+Environment=SYNC_NODE_NAME=Headquarters
+# Same shared secret as the app unit and every branch device:
+# Environment=SYNC_KEY=change-me
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

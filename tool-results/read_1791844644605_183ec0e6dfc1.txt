@@ -1,0 +1,703 @@
+     1→'use client'
+     2→
+     3→import { Badge } from '@/components/ui/badge'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Card } from '@/components/ui/card'
+     6→import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+     7→import { Input } from '@/components/ui/input'
+     8→import { Label } from '@/components/ui/label'
+     9→import { ScrollArea } from '@/components/ui/scroll-area'
+    10→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    11→import { Separator } from '@/components/ui/separator'
+    12→import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    13→import { StatusBadge } from '@/components/pos/shared'
+    14→import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
+    15→import { DiscountApprovalDialog } from '@/components/pos/discount-approval-dialog'
+    16→import { StartShiftDialog } from '@/components/pos/shift-dialogs'
+    17→import type { ShiftRecord } from '@/components/pos/shift-report'
+    18→import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
+    19→import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
+    20→import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
+    21→import type { StoreSettingsMap } from '@/lib/store-settings'
+    22→import {
+    23→  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Percent, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+    24→} from 'lucide-react'
+    25→import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+    26→import { toast } from '@/hooks/use-toast'
+    27→
+    28→type SaleResult = ReceiptSale
+    29→
+    30→interface Medicine {
+    31→  id: string
+    32→  name: string
+    33→  genericName: string | null
+    34→  brand: string | null
+    35→  sku: string
+    36→  barcode: string | null
+    37→  categoryId: string
+    38→  category: { id: string; name: string }
+    39→  unit: string
+    40→  stockQty: number
+    41→  sellingPrice: number
+    42→  /** Branch-level price override applied by the server for the active scope. */
+    43→  effectiveSellingPrice?: number
+    44→  prescriptionRequired: boolean
+    45→}
+    46→
+    47→interface Category { id: string; name: string }
+    48→
+    49→interface CartLine {
+    50→  medicineId: string
+    51→  name: string
+    52→  sku: string
+    53→  unit: string
+    54→  unitPrice: number
+    55→  qty: number
+    56→  stockQty: number
+    57→  prescriptionRequired: boolean
+    58→}
+    59→
+    60→interface CustomerOption { id: string; name: string }
+    61→
+    62→interface ApprovedDiscountRequest {
+    63→  id: string
+    64→  requestCode: string
+    65→  subtotal: number
+    66→  discountValue: number
+    67→  reviewedByName: string | null
+    68→  reason: string | null
+    69→  items: Array<{ medicineId: string; name: string; sku: string; unit: string; unitPrice: number; qty: number }>
+    70→}
+    71→
+    72→export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { quickSearch?: string; onSalesRecorded?: () => void; storeSettings?: StoreSettingsMap | null }) {
+    73→  const [meds, setMeds] = useState<Medicine[]>([])
+    74→  const [categories, setCategories] = useState<Category[]>([])
+    75→  const [customers, setCustomers] = useState<CustomerOption[]>([])
+    76→  const [loading, setLoading] = useState(true)
+    77→  const [search, setSearch] = useState('')
+    78→  const [activeCat, setActiveCat] = useState('all')
+    79→  const [cart, setCart] = useState<CartLine[]>([])
+    80→  const [orderDiscount, setOrderDiscount] = useState(0)
+    81→  const [checkoutOpen, setCheckoutOpen] = useState(false)
+    82→  const [receipt, setReceipt] = useState<SaleResult | null>(null)
+    83→  const [submitting, setSubmitting] = useState(false)
+    84→
+    85→  // Shift state: sales are recorded on the cashier's open shift
+    86→  const [shift, setShift] = useState<ShiftRecord | null>(null)
+    87→  const [startShiftOpen, setStartShiftOpen] = useState(false)
+    88→
+    89→  // Checkout state
+    90→  const [paymentMethod, setPaymentMethod] = useState('cash')
+    91→  const [customerId, setCustomerId] = useState<string>('walkin')
+    92→  const [tendered, setTendered] = useState('')
+    93→  const [note, setNote] = useState('')
+    94→
+    95→  // Discount approval workflow state
+    96→  const [approvalOpen, setApprovalOpen] = useState(false)
+    97→  const [approvedRequests, setApprovedRequests] = useState<ApprovedDiscountRequest[]>([])
+    98→  const [approvedListOpen, setApprovedListOpen] = useState(false)
+    99→  const [discountRequestId, setDiscountRequestId] = useState<string | null>(null)
+   100→
+   101→  const searchRef = useRef<HTMLInputElement>(null)
+   102→
+   103→  const loadProducts = useCallback(async () => {
+   104→    try {
+   105→      const [medRes, catRes, custRes] = await Promise.all([
+   106→        fetch('/api/medicines?status=active', { cache: 'no-store' }),
+   107→        fetch('/api/categories', { cache: 'no-store' }),
+   108→        fetch('/api/customers', { cache: 'no-store' }),
+   109→      ])
+   110→      const [medJson, catJson, custJson] = await Promise.all([medRes.json(), catRes.json(), custRes.json()])
+   111→      setMeds(medJson.medicines ?? [])
+   112→      setCategories(catJson.categories ?? [])
+   113→      setCustomers(custJson.customers ?? [])
+   114→    } finally {
+   115→      setLoading(false)
+   116→    }
+   117→  }, [])
+   118→
+   119→  useEffect(() => { loadProducts() }, [loadProducts])
+   120→
+   121→  const loadCurrentShift = useCallback(async () => {
+   122→    try {
+   123→      const res = await fetch('/api/shifts/current', { cache: 'no-store' })
+   124→      if (!res.ok) return
+   125→      const json = await res.json()
+   126→      setShift(json.shift ?? null)
+   127→    } catch {
+   128→      /* non-fatal */
+   129→    }
+   130→  }, [])
+   131→
+   132→  useEffect(() => { loadCurrentShift() }, [loadCurrentShift])
+   133→
+   134→  // Approved-for-me discount requests (loadable into the cart)
+   135→  const loadApprovedRequests = useCallback(async () => {
+   136→    try {
+   137→      const res = await fetch('/api/discount-requests?status=approved&mine=1', { cache: 'no-store' })
+   138→      if (!res.ok) return
+   139→      const json = await res.json()
+   140→      setApprovedRequests(json.approvedForMe ?? [])
+   141→    } catch {
+   142→      /* non-fatal */
+   143→    }
+   144→  }, [])
+   145→
+   146→  useEffect(() => { loadApprovedRequests() }, [loadApprovedRequests])
+   147→
+   148→  useEffect(() => {
+   149→    if (quickSearch) setSearch(quickSearch)
+   150→  }, [quickSearch])
+   151→
+   152→  const filtered = useMemo(() => {
+   153→    let list = meds
+   154→    if (activeCat !== 'all') list = list.filter((m) => m.categoryId === activeCat)
+   155→    if (search.trim()) {
+   156→      const q = search.trim().toLowerCase()
+   157→      list = list.filter((m) => m.name.toLowerCase().includes(q) || m.sku.toLowerCase().includes(q) || (m.barcode ?? '').includes(q) || (m.genericName ?? '').toLowerCase().includes(q) || (m.brand ?? '').toLowerCase().includes(q))
+   158→    }
+   159→    return list
+   160→  }, [meds, activeCat, search])
+   161→
+   162→  const addToCart = useCallback((m: Medicine, qty = 1) => {
+   163→    if (m.stockQty <= 0) {
+   164→      toast({ title: 'Out of stock', description: `${m.name} has no stock available.`, variant: 'destructive' })
+   165→      return
+   166→    }
+   167→    setCart((prev) => {
+   168→      const existing = prev.find((l) => l.medicineId === m.id)
+   169→      if (existing) {
+   170→        if (existing.qty + qty > m.stockQty) {
+   171→          toast({ title: 'Stock limit reached', description: `Only ${m.stockQty} ${m.unit}(s) of ${m.name} available.`, variant: 'destructive' })
+   172→          return prev
+   173→        }
+   174→        return prev.map((l) => (l.medicineId === m.id ? { ...l, qty: l.qty + qty } : l))
+   175→      }
+   176→      return [
+   177→        ...prev,
+   178→        { medicineId: m.id, name: m.name, sku: m.sku, unit: m.unit, unitPrice: m.effectiveSellingPrice ?? m.sellingPrice, qty, stockQty: m.stockQty, prescriptionRequired: m.prescriptionRequired },
+   179→      ]
+   180→    })
+   181→  }, [])
+   182→
+   183→  // Barcode scanner behavior: Enter in search adds exact match or first result
+   184→  const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+   185→    if (e.key === 'Enter' && filtered.length > 0) {
+   186→      const exactBarcode = meds.find((m) => m.barcode === search.trim() || m.sku.toLowerCase() === search.trim().toLowerCase())
+   187→      addToCart(exactBarcode ?? filtered[0])
+   188→      setSearch('')
+   189→      searchRef.current?.focus()
+   190→    }
+   191→  }
+   192→
+   193→  const updateQty = (id: string, delta: number) => {
+   194→    setCart((prev) =>
+   195→      prev
+   196→        .map((l) => {
+   197→          if (l.medicineId !== id) return l
+   198→          const newQty = l.qty + delta
+   199→          if (newQty > l.stockQty) {
+   200→            toast({ title: 'Stock limit reached', description: `Only ${l.stockQty} ${l.unit}(s) available.`, variant: 'destructive' })
+   201→            return l
+   202→          }
+   203→          return { ...l, qty: newQty }
+   204→        })
+   205→        .filter((l) => l.qty > 0)
+   206→    )
+   207→  }
+   208→
+   209→  const removeLine = (id: string) => setCart((prev) => prev.filter((l) => l.medicineId !== id))
+   210→
+   211→  const subtotal = useMemo(() => +cart.reduce((s, l) => s + l.unitPrice * l.qty, 0).toFixed(2), [cart])
+   212→  const discountValue = useMemo(() => Math.min(Number(orderDiscount) || 0, subtotal), [orderDiscount, subtotal])
+   213→  const taxValue = useMemo(() => +(((subtotal - discountValue) * 2.5) / 100).toFixed(2), [subtotal, discountValue])
+   214→  const total = useMemo(() => +(subtotal - discountValue + taxValue).toFixed(2), [subtotal, discountValue, taxValue])
+   215→  const rxInCart = cart.some((l) => l.prescriptionRequired)
+   216→  const tenderedNum = Number(tendered) || 0
+   217→  const change = Math.max(0, +(tenderedNum - total).toFixed(2))
+   218→
+   219→  const rxCount = cart.filter((l) => l.prescriptionRequired).length
+   220→
+   221→  const policy = useMemo(() => discountPolicyFromSettings(storeSettings ?? null), [storeSettings])
+   222→  const needsApproval = requiresDiscountApproval(policy, subtotal, discountValue)
+   223→
+   224→  const completeSale = async (extra?: { approval?: { username: string; password: string }; discountRequestId?: string | null }): Promise<boolean> => {
+   225→    setSubmitting(true)
+   226→    try {
+   227→      const res = await fetch('/api/sales', {
+   228→        method: 'POST',
+   229→        headers: { 'Content-Type': 'application/json' },
+   230→        body: JSON.stringify({
+   231→          items: cart.map((l) => ({ medicineId: l.medicineId, qty: l.qty, unitPrice: l.unitPrice })),
+   232→          discount: discountValue,
+   233→          customerId: customerId === 'walkin' ? null : customerId,
+   234→          paymentMethod,
+   235→          paidAmount: paymentMethod === 'cash' ? tenderedNum : total,
+   236→          taxRate: 2.5,
+   237→          note: note || null,
+   238→          ...(extra?.approval ? { approval: extra.approval } : {}),
+   239→          ...(extra?.discountRequestId ? { discountRequestId: extra.discountRequestId } : discountRequestId ? { discountRequestId } : {}),
+   240→        }),
+   241→      })
+   242→      const json = await res.json()
+   243→      if (!res.ok) {
+   244→        if (json.requiresApproval) {
+   245→          setApprovalOpen(true)
+   246→        } else {
+   247→          toast({ title: 'Sale failed', description: json.error ?? 'Unknown error', variant: 'destructive' })
+   248→        }
+   249→        return false
+   250→      }
+   251→      setReceipt({
+   252→        ...json.sale,
+   253→        customerName: json.sale?.customer?.name ?? null,
+   254→        shiftNo: json.sale?.shift?.shiftNo ?? null,
+   255→        approvedByName: json.sale?.approvedByName ?? null,
+   256→        branchName: json.sale?.branchRef?.name ?? null,
+   257→      })
+   258→      setCart([])
+   259→      setOrderDiscount(0)
+   260→      setTendered('')
+   261→      setNote('')
+   262→      setCustomerId('walkin')
+   263→      setDiscountRequestId(null)
+   264→      setCheckoutOpen(false)
+   265→      onSalesRecorded?.()
+   266→      loadProducts()
+   267→      loadCurrentShift()
+   268→      return true
+   269→    } finally {
+   270→      setSubmitting(false)
+   271→    }
+   272→  }
+   273→
+   274→  const checkout = async () => {
+   275→    if (paymentMethod === 'cash' && tenderedNum < total) {
+   276→      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNum)} is less than total ${fmtMoney(total)}.`, variant: 'destructive' })
+   277→      return
+   278→    }
+   279→    await completeSale()
+   280→  }
+   281→
+   282→  const authorizeAndComplete = async (approval: { username: string; password: string }): Promise<boolean> => {
+   283→    if (paymentMethod === 'cash' && tenderedNum < total) {
+   284→      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNum)} is less than total ${fmtMoney(total)}.`, variant: 'destructive' })
+   285→      return false
+   286→    }
+   287→    return await completeSale({ approval })
+   288→  }
+   289→
+   290→  const loadApprovedRequest = (req: ApprovedDiscountRequest) => {
+   291→    // Rebuild the cart from the approved snapshot (server re-validates stock)
+   292→    setCart(
+   293→      req.items.map((l) => ({
+   294→        medicineId: l.medicineId,
+   295→        name: l.name,
+   296→        sku: l.sku,
+   297→        unit: l.unit || 'Unit',
+   298→        unitPrice: l.unitPrice,
+   299→        qty: l.qty,
+   300→        stockQty: Number.MAX_SAFE_INTEGER, // validated server-side
+   301→        prescriptionRequired: false,
+   302→      })),
+   303→    )
+   304→    setOrderDiscount(req.discountValue)
+   305→    setDiscountRequestId(req.id)
+   306→    setApprovedListOpen(false)
+   307→    toast({ title: `${req.requestCode} loaded`, description: `Discount ${fmtMoney(req.discountValue)} approved by ${req.reviewedByName ?? 'manager'} — complete the sale as usual.` })
+   308→  }
+   309→
+   310→  const methodIcon = (m: string) => (m === 'cash' ? <Banknote className="h-4 w-4" /> : m === 'card' ? <CreditCard className="h-4 w-4" /> : m === 'mobile_money' ? <Smartphone className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />)
+   311→
+   312→  return (
+   313→    <div className="grid gap-4 xl:grid-cols-[1fr_400px]">
+   314→      {/* Products */}
+   315→      <div className="min-w-0 space-y-3">
+   316→        {!shift && (
+   317→          <div className="flex flex-col gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-amber-500/30 dark:bg-amber-500/10">
+   318→            <div className="flex items-center gap-3">
+   319→              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-600 dark:text-amber-400">
+   320→                <TriangleAlert className="h-4.5 w-4.5" />
+   321→              </span>
+   322→              <div>
+   323→                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">No active shift — sales are not being recorded</p>
+   324→                <p className="text-xs text-amber-700/80 dark:text-amber-300/80">Start your shift to open the cash drawer and track sales, quantities and cash on this register.</p>
+   325→              </div>
+   326→            </div>
+   327→            <Button size="sm" className="shrink-0 rounded-full bg-amber-500 hover:bg-amber-600 text-white" onClick={() => setStartShiftOpen(true)}>
+   328→              <Timer className="h-4 w-4" /> Start Shift
+   329→            </Button>
+   330→          </div>
+   331→        )}
+   332→        {shift && (
+   333→          <div className="flex flex-wrap items-center gap-2 rounded-xl border border-teal-600/20 bg-teal-600/5 px-4 py-2.5 text-sm dark:bg-teal-500/10">
+   334→            <span className="relative flex h-2 w-2">
+   335→              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-500 opacity-75" />
+   336→              <span className="relative inline-flex h-2 w-2 rounded-full bg-teal-500" />
+   337→            </span>
+   338→            <Timer className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+   339→            <span className="font-semibold">{shift.shiftNo}</span>
+   340→            <span className="text-xs text-muted-foreground">active shift — sales are being recorded</span>
+   341→          </div>
+   342→        )}
+   343→        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+   344→          <div className="relative flex-1">
+   345→            <Barcode className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+   346→            <Input
+   347→              ref={searchRef}
+   348→              value={search}
+   349→              onChange={(e) => setSearch(e.target.value)}
+   350→              onKeyDown={onSearchKeyDown}
+   351→              placeholder="Scan barcode or search by name / generic / brand… (Enter to add)"
+   352→              className="pl-9"
+   353→              aria-label="Product search"
+   354→            />
+   355→            {search && (
+   356→              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Clear search">
+   357→                <X className="h-4 w-4" />
+   358→              </button>
+   359→            )}
+   360→          </div>
+   361→          <Badge variant="outline" className="hidden shrink-0 rounded-full px-3 py-1.5 text-xs sm:inline-flex">
+   362→            {filtered.length} products
+   363→          </Badge>
+   364→        </div>
+   365→
+   366→        <Tabs value={activeCat} onValueChange={setActiveCat}>
+   367→          <ScrollArea className="w-full whitespace-nowrap pb-1">
+   368→            <TabsList className="inline-flex h-9">
+   369→              <TabsTrigger value="all" className="rounded-full px-4 text-xs">All</TabsTrigger>
+   370→              {categories.map((c) => (
+   371→                <TabsTrigger key={c.id} value={c.id} className="rounded-full px-4 text-xs">{c.name}</TabsTrigger>
+   372→              ))}
+   373→            </TabsList>
+   374→          </ScrollArea>
+   375→        </Tabs>
+   376→
+   377→        {loading ? (
+   378→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
+   379→            {Array.from({ length: 8 }).map((_, i) => <Card key={i} className="h-36 animate-pulse bg-muted" />)}
+   380→          </div>
+   381→        ) : (
+   382→          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-4">
+   383→            {filtered.map((m) => {
+   384→              const out = m.stockQty <= 0
+   385→              const low = m.stockQty > 0 && m.stockQty <= 20
+   386→              return (
+   387→                <button
+   388→                  key={m.id}
+   389→                  onClick={() => addToCart(m)}
+   390→                  disabled={out}
+   391→                  className={`group relative flex flex-col rounded-xl border bg-card p-3.5 text-left transition ${out ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-lg dark:hover:border-teal-700'}`}
+   392→                >
+   393→                  <div className="flex items-start justify-between gap-2">
+   394→                    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400">
+   395→                      <Pill className="h-4.5 w-4.5" />
+   396→                    </span>
+   397→                    {m.prescriptionRequired && (
+   398→                      <Badge className="rounded-full bg-sky-100 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400" variant="secondary">Rx</Badge>
+   399→                    )}
+   400→                  </div>
+   401→                  <p className="mt-2.5 line-clamp-2 min-h-9 text-sm font-semibold leading-snug">{m.name}</p>
+   402→                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{m.genericName ?? m.brand ?? m.sku}</p>
+   403→                  <div className="mt-2 flex items-end justify-between">
+   404→                    <div>
+   405→                      <p className="text-base font-bold text-teal-600 dark:text-teal-400">{fmtMoney(m.effectiveSellingPrice ?? m.sellingPrice)}</p>
+   406→                      <p className={`text-[11px] font-medium ${out ? 'text-red-500' : low ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+   407→                        {out ? 'Out of stock' : `${m.stockQty} ${m.unit}`}
+   408→                      </p>
+   409→                    </div>
+   410→                    {!out && (
+   411→                      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-teal-600 text-white opacity-0 shadow transition group-hover:opacity-100">
+   412→                        <Plus className="h-4 w-4" />
+   413→                      </span>
+   414→                    )}
+   415→                  </div>
+   416→                </button>
+   417→              )
+   418→            })}
+   419→            {filtered.length === 0 && (
+   420→              <div className="col-span-full flex flex-col items-center gap-2 py-16 text-muted-foreground">
+   421→                <Search className="h-8 w-8 opacity-40" />
+   422→                <p className="text-sm">No products match your search.</p>
+   423→              </div>
+   424→            )}
+   425→          </div>
+   426→        )}
+   427→      </div>
+   428→
+   429→      {/* Cart */}
+   430→      <Card className="flex h-fit flex-col xl:sticky xl:top-20 xl:max-h-[calc(100vh-6rem)]">
+   431→        <div className="flex items-center justify-between border-b px-4 py-3">
+   432→          <div className="flex items-center gap-2">
+   433→            <ShoppingCart className="h-4.5 w-4.5 text-teal-600 dark:text-teal-400" />
+   434→            <h3 className="font-semibold">Current Sale</h3>
+   435→            {cart.length > 0 && <Badge className="rounded-full bg-teal-600 text-white">{cart.reduce((n, l) => n + l.qty, 0)}</Badge>}
+   436→          </div>
+   437→          {shift ? (
+   438→            <Badge variant="outline" className="gap-1 rounded-full border-teal-300 bg-teal-50 text-[10px] text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+   439→              <Timer className="h-3 w-3" /> {shift.shiftNo}
+   440→            </Badge>
+   441→          ) : (
+   442→            <button onClick={() => setStartShiftOpen(true)} className="text-[11px] font-medium text-amber-600 underline-offset-2 hover:underline dark:text-amber-400">
+   443→              start shift
+   444→            </button>
+   445→          )}
+   446→          {cart.length > 0 && (
+   447→            <Button variant="ghost" size="sm" onClick={() => { setCart([]); setOrderDiscount(0); setDiscountRequestId(null) }} className="h-8 gap-1 text-xs text-red-500 hover:text-red-600">
+   448→              <Trash2 className="h-3.5 w-3.5" /> Clear
+   449→            </Button>
+   450→          )}
+   451→        </div>
+   452→
+   453→        {/* Approved discount requests ready to load */}
+   454→        {approvedRequests.length > 0 && cart.length === 0 && (
+   455→          <button
+   456→            onClick={() => setApprovedListOpen(true)}
+   457→            className="flex w-full items-center gap-2 border-b bg-emerald-50 px-4 py-2 text-left text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+   458→          >
+   459→            <BadgeCheck className="h-3.5 w-3.5" />
+   460→            {approvedRequests.length} approved discount{approvedRequests.length > 1 ? 's' : ''} ready to load — tap to view
+   461→          </button>
+   462→        )}
+   463→
+   464→        <ScrollArea className="min-h-32 flex-1 xl:max-h-[38vh]">
+   465→          {cart.length === 0 ? (
+   466→            <div className="flex flex-col items-center gap-2 px-4 py-10 text-muted-foreground">
+   467→              <ShoppingCart className="h-8 w-8 opacity-30" />
+   468→              <p className="text-sm">Cart is empty. Click a product or scan a barcode.</p>
+   469→            </div>
+   470→          ) : (
+   471→            <div className="divide-y px-4">
+   472→              {cart.map((l) => (
+   473→                <div key={l.medicineId} className="flex items-start gap-2 py-3">
+   474→                  <div className="min-w-0 flex-1">
+   475→                    <p className="truncate text-sm font-medium">{l.name}</p>
+   476→                    <p className="text-xs text-muted-foreground tabular-nums">{fmtMoney(l.unitPrice)} × {l.qty} = <span className="font-semibold text-foreground">{fmtMoney(l.unitPrice * l.qty)}</span></p>
+   477→                    {l.prescriptionRequired && <Badge variant="secondary" className="mt-1 rounded-full bg-sky-100 text-[10px] text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">Rx item</Badge>}
+   478→                  </div>
+   479→                  <div className="flex items-center gap-1">
+   480→                    <Button variant="outline" size="icon" className="h-6.5 w-6.5 rounded-md" onClick={() => updateQty(l.medicineId, -1)} aria-label={`Decrease ${l.name}`}>
+   481→                      <Minus className="h-3 w-3" />
+   482→                    </Button>
+   483→                    <span className="w-7 text-center text-sm font-bold tabular-nums">{l.qty}</span>
+   484→                    <Button variant="outline" size="icon" className="h-6.5 w-6.5 rounded-md" onClick={() => updateQty(l.medicineId, 1)} aria-label={`Increase ${l.name}`}>
+   485→                      <Plus className="h-3 w-3" />
+   486→                    </Button>
+   487→                    <Button variant="ghost" size="icon" className="h-6.5 w-6.5 rounded-md text-muted-foreground hover:text-red-500" onClick={() => removeLine(l.medicineId)} aria-label={`Remove ${l.name}`}>
+   488→                      <X className="h-3.5 w-3.5" />
+   489→                    </Button>
+   490→                  </div>
+   491→                </div>
+   492→              ))}
+   493→            </div>
+   494→          )}
+   495→        </ScrollArea>
+   496→
+   497→        <div className="space-y-2.5 border-t px-4 py-3 text-sm">
+   498→          <div className="flex items-center justify-between">
+   499→            <span className="text-muted-foreground">Subtotal</span>
+   500→            <span className="font-medium tabular-nums">{fmtMoney(subtotal)}</span>
+   501→          </div>
+   502→          <div className="flex items-center justify-between gap-3">
+   503→            <span className="text-muted-foreground">Discount</span>
+   504→            <Input
+   505→              type="number"
+   506→              min={0}
+   507→              value={orderDiscount || ''}
+   508→              onChange={(e) => { setOrderDiscount(Number(e.target.value)); setDiscountRequestId(null) }}
+   509→              placeholder="0.00"
+   510→              className={`h-7 w-24 text-right tabular-nums ${needsApproval ? 'border-amber-400' : ''}`}
+   511→              aria-label="Order discount"
+   512→            />
+   513→          </div>
+   514→          {needsApproval && (
+   515→            <p className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+   516→              <TriangleAlert className="h-3.5 w-3.5 shrink-0" /> This discount needs manager approval at checkout.
+   517→            </p>
+   518→          )}
+   519→          <div className="flex items-center justify-between">
+   520→            <span className="text-muted-foreground">Tax (2.5%)</span>
+   521→            <span className="font-medium tabular-nums">{fmtMoney(taxValue)}</span>
+   522→          </div>
+   523→          <Separator />
+   524→          <div className="flex items-center justify-between">
+   525→            <span className="font-semibold">Total</span>
+   526→            <span className="text-lg font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(total)}</span>
+   527→          </div>
+   528→          {rxInCart && (
+   529→            <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-700 dark:bg-sky-500/10 dark:text-sky-400">
+   530→              ⚕ {rxCount} prescription item(s) in cart — verify prescription before dispensing.
+   531→            </p>
+   532→          )}
+   533→          <Button
+   534→            className="w-full rounded-full bg-teal-600 hover:bg-teal-700"
+   535→            size="lg"
+   536→            disabled={cart.length === 0}
+   537→            onClick={() => {
+   538→              if (!shift) {
+   539→                toast({ title: 'Start your shift first', description: 'Open a shift to record this sale on your register.', variant: 'destructive' })
+   540→                setStartShiftOpen(true)
+   541→                return
+   542→              }
+   543→              setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : '')
+   544→              setCheckoutOpen(true)
+   545→            }}
+   546→          >
+   547→            Charge {fmtMoney(total)}
+   548→          </Button>
+   549→        </div>
+   550→      </Card>
+   551→
+   552→      {/* Checkout dialog */}
+   553→      <Dialog open={checkoutOpen} onOpenChange={setCheckoutOpen}>
+   554→        <DialogContent className="sm:max-w-md">
+   555→          <DialogHeader>
+   556→            <DialogTitle>Complete Sale</DialogTitle>
+   557→          </DialogHeader>
+   558→          <div className="space-y-4">
+   559→            <div className="rounded-xl bg-muted/60 p-4 text-center">
+   560→              <p className="text-xs uppercase tracking-wider text-muted-foreground">Amount Due</p>
+   561→              <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(total)}</p>
+   562→              <p className="mt-0.5 text-xs text-muted-foreground">{cart.reduce((n, l) => n + l.qty, 0)} items · incl. {fmtMoney(taxValue)} tax</p>
+   563→            </div>
+   564→
+   565→            <div className="grid grid-cols-4 gap-2">
+   566→              {PAYMENT_METHODS.map((pm) => (
+   567→                <button
+   568→                  key={pm.value}
+   569→                  onClick={() => setPaymentMethod(pm.value)}
+   570→                  className={`flex flex-col items-center gap-1.5 rounded-xl border p-3 text-xs font-medium transition ${paymentMethod === pm.value ? 'border-teal-500 bg-teal-50 text-teal-700 shadow-sm dark:bg-teal-500/10 dark:text-teal-300' : 'hover:bg-muted'}`}
+   571→                >
+   572→                  {methodIcon(pm.value)}
+   573→                  {pm.label}
+   574→                </button>
+   575→              ))}
+   576→            </div>
+   577→
+   578→            <div className="space-y-3">
+   579→              <div className="space-y-1.5">
+   580→                <Label>Customer</Label>
+   581→                <Select value={customerId} onValueChange={setCustomerId}>
+   582→                  <SelectTrigger><SelectValue /></SelectTrigger>
+   583→                  <SelectContent>
+   584→                    <SelectItem value="walkin">Walk-in Customer</SelectItem>
+   585→                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+   586→                  </SelectContent>
+   587→                </Select>
+   588→              </div>
+   589→
+   590→              {paymentMethod === 'cash' && (
+   591→                <>
+   592→                  <div className="grid grid-cols-2 gap-3">
+   593→                    <div className="space-y-1.5">
+   594→                      <Label>Cash Tendered</Label>
+   595→                      <Input type="number" min={0} value={tendered} onChange={(e) => setTendered(e.target.value)} className="tabular-nums" />
+   596→                    </div>
+   597→                    <div className="space-y-1.5">
+   598→                      <Label>Change Due</Label>
+   599→                      <div className={`flex h-9 items-center rounded-md border px-3 font-bold tabular-nums ${change > 0 ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' : 'text-muted-foreground'}`}>
+   600→                        {fmtMoney(change)}
+   601→                      </div>
+   602→                    </div>
+   603→                  </div>
+   604→                  <div className="flex gap-2">
+   605→                    {[total, 10, 20, 50, 100].map((v, i) => (
+   606→                      <Button key={i} variant="outline" size="sm" className="flex-1 rounded-full text-xs tabular-nums" onClick={() => setTendered(String(i === 0 ? Math.ceil(v * 100) / 100 : v))}>
+   607→                        {i === 0 ? 'Exact' : `$${v}`}
+   608→                      </Button>
+   609→                    ))}
+   610→                  </div>
+   611→                </>
+   612→              )}
+   613→
+   614→              <div className="space-y-1.5">
+   615→                <Label>Note (optional)</Label>
+   616→                <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. insurance claim #, remarks" />
+   617→              </div>
+   618→            </div>
+   619→
+   620→            <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={checkout} disabled={submitting}>
+   621→              {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(total)}</>}
+   622→            </Button>
+   623→          </div>
+   624→        </DialogContent>
+   625→      </Dialog>
+   626→
+   627→      {/* Start shift dialog (shift gating) */}
+   628→      <StartShiftDialog open={startShiftOpen} onOpenChange={setStartShiftOpen} onStarted={loadCurrentShift} />
+   629→
+   630→      {/* Discount approval (threshold exceeded) */}
+   631→      <DiscountApprovalDialog
+   632→        open={approvalOpen}
+   633→        onOpenChange={(o) => { setApprovalOpen(o); if (!o) loadApprovedRequests() }}
+   634→        policy={policy}
+   635→        subtotal={subtotal}
+   636→        discountValue={discountValue}
+   637→        items={cart.map((l) => ({ medicineId: l.medicineId, qty: l.qty, unitPrice: l.unitPrice }))}
+   638→        customerId={customerId === 'walkin' ? null : customerId}
+   639→        onAuthorize={authorizeAndComplete}
+   640→      />
+   641→
+   642→      {/* Approved-for-me requests list */}
+   643→      <Dialog open={approvedListOpen} onOpenChange={setApprovedListOpen}>
+   644→        <DialogContent className="sm:max-w-md">
+   645→          <DialogHeader>
+   646→            <DialogTitle className="flex items-center gap-2">
+   647→              <BadgeCheck className="h-5 w-5 text-emerald-500" /> Approved discounts for you
+   648→            </DialogTitle>
+   649→          </DialogHeader>
+   650→          {approvedRequests.length === 0 ? (
+   651→            <p className="py-8 text-center text-sm text-muted-foreground">Nothing approved right now.</p>
+   652→          ) : (
+   653→            <div className="max-h-80 space-y-2 overflow-y-auto">
+   654→              {approvedRequests.map((req) => (
+   655→                <div key={req.id} className="rounded-xl border p-3">
+   656→                  <div className="flex items-center justify-between gap-2">
+   657→                    <div className="min-w-0">
+   658→                      <p className="text-sm font-semibold">{req.requestCode} · −{fmtMoney(req.discountValue)}</p>
+   659→                      <p className="truncate text-xs text-muted-foreground">
+   660→                        {req.items.reduce((n, l) => n + l.qty, 0)} items · approved by {req.reviewedByName ?? 'manager'}
+   661→                      </p>
+   662→                    </div>
+   663→                    <Button size="sm" className="shrink-0 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => loadApprovedRequest(req)}>
+   664→                      <Percent className="h-3.5 w-3.5" /> Load
+   665→                    </Button>
+   666→                  </div>
+   667→                  {req.reason && <p className="mt-1.5 truncate text-xs italic text-muted-foreground">“{req.reason}”</p>}
+   668→                </div>
+   669→              ))}
+   670→            </div>
+   671→          )}
+   672→        </DialogContent>
+   673→      </Dialog>
+   674→
+   675→      {/* Receipt dialog */}
+   676→      <Dialog open={!!receipt} onOpenChange={(open) => !open && setReceipt(null)}>
+   677→        <DialogContent className="sm:max-w-sm">
+   678→          <DialogHeader>
+   679→            <DialogTitle className="flex items-center gap-2">
+   680→              <CheckCircle2 className="h-5 w-5 text-emerald-500" /> Payment Successful
+   681→            </DialogTitle>
+   682→          </DialogHeader>
+   683→          {receipt && (
+   684→            <div className="space-y-3">
+   685→              <div className="max-h-[50vh] overflow-y-auto rounded-lg border bg-white">
+   686→                <ThermalReceipt sale={receipt} settings={storeSettings ?? null} />
+   687→              </div>
+   688→              <div className="flex gap-2 print:hidden">
+   689→                <Button variant="outline" className="flex-1 rounded-full" onClick={() => printWithPageStyle(THERMAL_PAGE_CSS)}>
+   690→                  <Printer className="h-4 w-4" /> Print 80mm Receipt
+   691→                </Button>
+   692→                <Button className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setReceipt(null)}>
+   693→                  New Sale
+   694→                </Button>
+   695→              </div>
+   696→            </div>
+   697→          )}
+   698→        </DialogContent>
+   699→      </Dialog>
+   700→    </div>
+   701→  )
+   702→}
+   703→
