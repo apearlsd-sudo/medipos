@@ -1,0 +1,686 @@
+     1→     1→// ---------------------------------------------------------------------------
+     2→     2→// MediPOS Pro — sync op applier
+     3→     3→//
+     4→     4→// Turns a wire operation into a local database mutation. Used on BOTH sides:
+     5→     5→//   • branch pulling HQ ops  (asHQ: false — HQ takes precedence on conflicts)
+     6→     6→//   • HQ applying branch ops (asHQ: true — replicated as-is, prefixed keys)
+     7→     7→//
+     8→     8→// Ops are idempotent where it matters: sales are keyed by their origin id,
+     9→     9→// ledger/loyalty entries by the origin entry id, so a replay can never
+    10→    10→// duplicate stock or money movements.
+    11→    11→// ---------------------------------------------------------------------------
+    12→    12→
+    13→    13→import { db } from '@/lib/db'
+    14→    14→import { publishLive } from '@/lib/live'
+    15→    15→import { planPackSale } from '@/lib/packs'
+    16→    16→import { deriveSkuForBranch } from '@/lib/stock-transfer'
+    17→    17→
+    18→    18→export interface WireOp {
+    19→    19→  id: string
+    20→    20→  nodeId: string
+    21→    21→  seq: number
+    22→    22→  op: string
+    23→    23→  targetKey?: string | null
+    24→    24→  payload: Record<string, unknown> & { id?: string }
+    25→    25→  createdAt: string
+    26→    26→}
+    27→    27→
+    28→    28→export type ApplyResult = 'ok' | 'duplicate' | 'skipped'
+    29→    29→
+    30→    30→const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
+    31→    31→const num = (v: unknown, fallback = 0): number => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
+    32→    32→const date = (v: unknown): Date | null => {
+    33→    33→  if (typeof v !== 'string') return null
+    34→    34→  const d = new Date(v)
+    35→    35→  return Number.isNaN(d.getTime()) ? null : d
+    36→    36→}
+    37→    37→
+    38→    38→export async function applySyncOp(
+    39→    39→  op: WireOp,
+    40→    40→  opts: { asHQ: boolean; peerName?: string },
+    41→    41→): Promise<ApplyResult> {
+    42→    42→  const p = op.payload ?? {}
+    43→    43→  switch (op.op) {
+    44→    44→    case 'sale.created':
+    45→    45→      return applySaleCreated(op, p, opts)
+    46→    46→    case 'sale.verified':
+    47→    47→      return applySaleVerified(op, p)
+    48→    48→    case 'medicine.updated':
+    49→    49→    case 'medicine.created':
+    50→    50→      return applyMedicineUpsert(op, p, opts)
+    51→    51→    case 'medicine.upsert':
+    52→    52→      return applyCatalogUpsertBySku(op, p, opts)
+    53→    53→    case 'stock.delta':
+    54→    54→    case 'stock.set':
+    55→    55→      return applyStockOpBySku(op, p)
+    56→    56→    case 'inventory.adjusted':
+    57→    57→      return applyInventoryAdjusted(op, p)
+    58→    58→    case 'customer.updated':
+    59→    59→      return applyCustomerUpdated(op, p)
+    60→    60→    case 'ledger.entry':
+    61→    61→      return applyLedgerEntry(op, p)
+    62→    62→    case 'loyalty.entry':
+    63→    63→      return applyLoyaltyEntry(op, p)
+    64→    64→    case 'claim.status':
+    65→    65→      return applyClaimStatus(op, p)
+    66→    66→    case 'insurer.updated':
+    67→    67→      return applyInsurerUpsert(op, p)
+    68→    68→    case 'stock.returned':
+    69→    69→      return applyStockReturned(op, p)
+    70→    70→    case 'expense.created':
+    71→    71→      return applyExpenseCreated(op, p, opts)
+    72→    72→    case 'expense.voided':
+    73→    73→      return applyExpenseVoided(op, p)
+    74→    74→    case 'quotation.updated':
+    75→    75→      return applyQuotationUpdated(op, p, opts)
+    76→    76→    case 'quotation.status':
+    77→    77→      return applyQuotationStatus(op, p)
+    78→    78→    default:
+    79→    79→      return 'skipped'
+    80→    80→  }
+    81→    81→}
+    82→    82→
+    83→    83→// --- sale.created ------------------------------------------------------------
+    84→    84→
+    85→    85→async function applySaleCreated(
+    86→    86→  op: WireOp,
+    87→    87→  p: Record<string, unknown>,
+    88→    88→  opts: { asHQ: boolean; peerName?: string },
+    89→    89→): Promise<ApplyResult> {
+    90→    90→  const originId = str(p.id) || op.id
+    91→    91→  const existing = await db.sale.findUnique({ where: { id: originId } })
+    92→    92→  if (existing) return 'duplicate'
+    93→    93→
+    94→    94→  const localInvoice = opts.asHQ && op.nodeId !== 'HQ'
+    95→    95→    ? `${op.nodeId}:${str(p.invoiceNo)}`
+    96→    96→    : str(p.invoiceNo)
+    97→    97→
+    98→    98→  // Stock at the receiving node mirrors the origin's decrement only when the
+    99→    99→  // medicine exists here AND it is the same physical stock (same branch id).
+   100→   100→  const items = Array.isArray(p.items) ? p.items : []
+   101→   101→  await db.$transaction(async (tx) => {
+   102→   102→    await tx.sale.create({
+   103→   103→      data: {
+   104→   104→        id: originId,
+   105→   105→        invoiceNo: localInvoice,
+   106→   106→        customerId: str(p.customerId) || null,
+   107→   107→        branchId: str(p.branchId) || null,
+   108→   108→        shiftId: null,
+   109→   109→        subtotal: num(p.subtotal),
+   110→   110→        discount: num(p.discount),
+   111→   111→        tax: num(p.tax),
+   112→   112→        total: num(p.total),
+   113→   113→        paidAmount: num(p.paidAmount),
+   114→   114→        changeAmount: num(p.changeAmount),
+   115→   115→        paymentMethod: str(p.paymentMethod, 'cash'),
+   116→   116→        paymentProvider: str(p.paymentProvider) || null,
+   117→   117→        paymentReference: str(p.paymentReference) || null,
+   118→   118→        paymentStatus: str(p.paymentStatus, 'paid'),
+   119→   119→        pointsEarned: num(p.pointsEarned),
+   120→   120→        pointsRedeemed: num(p.pointsRedeemed),
+   121→   121→        pointsValue: num(p.pointsValue),
+   122→   122→        insuranceAmount: num(p.insuranceAmount),
+   123→   123→        saleStatus: str(p.saleStatus, 'completed'),
+   124→   124→        cashierName: str(p.cashierName, opts.peerName ?? 'Sync'),
+   125→   125→        note: str(p.note) || null,
+   126→   126→        clientRef: `sync:${originId}`,
+   127→   127→        items: {
+   128→   128→          create: items.map((it) => {
+   129→   129→            const item = it as Record<string, unknown>
+   130→   130→            return {
+   131→   131→              medicineId: str(item.medicineId) || null,
+   132→   132→              name: str(item.name, 'Item'),
+   133→   133→              sku: str(item.sku) || null,
+   134→   134→              qty: num(item.qty, 1),
+   135→   135→              unitPrice: num(item.unitPrice),
+   136→   136→              discount: num(item.discount),
+   137→   137→              total: num(item.total),
+   138→   138→            }
+   139→   139→          }),
+   140→   140→        },
+   141→   141→      },
+   142→   142→    })
+   143→   143→    // Mirror the stock decrement for items that exist locally (HQ keeps a
+   144→   144→    // shadow of branch stock so dashboards can show network-wide levels).
+   145→   145→    // Pack-aware: inner-unit sales break packs via the same math as the origin.
+   146→   146→    const mirrors = new Map<string, { packs: number; looseAfter: number; innerTotal: number }>()
+   147→   147→    for (const it of items) {
+   148→   148→      const item = it as Record<string, unknown>
+   149→   149→      const mid = str(item.medicineId)
+   150→   150→      const qty = num(item.qty, 0)
+   151→   151→      if (!mid || qty <= 0) continue
+   152→   152→      const med = await tx.medicine.findUnique({ where: { id: mid } })
+   153→   153→      if (!med) continue
+   154→   154→      // Only decrement when this node actually owns the stock (same branch
+   155→   155→      // scope or HQ mirroring a branch sale into its own catalog copy).
+   156→   156→      if (med.branchId && str(p.branchId) && med.branchId !== str(p.branchId)) continue
+   157→   157→      const saleUnit = str(item.saleUnit) === 'inner' ? 'inner' : 'pack'
+   158→   158→      const plan = planPackSale({ stockQty: med.stockQty, looseUnits: med.looseUnits, innerQty: med.innerQty ?? 1 }, saleUnit, qty)
+   159→   159→      if (!plan.ok) continue // mirror stock exhausted — the mirror can't go negative
+   160→   160→      const d = mirrors.get(mid) ?? { packs: 0, looseAfter: plan.looseAfter, innerTotal: 0 }
+   161→   161→      d.packs += plan.packs
+   162→   162→      d.looseAfter = plan.looseAfter
+   163→   163→      d.innerTotal += num(item.innerTotal, plan.innerTotal) || plan.innerTotal
+   164→   164→      mirrors.set(mid, d)
+   165→   165→    }
+   166→   166→    for (const [mid, d] of mirrors) {
+   167→   167→      await tx.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: d.packs }, looseUnits: d.looseAfter } })
+   168→   168→      await tx.inventoryLog.create({
+   169→   169→        data: { medicineId: mid, type: 'sale_out', quantity: -d.innerTotal, reason: `Synced sale ${localInvoice}`, reference: localInvoice },
+   170→   170→      })
+   171→   171→    }
+   172→   172→  })
+   173→   173→  publishLive(['sync', 'sale'], `Sale ${localInvoice} synced from ${opts.peerName ?? op.nodeId}`, 'sync')
+   174→   174→  return 'ok'
+   175→   175→}
+   176→   176→
+   177→   177→// --- medicine upsert -----------------------------------------------------------
+   178→   178→
+   179→   179→async function applySaleVerified(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   180→   180→  const id = str(p.id)
+   181→   181→  if (!id) return 'skipped'
+   182→   182→  const sale = await db.sale.findUnique({ where: { id } })
+   183→   183→  if (!sale) return 'skipped'
+   184→   184→  const status = str(p.status, 'paid')
+   185→   185→  if (sale.paymentStatus === status) return 'duplicate'
+   186→   186→  await db.sale.update({
+   187→   187→    where: { id },
+   188→   188→    data: {
+   189→   189→      paymentStatus: status,
+   190→   190→      paidAmount: status === 'paid' ? +(sale.total - sale.insuranceAmount - sale.pointsValue).toFixed(2) : sale.paidAmount,
+   191→   191→    },
+   192→   192→  })
+   193→   193→  return 'ok'
+   194→   194→}
+   195→   195→
+   196→   196→async function applyMedicineUpsert(
+   197→   197→  op: WireOp,
+   198→   198→  p: Record<string, unknown>,
+   199→   199→  opts: { asHQ: boolean },
+   200→   200→): Promise<ApplyResult> {
+   201→   201→  const id = str(p.id) || op.targetKey || ''
+   202→   202→  if (!id) return 'skipped'
+   203→   203→  const existing = await db.medicine.findUnique({ where: { id } })
+   204→   204→  const data = {
+   205→   205→    name: str(p.name, existing?.name ?? 'Unnamed'),
+   206→   206→    genericName: str(p.genericName) || null,
+   207→   207→    brand: str(p.brand) || null,
+   208→   208→    categoryId: str(p.categoryId, existing?.categoryId ?? ''),
+   209→   209→    supplierId: str(p.supplierId) || null,
+   210→   210→    unit: str(p.unit, existing?.unit ?? 'Box'),
+   211→   211→    batchNumber: str(p.batchNumber) || null,
+   212→   212→    expiryDate: date(p.expiryDate),
+   213→   213→    costPrice: num(p.costPrice, existing?.costPrice ?? 0),
+   214→   214→    sellingPrice: num(p.sellingPrice, existing?.sellingPrice ?? 0),
+   215→   215→    prescriptionRequired: p.prescriptionRequired === true,
+   216→   216→    insuranceCovered: p.insuranceCovered === true,
+   217→   217→    location: str(p.location) || null,
+   218→   218→    status: str(p.status, existing?.status ?? 'active'),
+   219→   219→  }
+   220→   220→  if (!existing) {
+   221→   221→    if (!data.categoryId) return 'skipped'
+   222→   222→    await db.medicine.create({ data: { id, sku: str(p.sku) || `SYNC-${id.slice(-8)}`, ...data, stockQty: num(p.stockQty, 0) } })
+   223→   223→  } else {
+   224→   224→    // Never let a replicated op reduce local stock (stock is node-local).
+   225→   225→    await db.medicine.update({ where: { id }, data })
+   226→   226→  }
+   227→   227→  publishLive(['medicine', 'sync'], `Catalog update from ${opts.asHQ ? 'branch' : 'HQ'} applied`, 'sync')
+   228→   228→  return 'ok'
+   229→   229→}
+   230→   230→
+   231→   231→// --- SKU-keyed catalog + stock ops (copy-catalog / inventory-file import) ----
+   232→   232→// The emitting node may not share medicine ids with the receiver, so these ops
+   233→   233→// resolve rows by SKU → barcode → name inside the branch named in the payload
+   234→   234→// (auto-provisioned by code when unknown). Catalog travels, stock does not:
+   235→   235→// an upsert never touches quantities on an existing row — only stock.delta /
+   236→   236→// stock.set move stock, and both leave an inventoryLog keyed by the wire op id
+   237→   237→// so a re-delivered op is a clean duplicate, never a double-apply.
+   238→   238→
+   239→   239→async function branchIdForCode(p: Record<string, unknown>): Promise<string | null> {
+   240→   240→  const code = str(p.branchCode).trim()
+   241→   241→  if (!code) return null
+   242→   242→  const existing = await db.branch.findFirst({ where: { code }, select: { id: true } })
+   243→   243→  if (existing) return existing.id
+   244→   244→  const created = await db.branch.create({
+   245→   245→    data: { code, name: str(p.branchName).trim() || code, isActive: true },
+   246→   246→    select: { id: true },
+   247→   247→  })
+   248→   248→  return created.id
+   249→   249→}
+   250→   250→
+   251→   251→async function categoryFor(name: string): Promise<string> {
+   252→   252→  const trimmed = name.trim() || 'General'
+   253→   253→  const hit = await db.category.findUnique({ where: { name: trimmed }, select: { id: true } })
+   254→   254→  if (hit) return hit.id
+   255→   255→  const created = await db.category.create({ data: { name: trimmed }, select: { id: true } })
+   256→   256→  return created.id
+   257→   257→}
+   258→   258→
+   259→   259→async function resolveMedicineBySku(branchId: string | null, p: Record<string, unknown>) {
+   260→   260→  const sku = str(p.sku)
+   261→   261→  const barcode = str(p.barcode)
+   262→   262→  const name = str(p.name)
+   263→   263→  const scope = branchId ? { branchId } : {}
+   264→   264→  if (sku) {
+   265→   265→    const bySku = await db.medicine.findFirst({ where: { sku, ...scope } })
+   266→   266→    if (bySku) return bySku
+   267→   267→  }
+   268→   268→  if (barcode) {
+   269→   269→    const byBarcode = await db.medicine.findFirst({ where: { barcode, ...scope } })
+   270→   270→    if (byBarcode) return byBarcode
+   271→   271→  }
+   272→   272→  if (name) {
+   273→   273→    const byName = await db.medicine.findFirst({ where: { name, ...scope } })
+   274→   274→    if (byName) return byName
+   275→   275→  }
+   276→   276→  return null
+   277→   277→}
+   278→   278→
+   279→   279→async function applyCatalogUpsertBySku(
+   280→   280→  op: WireOp,
+   281→   281→  p: Record<string, unknown>,
+   282→   282→  opts: { asHQ: boolean },
+   283→   283→): Promise<ApplyResult> {
+   284→   284→  let branchId = await branchIdForCode(p)
+   285→   285→  let existing = await resolveMedicineBySku(branchId, p)
+   286→   286→  if (!existing && !branchId) {
+   287→   287→    // No branch context — fall back to the row the globally-unique SKU names.
+   288→   288→    existing = await db.medicine.findUnique({ where: { sku: str(p.sku) } })
+   289→   289→    branchId = existing?.branchId ?? null
+   290→   290→  }
+   291→   291→  if (!branchId) return 'skipped'
+   292→   292→  const data = {
+   293→   293→    name: str(p.name, existing?.name ?? 'Unnamed'),
+   294→   294→    genericName: str(p.genericName) || null,
+   295→   295→    brand: str(p.brand) || null,
+   296→   296→    unit: str(p.unit, existing?.unit ?? 'Box'),
+   297→   297→    barcode: str(p.barcode) || existing?.barcode || null,
+   298→   298→    costPrice: num(p.costPrice, existing?.costPrice ?? 0),
+   299→   299→    sellingPrice: num(p.sellingPrice, existing?.sellingPrice ?? 0),
+   300→   300→    prescriptionRequired: p.prescriptionRequired === true,
+   301→   301→    reorderLevel: Math.max(0, Math.floor(num(p.reorderLevel, existing?.reorderLevel ?? 20))),
+   302→   302→    location: str(p.location) || existing?.location || null,
+   303→   303→    // Formulary flag only travels when the emitter sent it — never false-reset
+   304→   304→    ...(p.insuranceCovered !== undefined ? { insuranceCovered: p.insuranceCovered === true } : {}),
+   305→   305→  }
+   306→   306→  const note = `Catalog update from ${opts.asHQ ? 'branch' : 'HQ'} applied`
+   307→   307→  if (existing) {
+   308→   308→    // Catalog travels, stock does not — never touch quantities here.
+   309→   309→    await db.medicine.update({ where: { id: existing.id }, data })
+   310→   310→    publishLive(['medicine', 'sync'], note, 'sync')
+   311→   311→    return 'ok'
+   312→   312→  }
+   313→   313→  const sku = str(p.sku) || `SYNC-${(op.targetKey || op.id).slice(-8)}`
+   314→   314→  const taken = await db.medicine.findUnique({ where: { sku }, select: { id: true } })
+   315→   315→  const branchCode = (await db.branch.findUnique({ where: { id: branchId }, select: { code: true } }))?.code || 'BR'
+   316→   316→  const finalSku = taken ? await deriveSkuForBranch(sku, branchCode) : sku
+   317→   317→  const categoryId = await categoryFor(str(p.category, 'General'))
+   318→   318→  await db.medicine.create({
+   319→   319→    data: {
+   320→   320→      ...data,
+   321→   321→      sku: finalSku,
+   322→   322→      categoryId,
+   323→   323→      branchId,
+   324→   324→      status: 'active',
+   325→   325→      stockQty: Math.max(0, Math.floor(num(p.initialQty, num(p.stockQty, 0)))),
+   326→   326→    },
+   327→   327→  })
+   328→   328→  publishLive(['medicine', 'sync'], note, 'sync')
+   329→   329→  return 'ok'
+   330→   330→}
+   331→   331→
+   332→   332→async function applyStockOpBySku(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   333→   333→  // Replay guard: the wire op id is stable across re-delivery.
+   334→   334→  const dup = await db.inventoryLog.findFirst({ where: { reference: op.id, type: 'import' } })
+   335→   335→  if (dup) return 'duplicate'
+   336→   336→  let branchId = await branchIdForCode(p)
+   337→   337→  let med = await resolveMedicineBySku(branchId, p)
+   338→   338→  if (!med && !branchId) med = await db.medicine.findUnique({ where: { sku: str(p.sku) } })
+   339→   339→  if (!med) return 'skipped'
+   340→   340→  const isSet = op.op === 'stock.set'
+   341→   341→  const nextQty = isSet
+   342→   342→    ? Math.max(0, Math.floor(num(p.qty, med.stockQty)))
+   343→   343→    : Math.max(0, med.stockQty + Math.floor(num(p.delta, 0)))
+   344→   344→  const applied = nextQty - med.stockQty
+   345→   345→  await db.$transaction([
+   346→   346→    db.medicine.update({ where: { id: med.id }, data: { stockQty: nextQty } }),
+   347→   347→    db.inventoryLog.create({
+   348→   348→      data: {
+   349→   349→        medicineId: med.id,
+   350→   350→        type: 'import',
+   351→   351→        quantity: applied,
+   352→   352→        reason: str(p.reason, isSet ? 'Synced stock set' : 'Synced stock adjustment'),
+   353→   353→        reference: op.id,
+   354→   354→      },
+   355→   355→    }),
+   356→   356→  ])
+   357→   357→  publishLive(['stock', 'sync'], `Stock ${isSet ? 'set' : 'adjustment'} applied from sync`, 'sync')
+   358→   358→  return 'ok'
+   359→   359→}
+   360→   360→
+   361→   361→// --- inventory.adjusted ----------------------------------------------------------
+   362→   362→
+   363→   363→async function applyInventoryAdjusted(
+   364→   364→  op: WireOp,
+   365→   365→  p: Record<string, unknown>,
+   366→   366→): Promise<ApplyResult> {
+   367→   367→  const originId = str(p.logId) || op.id
+   368→   368→  const dup = await db.inventoryLog.findUnique({ where: { id: originId } }).catch(() => null)
+   369→   369→  if (dup) return 'duplicate'
+   370→   370→  const medicineId = str(p.medicineId)
+   371→   371→  const delta = num(p.quantity)
+   372→   372→  if (!medicineId || delta === 0) return 'skipped'
+   373→   373→  const med = await db.medicine.findUnique({ where: { id: medicineId } })
+   374→   374→  if (!med) return 'skipped'
+   375→   375→  await db.$transaction([
+   376→   376→    db.medicine.update({ where: { id: medicineId }, data: { stockQty: { increment: delta } } }),
+   377→   377→    db.inventoryLog.create({
+   378→   378→      data: {
+   379→   379→        id: originId,
+   380→   380→        medicineId,
+   381→   381→        type: str(p.type, 'adjustment'),
+   382→   382→        quantity: delta,
+   383→   383→        reason: str(p.reason, 'Synced adjustment'),
+   384→   384→        reference: str(p.reference) || null,
+   385→   385→      },
+   386→   386→    }),
+   387→   387→  ])
+   388→   388→  publishLive(['stock', 'sync'], `Stock adjustment synced (${delta > 0 ? '+' : ''}${delta})`, 'sync')
+   389→   389→  return 'ok'
+   390→   390→}
+   391→   391→
+   392→   392→// --- customer / money / points / claims -------------------------------------------
+   393→   393→
+   394→   394→async function applyCustomerUpdated(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   395→   395→  const id = str(p.id)
+   396→   396→  if (!id) return 'skipped'
+   397→   397→  const data = {
+   398→   398→    name: str(p.name, 'Customer'),
+   399→   399→    email: str(p.email) || null,
+   400→   400→    phone: str(p.phone) || null,
+   401→   401→    address: str(p.address) || null,
+   402→   402→    note: str(p.note) || null,
+   403→   403→    creditLimit: num(p.creditLimit, 0),
+   404→   404→    insurerId: str(p.insurerId) || null,
+   405→   405→    insuranceNo: str(p.insuranceNo) || null,
+   406→   406→  }
+   407→   407→  await db.customer.upsert({ where: { id }, create: { id, ...data }, update: data })
+   408→   408→  return 'ok'
+   409→   409→}
+   410→   410→
+   411→   411→async function applyLedgerEntry(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   412→   412→  const id = str(p.id) || op.id
+   413→   413→  const dup = await db.customerLedger.findUnique({ where: { id } }).catch(() => null)
+   414→   414→  if (dup) return 'duplicate'
+   415→   415→  const customerId = str(p.customerId)
+   416→   416→  const customer = await db.customer.findUnique({ where: { id: customerId } })
+   417→   417→  if (!customer) return 'skipped'
+   418→   418→  await db.customerLedger.create({
+   419→   419→    data: {
+   420→   420→      id,
+   421→   421→      customerId,
+   422→   422→      branchId: str(p.branchId) || null,
+   423→   423→      saleId: str(p.saleId) || null,
+   424→   424→      saleInvoice: str(p.saleInvoice) || null,
+   425→   425→      type: str(p.type, 'charge'),
+   426→   426→      amount: num(p.amount),
+   427→   427→      method: str(p.method) || null,
+   428→   428→      reference: str(p.reference) || null,
+   429→   429→      note: str(p.note) || null,
+   430→   430→      createdByName: str(p.createdByName, 'Sync'),
+   431→   431→      createdAt: date(p.createdAt) ?? new Date(),
+   432→   432→    },
+   433→   433→  })
+   434→   434→  publishLive(['sync'], 'Credit ledger entry synced', 'sync')
+   435→   435→  return 'ok'
+   436→   436→}
+   437→   437→
+   438→   438→async function applyLoyaltyEntry(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   439→   439→  const id = str(p.id) || op.id
+   440→   440→  const dup = await db.loyaltyLog.findUnique({ where: { id } }).catch(() => null)
+   441→   441→  if (dup) return 'duplicate'
+   442→   442→  const customerId = str(p.customerId)
+   443→   443→  const customer = await db.customer.findUnique({ where: { id: customerId } })
+   444→   444→  if (!customer) return 'skipped'
+   445→   445→  const points = Math.trunc(num(p.points))
+   446→   446→  if (points === 0) return 'skipped'
+   447→   447→  await db.$transaction([
+   448→   448→    db.loyaltyLog.create({
+   449→   449→      data: {
+   450→   450→        id,
+   451→   451→        customerId,
+   452→   452→        branchId: str(p.branchId) || null,
+   453→   453→        saleId: str(p.saleId) || null,
+   454→   454→        type: str(p.type, 'earn'),
+   455→   455→        points,
+   456→   456→        note: str(p.note, 'Synced'),
+   457→   457→        createdAt: date(p.createdAt) ?? new Date(),
+   458→   458→      },
+   459→   459→    }),
+   460→   460→    db.customer.update({ where: { id: customerId }, data: { points: { increment: points } } }),
+   461→   461→  ])
+   462→   462→  return 'ok'
+   463→   463→}
+   464→   464→
+   465→   465→async function applyClaimStatus(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   466→   466→  const id = str(p.id)
+   467→   467→  const claim = await db.insuranceClaim.findUnique({ where: { id } })
+   468→   468→  if (!claim) return 'skipped'
+   469→   469→  const status = str(p.status, claim.status)
+   470→   470→  if (status === claim.status) return 'duplicate'
+   471→   471→  await db.insuranceClaim.update({
+   472→   472→    where: { id },
+   473→   473→    data: {
+   474→   474→      status,
+   475→   475→      submittedAt: status === 'submitted' ? (date(p.at) ?? new Date()) : claim.submittedAt,
+   476→   476→      paidAt: status === 'paid' ? (date(p.at) ?? new Date()) : claim.paidAt,
+   477→   477→      note: str(p.note) || claim.note,
+   478→   478→    },
+   479→   479→  })
+   480→   480→  return 'ok'
+   481→   481→}
+   482→   482→
+   483→   483→/** Mirrors a write-off / supplier return / quarantine from another node. */
+   484→   484→async function applyStockReturned(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   485→   485→  const items = Array.isArray(p.items) ? p.items : []
+   486→   486→  const returnNo = str(p.returnNo, op.targetKey || 'RET')
+   487→   487→  let applied = 0
+   488→   488→  for (const it of items) {
+   489→   489→    const item = it as Record<string, unknown>
+   490→   490→    const mid = str(item.medicineId)
+   491→   491→    const qty = Math.trunc(num(item.qty, 0))
+   492→   492→    if (!mid || qty <= 0) continue
+   493→   493→    const med = await db.medicine.findUnique({ where: { id: mid } })
+   494→   494→    if (!med) continue
+   495→   495→    const fromQuarantine = item.fromQuarantine === true
+   496→   496→    if (fromQuarantine) {
+   497→   497→      if (med.quarantineQty < qty) continue
+   498→   498→      const action = str(item.action, 'writeoff')
+   499→   499→      await db.medicine.update({
+   500→   500→        where: { id: mid },
+   501→   501→        data: { quarantineQty: { decrement: qty } },
+   502→   502→      })
+   503→   503→      if (action !== 'restore') {
+   504→   504→        await db.inventoryLog.create({ data: { medicineId: mid, type: 'quarantine_out', quantity: -qty, reason: `Quarantine ${action} (synced ${returnNo})`, reference: returnNo } })
+   505→   505→      }
+   506→   506→      applied++
+   507→   507→      continue
+   508→   508→    }
+   509→   509→    if (med.stockQty < qty) continue
+   510→   510→    if (item.action === 'quarantine') {
+   511→   511→      await db.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: qty }, quarantineQty: { increment: qty } } })
+   512→   512→    } else {
+   513→   513→      await db.medicine.update({ where: { id: mid }, data: { stockQty: { decrement: qty } } })
+   514→   514→      await db.inventoryLog.create({ data: { medicineId: mid, type: str(item.type, 'writeoff'), quantity: -qty, reason: `${str(item.reason, 'writeoff')} (synced ${returnNo})`, reference: returnNo } })
+   515→   515→    }
+   516→   516→    applied++
+   517→   517→  }
+   518→   518→  if (applied > 0) publishLive(['stock', 'sync'], `Stock adjustment synced from peer (${returnNo})`, 'sync')
+   519→   519→  return applied > 0 ? 'ok' : 'skipped'
+   520→   520→}
+   521→   521→
+   522→   522→async function applyInsurerUpsert(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   523→   523→  const id = str(p.id)
+   524→   524→  if (!id) return 'skipped'
+   525→   525→  const data = {
+   526→   526→    name: str(p.name, 'Insurer'),
+   527→   527→    shortCode: str(p.shortCode) || null,
+   528→   528→    phone: str(p.phone) || null,
+   529→   529→    coveragePercent: num(p.coveragePercent, 80),
+   530→   530→    active: p.active !== false,
+   531→   531→    note: str(p.note) || null,
+   532→   532→  }
+   533→   533→  await db.insurer.upsert({ where: { id }, create: { id, ...data }, update: data })
+   534→   534→  return 'ok'
+   535→   535→}
+   536→   536→
+   537→   537→// --- Tier 3: expenses & quotations --------------------------------------------
+   538→   538→
+   539→   539→async function applyExpenseCreated(op: WireOp, p: Record<string, unknown>, opts: { asHQ: boolean }): Promise<ApplyResult> {
+   540→   540→  const originId = str(p.id) || op.id
+   541→   541→  const existing = await db.expense.findUnique({ where: { id: originId } }).catch(() => null)
+   542→   542→  if (existing) return 'duplicate'
+   543→   543→  const amount = num(p.amount)
+   544→   544→  if (amount <= 0) return 'skipped'
+   545→   545→
+   546→   546→  // Per-node document numbering can collide across nodes (each branch counts
+   547→   547→  // its own rows) — mirror the sale convention: prefix the origin node id.
+   548→   548→  const localNo = opts.asHQ && op.nodeId !== 'HQ'
+   549→   549→    ? `${op.nodeId}:${str(p.expenseNo)}`
+   550→   550→    : str(p.expenseNo)
+   551→   551→
+   552→   552→  // Categories are node-local: resolve by id, then name, then create it so the
+   553→   553→  // replicated expense always lands with its category intact.
+   554→   554→  let categoryId = str(p.categoryId)
+   555→   555→  const categoryName = str(p.categoryName, 'Other')
+   556→   556→  const catById = categoryId ? await db.expenseCategory.findUnique({ where: { id: categoryId } }).catch(() => null) : null
+   557→   557→  if (!catById) {
+   558→   558→    const byName = await db.expenseCategory.findUnique({ where: { name: categoryName } }).catch(() => null)
+   559→   559→    if (byName) {
+   560→   560→      categoryId = byName.id
+   561→   561→    } else {
+   562→   562→      const created = await db.expenseCategory.create({ data: { name: categoryName } })
+   563→   563→      categoryId = created.id
+   564→   564→    }
+   565→   565→  }
+   566→   566→
+   567→   567→  await db.expense.create({
+   568→   568→    data: {
+   569→   569→      id: originId,
+   570→   570→      expenseNo: localNo || `SYNC-${originId.slice(-8)}`,
+   571→   571→      categoryId,
+   572→   572→      branchId: str(p.branchId) || null,
+   573→   573→      description: str(p.description, 'Synced expense'),
+   574→   574→      amount,
+   575→   575→      paymentMethod: str(p.paymentMethod, 'cash'),
+   576→   576→      provider: str(p.provider) || null,
+   577→   577→      reference: str(p.reference) || null,
+   578→   578→      status: str(p.status, 'completed'),
+   579→   579→      note: str(p.note) || null,
+   580→   580→      recordedByName: str(p.recordedByName, 'Sync'),
+   581→   581→      clientRef: `sync:${originId}`,
+   582→   582→      createdAt: date(p.createdAt) ?? new Date(),
+   583→   583→    },
+   584→   584→  })
+   585→   585→  publishLive(['sync', 'expense'], `Expense ${localNo} synced from ${op.nodeId}`, 'sync')
+   586→   586→  return 'ok'
+   587→   587→}
+   588→   588→
+   589→   589→async function applyExpenseVoided(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   590→   590→  const id = str(p.id)
+   591→   591→  if (!id) return 'skipped'
+   592→   592→  const expense = await db.expense.findUnique({ where: { id } })
+   593→   593→  if (!expense) return 'skipped'
+   594→   594→  if (expense.status === 'voided') return 'duplicate'
+   595→   595→  await db.expense.update({
+   596→   596→    where: { id },
+   597→   597→    data: {
+   598→   598→      status: 'voided',
+   599→   599→      voidedByName: str(p.voidedByName, 'Sync'),
+   600→   600→      voidedAt: date(p.at) ?? new Date(),
+   601→   601→    },
+   602→   602→  })
+   603→   603→  return 'ok'
+   604→   604→}
+   605→   605→
+   606→   606→async function applyQuotationUpdated(op: WireOp, p: Record<string, unknown>, opts: { asHQ: boolean }): Promise<ApplyResult> {
+   607→   607→  const originId = str(p.id) || op.id
+   608→   608→  if (!originId) return 'skipped'
+   609→   609→  const items = Array.isArray(p.items) ? p.items : []
+   610→   610→
+   611→   611→  // Only link the customer when the receiving node actually has them.
+   612→   612→  const customerId = str(p.customerId)
+   613→   613→  const customer = customerId ? await db.customer.findUnique({ where: { id: customerId } }).catch(() => null) : null
+   614→   614→
+   615→   615→  const data = {
+   616→   616→    quoteNo: opts.asHQ && op.nodeId !== 'HQ'
+   617→   617→      ? `${op.nodeId}:${str(p.quoteNo)}`
+   618→   618→      : str(p.quoteNo, `QTN-${originId.slice(-8)}`),
+   619→   619→    customerId: customer?.id ?? null,
+   620→   620→    customerName: str(p.customerName) || customer?.name || null,
+   621→   621→    branchId: str(p.branchId) || null,
+   622→   622→    status: str(p.status, 'draft'),
+   623→   623→    subtotal: num(p.subtotal),
+   624→   624→    discount: num(p.discount),
+   625→   625→    tax: num(p.tax),
+   626→   626→    total: num(p.total),
+   627→   627→    validUntil: date(p.validUntil),
+   628→   628→    note: str(p.note) || null,
+   629→   629→    createdByName: str(p.createdByName, 'Sync'),
+   630→   630→  }
+   631→   631→
+   632→   632→  await db.$transaction(async (tx) => {
+   633→   633→    const existing = await tx.quotation.findUnique({ where: { id: originId } })
+   634→   634→    if (existing) {
+   635→   635→      // A status transition already applied here wins over a stale snapshot —
+   636→   636→      // never regress converted/expired/cancelled states.
+   637→   637→      const sticky = ['converted', 'expired', 'cancelled']
+   638→   638→      if (sticky.includes(existing.status) || existing.updatedAt > (date(p.updatedAt) ?? new Date(0))) {
+   639→   639→        return
+   640→   640→      }
+   641→   641→      await tx.quotation.update({ where: { id: originId }, data })
+   642→   642→      await tx.quotationItem.deleteMany({ where: { quotationId: originId } })
+   643→   643→    } else {
+   644→   644→      await tx.quotation.create({ data: { id: originId, ...data, clientRef: `sync:${originId}` } })
+   645→   645→    }
+   646→   646→    for (const it of items) {
+   647→   647→      const item = it as Record<string, unknown>
+   648→   648→      const mid = str(item.medicineId)
+   649→   649→      const med = mid ? await tx.medicine.findUnique({ where: { id: mid }, select: { id: true } }).catch(() => null) : null
+   650→   650→      await tx.quotationItem.create({
+   651→   651→        data: {
+   652→   652→          quotationId: originId,
+   653→   653→          medicineId: med?.id ?? null,
+   654→   654→          name: str(item.name, 'Item'),
+   655→   655→          sku: str(item.sku) || null,
+   656→   656→          qty: Math.trunc(num(item.qty, 1)),
+   657→   657→          unitPrice: num(item.unitPrice),
+   658→   658→          discount: num(item.discount),
+   659→   659→          total: num(item.total),
+   660→   660→        },
+   661→   661→      })
+   662→   662→    }
+   663→   663→  })
+   664→   664→  publishLive(['sync', 'quotation'], `Quotation ${data.quoteNo} synced from ${opts.asHQ ? 'branch' : 'HQ'}`, 'sync')
+   665→   665→  return 'ok'
+   666→   666→}
+   667→   667→
+   668→   668→async function applyQuotationStatus(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+   669→   669→  const id = str(p.id)
+   670→   670→  if (!id) return 'skipped'
+   671→   671→  const quote = await db.quotation.findUnique({ where: { id } })
+   672→   672→  if (!quote) return 'skipped'
+   673→   673→  const status = str(p.status, quote.status)
+   674→   674→  if (status === quote.status && !str(p.convertedSaleId)) return 'duplicate'
+   675→   675→  await db.quotation.update({
+   676→   676→    where: { id },
+   677→   677→    data: {
+   678→   678→      status,
+   679→   679→      convertedSaleId: str(p.convertedSaleId) || quote.convertedSaleId,
+   680→   680→      convertedInvoice: str(p.convertedInvoice) || quote.convertedInvoice,
+   681→   681→      updatedAt: date(p.at) ?? new Date(),
+   682→   682→    },
+   683→   683→  })
+   684→   684→  return 'ok'
+   685→   685→}
+   686→   686→
