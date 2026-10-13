@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
 import { deriveSkuForBranch, findDestMedicine } from '@/lib/stock-transfer'
+import { recordSyncOp } from '@/lib/sync'
 
 // ---------------------------------------------------------------------------
 // POST /api/transfers/[id]/complete — receive the transfer at the destination.
@@ -34,9 +35,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       let mergedProducts = 0
 
       for (const item of transfer.items) {
-        // Re-validate the source row inside the transaction
-        if (!item.medicineId) throw new Error(`Transfer item "${item.name}" has no source product link`)
-        const src = await tx.medicine.findUnique({ where: { id: item.medicineId }, select: { id: true, stockQty: true, unit: true } })
+        // Re-validate the source row inside the transaction. Transfers that
+        // arrived via sync carry items whose medicineId may be unknown here —
+        // resolve the source row by SKU within the source branch as a fallback.
+        let src = item.medicineId
+          ? await tx.medicine.findUnique({ where: { id: item.medicineId }, select: { id: true, stockQty: true, unit: true } })
+          : null
+        if (!src && item.sku) {
+          src = await tx.medicine.findFirst({ where: { sku: item.sku, branchId: transfer.fromBranchId }, select: { id: true, stockQty: true, unit: true } })
+        }
         if (!src) throw new Error(`Source product "${item.name}" no longer exists at ${transfer.fromBranch.name}`)
         if (src.stockQty < item.qty) {
           throw new Error(`Insufficient stock for "${item.name}" at ${transfer.fromBranch.name} — only ${src.stockQty} ${item.unit}(s) left`)
@@ -126,6 +133,47 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       targetId: transfer.id,
       targetName: transfer.referenceNo,
       summary: `Received ${transfer.referenceNo}: ${transfer.fromBranch.name} → ${transfer.toBranch.name}, ${transfer.items.length} product(s), ${transfer.items.reduce((n, i) => n + i.qty, 0)} units (${result.createdProducts} new, ${result.mergedProducts} merged)`,
+    })
+
+    // Replicate the completion: peer nodes replay BOTH stock legs (source
+    // decrement + destination merge/clone) so their inventory converges.
+    // Fire-and-forget — a sync failure never fails the receive.
+    const srcIds = transfer.items.map((i) => i.medicineId).filter((x): x is string => !!x)
+    const srcRows = srcIds.length
+      ? await db.medicine.findMany({ where: { id: { in: srcIds } }, include: { category: { select: { name: true } } } })
+      : []
+    const srcMap = new Map(srcRows.map((m) => [m.id, m]))
+    void recordSyncOp('transfer.completed', `trf:${transfer.referenceNo}`, {
+      id: transfer.id,
+      referenceNo: transfer.referenceNo,
+      fromBranchCode: transfer.fromBranch.code,
+      fromBranchName: transfer.fromBranch.name,
+      toBranchCode: transfer.toBranch.code,
+      toBranchName: transfer.toBranch.name,
+      completedByName: user.name,
+      completedAt: new Date().toISOString(),
+      items: transfer.items.map((i) => {
+        const src = i.medicineId ? srcMap.get(i.medicineId) : null
+        return {
+          name: i.name,
+          sku: i.sku,
+          unit: i.unit,
+          batchNumber: i.batchNumber,
+          expiryDate: i.expiryDate ? i.expiryDate.toISOString() : null,
+          qty: i.qty,
+          costPrice: i.costPrice,
+          sellingPrice: i.sellingPrice,
+          // clone-fidelity fields for destinations that have never seen the product
+          barcode: src?.barcode ?? null,
+          genericName: src?.genericName ?? null,
+          brand: src?.brand ?? null,
+          prescriptionRequired: src?.prescriptionRequired ?? false,
+          insuranceCovered: src?.insuranceCovered ?? false,
+          reorderLevel: src?.reorderLevel ?? 20,
+          location: src?.location ?? null,
+          category: src?.category?.name ?? 'General',
+        }
+      }),
     })
 
     return NextResponse.json({ transfer: result.completed, createdProducts: result.createdProducts, mergedProducts: result.mergedProducts })

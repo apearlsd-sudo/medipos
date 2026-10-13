@@ -13,7 +13,7 @@
 import { db } from '@/lib/db'
 import { publishLive } from '@/lib/live'
 import { planPackSale } from '@/lib/packs'
-import { deriveSkuForBranch } from '@/lib/stock-transfer'
+import { deriveSkuForBranch, findDestMedicine } from '@/lib/stock-transfer'
 
 export interface WireOp {
   id: string
@@ -75,6 +75,12 @@ export async function applySyncOp(
       return applyQuotationUpdated(op, p, opts)
     case 'quotation.status':
       return applyQuotationStatus(op, p)
+    case 'transfer.created':
+      return applyTransferCreated(op, p, opts)
+    case 'transfer.completed':
+      return applyTransferCompleted(op, p, opts)
+    case 'transfer.cancelled':
+      return applyTransferCancelled(op, p)
     default:
       return 'skipped'
   }
@@ -681,5 +687,222 @@ async function applyQuotationStatus(op: WireOp, p: Record<string, unknown>): Pro
       updatedAt: date(p.at) ?? new Date(),
     },
   })
+  return 'ok'
+}
+
+// --- Stock transfers -----------------------------------------------------------
+// Branch nodes must learn about inter-branch stock moves: a pending transfer
+// becomes visible at the receiving node, and a completion replicates BOTH stock
+// legs (source decrement, destination merge-or-clone) so every node's inventory
+// converges. Idempotency: rows are keyed by the origin transfer id and the
+// status guard makes a re-delivered completion a clean duplicate — the stock
+// legs run inside the same transaction as the status flip, so a replay can
+// never double-apply.
+
+const transferItemData = (it: Record<string, unknown>) => ({
+  name: str(it.name, 'Item'),
+  sku: str(it.sku),
+  unit: str(it.unit, 'Unit'),
+  batchNumber: str(it.batchNumber) || null,
+  expiryDate: date(it.expiryDate),
+  qty: Math.max(1, Math.trunc(num(it.qty, 1))),
+  costPrice: num(it.costPrice),
+  sellingPrice: num(it.sellingPrice),
+})
+
+async function resolveBranchByCode(code: string, name: string): Promise<string | null> {
+  const trimmed = code.trim()
+  if (!trimmed) return null
+  const existing = await db.branch.findFirst({ where: { code: trimmed }, select: { id: true } })
+  if (existing) return existing.id
+  const created = await db.branch.create({
+    data: { code: trimmed, name: name.trim() || trimmed, isActive: true },
+    select: { id: true },
+  })
+  return created.id
+}
+
+/** Per-node document numbering can collide across nodes — sale/expense convention. */
+function transferLocalNo(op: WireOp, asHQ: boolean, referenceNo: string): string {
+  return asHQ && op.nodeId !== 'HQ' ? `${op.nodeId}:${referenceNo}` : referenceNo
+}
+
+async function applyTransferCreated(
+  op: WireOp,
+  p: Record<string, unknown>,
+  opts: { asHQ: boolean },
+): Promise<ApplyResult> {
+  const originId = str(p.id) || op.id
+  if (!originId) return 'skipped'
+  const existing = await db.stockTransfer.findUnique({ where: { id: originId }, select: { id: true } })
+  if (existing) return 'duplicate'
+  const fromBranchId = await resolveBranchByCode(str(p.fromBranchCode), str(p.fromBranchName))
+  const toBranchId = await resolveBranchByCode(str(p.toBranchCode), str(p.toBranchName))
+  if (!fromBranchId || !toBranchId) return 'skipped'
+  const items = Array.isArray(p.items) ? p.items : []
+  const referenceNo = transferLocalNo(op, opts.asHQ, str(p.referenceNo, `TRF-SYNC-${originId.slice(-8)}`))
+  await db.stockTransfer.create({
+    data: {
+      id: originId,
+      referenceNo,
+      fromBranchId,
+      toBranchId,
+      note: str(p.note) || null,
+      status: 'pending',
+      createdByName: str(p.createdByName, 'Sync'),
+      items: { create: items.map((it) => transferItemData(it as Record<string, unknown>)) },
+    },
+  })
+  publishLive(['transfer', 'sync'], `Transfer ${referenceNo} synced from ${opts.asHQ ? 'branch' : 'HQ'}`, 'sync')
+  return 'ok'
+}
+
+async function applyTransferCompleted(
+  op: WireOp,
+  p: Record<string, unknown>,
+  opts: { asHQ: boolean },
+): Promise<ApplyResult> {
+  const originId = str(p.id) || op.id
+  if (!originId) return 'skipped'
+  const existing = await db.stockTransfer.findUnique({
+    where: { id: originId },
+    include: { items: true },
+  })
+  if (existing?.status === 'completed') return 'duplicate'
+  if (existing?.status === 'cancelled') return 'skipped' // never resurrect a cancelled transfer
+  const fromBranchId = await resolveBranchByCode(str(p.fromBranchCode), str(p.fromBranchName))
+  const toBranchId = await resolveBranchByCode(str(p.toBranchCode), str(p.toBranchName))
+  if (!fromBranchId || !toBranchId) return 'skipped'
+  const payloadItems = (Array.isArray(p.items) ? p.items : []) as Array<Record<string, unknown>>
+  const toBranchName = str(p.toBranchName, 'destination')
+  const fromBranchName = str(p.fromBranchName, 'source')
+  // Category rows are resolved up front (idempotent by name) so the transaction
+  // below stays write-heavy only — it must fit comfortably inside its timeout.
+  const catIds = new Map<string, string>()
+  for (const pi of payloadItems) {
+    const cat = str(pi.category, 'General')
+    if (!catIds.has(cat)) catIds.set(cat, await categoryFor(cat))
+  }
+
+  await db.$transaction(async (tx) => {
+    // The created op may have been lost — recreate the row from this payload.
+    let row = existing
+    if (!row) {
+      const referenceNo = transferLocalNo(op, opts.asHQ, str(p.referenceNo, `TRF-SYNC-${originId.slice(-8)}`))
+      row = await tx.stockTransfer.create({
+        data: {
+          id: originId,
+          referenceNo,
+          fromBranchId,
+          toBranchId,
+          note: str(p.note) || null,
+          status: 'pending',
+          createdByName: str(p.createdByName, 'Sync'),
+          items: { create: payloadItems.map((it) => transferItemData(it)) },
+        },
+        include: { items: true },
+      })
+    }
+
+    for (const item of row.items) {
+      // Fidelity fields (category, formulary flag, …) only travel in the payload.
+      const meta = payloadItems.find((pi) => str(pi.sku) === item.sku && str(pi.name) === item.name) ?? {}
+
+      // 1) Source leg — decrement the source branch's row (shadow rows floor at 0).
+      let src = item.medicineId
+        ? await tx.medicine.findFirst({ where: { id: item.medicineId, branchId: fromBranchId } })
+        : null
+      if (!src && item.sku) src = await tx.medicine.findFirst({ where: { sku: item.sku, branchId: fromBranchId } })
+      if (src) {
+        const nextQty = Math.max(0, src.stockQty - item.qty)
+        await tx.medicine.update({ where: { id: src.id }, data: { stockQty: nextQty } })
+        await tx.inventoryLog.create({
+          data: {
+            medicineId: src.id,
+            type: 'transfer_out',
+            quantity: -(src.stockQty - nextQty),
+            reason: `Stock transfer ${row.referenceNo} to ${toBranchName} (synced)`,
+            reference: `${op.id}:out:${item.id}`,
+          },
+        })
+      }
+
+      // 2) Destination leg — merge into the receiving branch's row or clone it there.
+      const dest = await findDestMedicine(tx, toBranchId, item.name, item.batchNumber)
+      if (dest) {
+        await tx.medicine.update({ where: { id: dest.id }, data: { stockQty: { increment: item.qty } } })
+        await tx.inventoryLog.create({
+          data: {
+            medicineId: dest.id,
+            type: 'transfer_in',
+            quantity: item.qty,
+            reason: `Stock transfer ${row.referenceNo} from ${fromBranchName} (synced)`,
+            reference: `${op.id}:in:${item.id}`,
+          },
+        })
+        await tx.stockTransferItem.update({ where: { id: item.id }, data: { destMedicineId: dest.id } })
+      } else {
+        const taken = await tx.medicine.findUnique({ where: { sku: item.sku }, select: { id: true } })
+        const toCode = str(p.toBranchCode, 'BR')
+        const finalSku = taken ? await deriveSkuForBranch(item.sku, toCode) : item.sku
+        const categoryId = catIds.get(str(meta.category, 'General')) ?? (await categoryFor('General'))
+        const cloned = await tx.medicine.create({
+          data: {
+            name: item.name,
+            genericName: str(meta.genericName) || null,
+            brand: str(meta.brand) || null,
+            sku: finalSku,
+            barcode: str(meta.barcode) || null,
+            categoryId,
+            supplierId: null,
+            unit: item.unit,
+            batchNumber: item.batchNumber,
+            expiryDate: item.expiryDate,
+            stockQty: item.qty,
+            reorderLevel: Math.max(0, Math.floor(num(meta.reorderLevel, 20))),
+            costPrice: item.costPrice,
+            sellingPrice: item.sellingPrice,
+            prescriptionRequired: meta.prescriptionRequired === true,
+            insuranceCovered: meta.insuranceCovered === true,
+            location: str(meta.location) || null,
+            status: 'active',
+            branchId: toBranchId,
+          },
+          select: { id: true },
+        })
+        await tx.inventoryLog.create({
+          data: {
+            medicineId: cloned.id,
+            type: 'transfer_in',
+            quantity: item.qty,
+            reason: `Stock transfer ${row.referenceNo} from ${fromBranchName} (new product, synced)`,
+            reference: `${op.id}:in:${item.id}`,
+          },
+        })
+        await tx.stockTransferItem.update({ where: { id: item.id }, data: { destMedicineId: cloned.id } })
+      }
+    }
+
+    await tx.stockTransfer.update({
+      where: { id: row.id },
+      data: {
+        status: 'completed',
+        completedAt: date(p.completedAt) ?? new Date(),
+        completedByName: str(p.completedByName, 'Sync'),
+      },
+    })
+  }, { timeout: 20000, maxWait: 10000 })
+  publishLive(['transfer', 'stock', 'sync'], `Transfer ${str(p.referenceNo, originId.slice(-8))} received via sync`, 'sync')
+  return 'ok'
+}
+
+async function applyTransferCancelled(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+  const originId = str(p.id) || op.id
+  if (!originId) return 'skipped'
+  const row = await db.stockTransfer.findUnique({ where: { id: originId } })
+  if (!row) return 'skipped'
+  if (row.status !== 'pending') return 'duplicate'
+  await db.stockTransfer.update({ where: { id: originId }, data: { status: 'cancelled' } })
+  publishLive(['transfer', 'sync'], `Transfer ${row.referenceNo} cancelled via sync`, 'sync')
   return 'ok'
 }

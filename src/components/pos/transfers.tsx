@@ -120,16 +120,17 @@ export function Transfers() {
   const openCreate = async () => {
     setCreateOpen(true)
     setToBranchId(''); setNote(''); setLines([]); setSearch(''); setPickerMeds([])
-    // Super admins pick any source; everyone else is fixed to their branch
-    if (isSuper) {
-      setFromBranchId(user.branchId ?? '')
-      const res = await fetch('/api/branches', { cache: 'no-store' })
+    setFromBranchId(user.branchId ?? '')
+    // Everyone with transfers:create may pick a destination — the lite list
+    // only carries id/name/code, so no branches:view is required.
+    try {
+      const res = await fetch('/api/branches/lite', { cache: 'no-store' })
       const json = await res.json()
-      const active = (json?.branches ?? []).filter((b: BranchLite & { isActive: boolean }) => b.isActive)
+      const active: BranchLite[] = json.branches ?? []
       setBranches(active)
       if (!user.branchId && active[0]) setFromBranchId(active[0].id)
-    } else {
-      setFromBranchId(user.branchId ?? '')
+    } catch {
+      setBranches([])
     }
   }
 

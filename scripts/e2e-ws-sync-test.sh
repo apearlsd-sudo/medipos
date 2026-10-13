@@ -7,6 +7,10 @@
 #   2. branch WS live link CONNECTS (hub registry shows the node)
 #   3. HQ price change reaches the branch in ~1s (nudge, not 15s polling)
 #   4. branch sale reaches HQ through the hub proxy (op replication)
+#   4b. HQ→branch transfer: pending + completion replicate; OSU stock moves at
+#       the branch node (transfer.created / transfer.completed appliers)
+#   4c. branch→HQ transfer: creation lands at HQ node-prefixed; completing at
+#       the branch node propagates status + source decrement back to HQ
 #   5. hub down  → branch still syncs via interval polling (fallback)
 #   6. HQ down   → branch ops queue in SQLite (offline fallback)
 #   7. both back → reconnect + catch-up: queued sale lands at HQ exactly once
@@ -110,6 +114,78 @@ for i in $(seq 1 30); do
   sleep 1
 done
 [ -n "$FOUND" ] && ok "branch sale reached HQ through hub proxy as WS-1:$INV (≤${i}s)" || bad "sale never reached HQ"
+
+# --- 4b. HQ→branch transfer: replication + stock legs at the branch node ---------
+MAINID=$(curl -s -b $H "http://localhost:3000/api/branches" | jqpy "[b['id'] for b in d['branches'] if b['code']=='MAIN'][0]")
+OSUID=$(curl -s -b $H "http://localhost:3000/api/branches" | jqpy "[b['id'] for b in d['branches'] if b['code']=='OSU'][0]")
+[ -n "$MAINID" ] && [ -n "$OSUID" ] && ok "branch ids resolved (MAIN/OSU)" || { bad "branch id resolution failed"; exit 1; }
+_PICKMAIN=$(curl -s -b $H "http://localhost:3000/api/medicines?branchId=$MAINID&stockFilter=all&limit=200")
+TMed=$(echo "$_PICKMAIN" | jqpy "[m for m in d['medicines'] if m['stockQty']>=30][0]['id']")
+TSKU=$(echo "$_PICKMAIN" | jqpy "[m for m in d['medicines'] if m['stockQty']>=30][0]['sku']")
+TNAME=$(echo "$_PICKMAIN" | jqpy "[m for m in d['medicines'] if m['stockQty']>=30][0]['name']")
+TENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1]))" "$TNAME")
+TQTY=3
+echo "  (transfer product sku=$TSKU name=$TNAME qty=$TQTY)"
+MAINB_HQ=$(curl -s -b $H "http://localhost:3000/api/medicines?branchId=$MAINID&search=$TSKU" | jqpy "d['medicines'][0]['stockQty'] if d['medicines'] else 0")
+TR=$(curl -s -b $H -X POST "http://localhost:3000/api/transfers" -H 'Content-Type: application/json' \
+  -d "{\"fromBranchId\":\"$MAINID\",\"toBranchId\":\"$OSUID\",\"note\":\"ws-sync transfer e2e\",\"items\":[{\"medicineId\":\"$TMed\",\"qty\":$TQTY}]}")
+TRID=$(echo "$TR" | jqpy "d.get('error') or d['transfer']['id']")
+TRREF=$(echo "$TR" | jqpy "d.get('error') or d['transfer']['referenceNo']")
+case "$TRREF" in TRF-*) ok "HQ created transfer $TRREF (MAIN→OSU, $TQTY units)" ;; *) bad "transfer create failed: $TR"; exit 1 ;; esac
+SEEN=""
+for i in $(seq 1 30); do
+  HIT=$(curl -s -b $B "http://localhost:$BRPORT/api/transfers?status=pending" | jqpy "len([t for t in d['transfers'] if t['referenceNo']=='$TRREF'])")
+  [ "$HIT" = "1" ] && { SEEN=yes; break; }
+  sleep 1
+done
+[ -n "$SEEN" ] && ok "pending transfer replicated to branch node (≤${i}s)" || bad "pending transfer never reached branch"
+OSUB=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?branchId=$OSUID&stockFilter=all&limit=200" | jqpy "([m['stockQty'] for m in d['medicines'] if m['name']=='$TNAME'] + [0])[0]")
+TS_MS=$(python3 -c "import time; print(int(time.time()*1000))")
+CC=$(curl -s -b $H -X POST "http://localhost:3000/api/transfers/$TRID/complete" -o /dev/null -w '%{http_code}')
+[ "$CC" = "200" ] && ok "HQ completed $TRREF" || bad "HQ complete failed ($CC)"
+DONE=""
+for i in $(seq 1 30); do
+  ST=$(curl -s -b $B "http://localhost:$BRPORT/api/transfers?status=completed" | jqpy "len([t for t in d['transfers'] if t['referenceNo']=='$TRREF'])")
+  [ "$ST" = "1" ] && { DONE=yes; break; }
+  sleep 1
+done
+[ -n "$DONE" ] && ok "completion replicated to branch node (≤${i}s)" || bad "completion never reached branch"
+OSUA=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?branchId=$OSUID&stockFilter=all&limit=200" | jqpy "([m['stockQty'] for m in d['medicines'] if m['name']=='$TNAME'] + [0])[0]")
+[ "$OSUA" = "$((OSUB + TQTY))" ] && ok "branch node OSU stock moved $OSUB→$OSUA (+$TQTY)" || bad "branch OSU stock mismatch ($OSUB→$OSUA, want +$TQTY)"
+MAINB_HQ2=$(curl -s -b $H "http://localhost:3000/api/medicines?branchId=$MAINID&search=$TSKU" | jqpy "d['medicines'][0]['stockQty'] if d['medicines'] else 0")
+[ "$MAINB_HQ2" = "$((MAINB_HQ - TQTY))" ] && ok "HQ MAIN source stock moved $MAINB_HQ→$MAINB_HQ2 (−$TQTY)" || bad "HQ MAIN stock mismatch ($MAINB_HQ→$MAINB_HQ2)"
+BLOGS=$(python3 -c "import sqlite3; c=sqlite3.connect('$BDB'); print(c.execute(\"select count(*) from InventoryLog l join Medicine m on m.id=l.medicineId where m.name=? and l.type='transfer_in' and l.quantity=? and l.createdAt>=?\", ('$TNAME',$TQTY,$TS_MS)).fetchone()[0])")
+[ "${BLOGS:-0}" -ge 1 ] && ok "transfer_in inventory leg logged at branch node by the applier" || bad "no transfer_in leg log at branch node"
+
+# --- 4c. branch→HQ transfer: node-prefixed create + completion round-trip ---------
+_PICKOSU=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?branchId=$OSUID&stockFilter=all&limit=200")
+BMed=$(echo "$_PICKOSU" | jqpy "[m for m in d['medicines'] if m['stockQty']>=10][0]['id']")
+BSKU=$(echo "$_PICKOSU" | jqpy "[m for m in d['medicines'] if m['stockQty']>=10][0]['sku']")
+BQTY=2
+HQOSU_BEFORE=$(curl -s -b $H "http://localhost:3000/api/medicines?branchId=$OSUID&search=$BSKU" | jqpy "d['medicines'][0]['stockQty'] if d['medicines'] else 0")
+TR2=$(curl -s -b $B -X POST "http://localhost:$BRPORT/api/transfers" -H 'Content-Type: application/json' \
+  -d "{\"fromBranchId\":\"$OSUID\",\"toBranchId\":\"$MAINID\",\"note\":\"branch-originated e2e\",\"items\":[{\"medicineId\":\"$BMed\",\"qty\":$BQTY}]}")
+TR2ID=$(echo "$TR2" | jqpy "d.get('error') or d['transfer']['id']")
+TR2REF=$(echo "$TR2" | jqpy "d.get('error') or d['transfer']['referenceNo']")
+case "$TR2REF" in TRF-*) ok "branch created transfer $TR2REF (OSU→MAIN, $BQTY units)" ;; *) bad "branch transfer create failed: $TR2"; exit 1 ;; esac
+PFX=""
+for i in $(seq 1 30); do
+  HIT=$(curl -s -b $H "http://localhost:3000/api/transfers?status=pending" | jqpy "len([t for t in d['transfers'] if t['referenceNo']=='WS-1:$TR2REF'])")
+  [ "$HIT" = "1" ] && { PFX=yes; break; }
+  sleep 1
+done
+[ -n "$PFX" ] && ok "branch-originated transfer at HQ node-prefixed as WS-1:$TR2REF (≤${i}s)" || bad "branch transfer never reached HQ (prefixed)"
+CC2=$(curl -s -b $B -X POST "http://localhost:$BRPORT/api/transfers/$TR2ID/complete" -o /dev/null -w '%{http_code}')
+[ "$CC2" = "200" ] && ok "branch node completed its own transfer $TR2REF" || bad "branch complete failed ($CC2)"
+BACK=""
+for i in $(seq 1 30); do
+  ST=$(curl -s -b $H "http://localhost:3000/api/transfers?status=completed" | jqpy "len([t for t in d['transfers'] if t['referenceNo']=='WS-1:$TR2REF'])")
+  [ "$ST" = "1" ] && { BACK=yes; break; }
+  sleep 1
+done
+[ -n "$BACK" ] && ok "branch-side completion propagated to HQ (≤${i}s)" || bad "completion never propagated to HQ"
+HQOSU_AFTER=$(curl -s -b $H "http://localhost:3000/api/medicines?branchId=$OSUID&search=$BSKU" | jqpy "d['medicines'][0]['stockQty'] if d['medicines'] else 0")
+[ "$HQOSU_AFTER" = "$((HQOSU_BEFORE - BQTY))" ] && ok "HQ OSU source stock moved $HQOSU_BEFORE→$HQOSU_AFTER (−$BQTY)" || bad "HQ OSU stock mismatch ($HQOSU_BEFORE→$HQOSU_AFTER)"
 
 # --- 6. hub down → polling fallback keeps sync alive -------------------------------
 HPID=$(cat .hub.pid 2>/dev/null)

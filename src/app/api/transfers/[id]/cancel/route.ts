@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
+import { recordSyncOp } from '@/lib/sync'
 
 // ---------------------------------------------------------------------------
 // POST /api/transfers/[id]/cancel — cancel a PENDING transfer (no stock moved).
@@ -37,6 +38,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       targetId: transfer.id,
       targetName: transfer.referenceNo,
       summary: `Cancelled pending transfer ${transfer.referenceNo} (${transfer.fromBranch.name} → ${transfer.toBranch.name})`,
+    })
+
+    // Replicate the cancellation so peer nodes don't keep waiting on a ghost shipment.
+    void recordSyncOp('transfer.cancelled', `trf:${transfer.referenceNo}`, {
+      id: transfer.id,
+      referenceNo: transfer.referenceNo,
     })
 
     return NextResponse.json({ transfer: updated })

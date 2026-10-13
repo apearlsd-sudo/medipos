@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth'
 import { resolveBranchScope, defaultBranchId } from '@/lib/branches'
 import { logAudit } from '@/lib/audit'
 import { nextTransferReference } from '@/lib/stock-transfer'
+import { recordSyncOp } from '@/lib/sync'
 
 // ---------------------------------------------------------------------------
 // GET /api/transfers — list transfers touching the scoped branch (or all).
@@ -90,8 +91,8 @@ export async function POST(req: NextRequest) {
     }
 
     const [fromBranch, toBranch] = await Promise.all([
-      db.branch.findUnique({ where: { id: fromBranchId }, select: { id: true, name: true, isActive: true } }),
-      db.branch.findUnique({ where: { id: toBranchId }, select: { id: true, name: true, isActive: true } }),
+      db.branch.findUnique({ where: { id: fromBranchId }, select: { id: true, name: true, code: true, isActive: true } }),
+      db.branch.findUnique({ where: { id: toBranchId }, select: { id: true, name: true, code: true, isActive: true } }),
     ])
     if (!fromBranch || !fromBranch.isActive) return NextResponse.json({ error: 'Source branch not found or inactive' }, { status: 404 })
     if (!toBranch || !toBranch.isActive) return NextResponse.json({ error: 'Destination branch not found or inactive' }, { status: 404 })
@@ -147,6 +148,30 @@ export async function POST(req: NextRequest) {
       targetId: transfer.id,
       targetName: referenceNo,
       summary: `Created stock transfer ${referenceNo}: ${fromBranch.name} → ${toBranch.name}, ${cleanItems.length} product(s), ${cleanItems.reduce((n, i) => n + i.qty, 0)} units`,
+    })
+
+    // Replicate to peer nodes: the receiving branch's node sees the pending
+    // transfer as soon as it pulls (fire-and-forget — never blocks the create).
+    void recordSyncOp('transfer.created', `trf:${referenceNo}`, {
+      id: transfer.id,
+      referenceNo,
+      fromBranchCode: fromBranch.code,
+      fromBranchName: fromBranch.name,
+      toBranchCode: toBranch.code,
+      toBranchName: toBranch.name,
+      note: transfer.note,
+      createdByName: user.name,
+      createdAt: transfer.createdAt.toISOString(),
+      items: transfer.items.map((i) => ({
+        name: i.name,
+        sku: i.sku,
+        unit: i.unit,
+        batchNumber: i.batchNumber,
+        expiryDate: i.expiryDate ? i.expiryDate.toISOString() : null,
+        qty: i.qty,
+        costPrice: i.costPrice,
+        sellingPrice: i.sellingPrice,
+      })),
     })
 
     return NextResponse.json({ transfer }, { status: 201 })

@@ -59,9 +59,12 @@ regresses; stock math re-runs deterministically on the receiver).
 `stock.delta/set` (SKU-keyed, emitted by catalog copy / inventory-file import),
 `customer.updated`, `ledger.entry`, `loyalty.entry`, `claim.status`,
 `insurer.updated`, `expense.created/voided`, `quotation.updated/status`,
-`stock.returned`, `stocktake.*`. New models must be added to the push/pull
-whitelists in `sync-worker.ts` / `sync-gateway.ts` and (for write endpoints)
-to QUEUE_RULES.
+`stock.returned`, `stocktake.*`, `transfer.created/completed/cancelled`
+(replicates the transfer record AND both stock legs — source decrement,
+destination merge-or-clone — keyed by origin transfer id with sticky status
+guards so a re-delivered completion is a clean duplicate). New models must be
+added to the push/pull whitelists in `sync-worker.ts` / `sync-gateway.ts` and
+(for write endpoints) to QUEUE_RULES.
 
 ## 3. Data Model Conventions
 
@@ -72,7 +75,7 @@ to QUEUE_RULES.
   branch rows are a seeding bug — `scripts/migrate-branches.ts` stamps them
   to the default branch and is idempotent.
 - **Document numbering**: per-node sequences (`INV-2026-0154`, `QTN-…`,
-  `CLM-…`, `EXP-…`). Cross-node collisions are avoided with the
+  `CLM-…`, `EXP-…`, `TRF-…`). Cross-node collisions are avoided with the
   `T3:<nodeId>:` prefix convention on replicated docs.
 - **Settings**: two KV stores — `StoreSetting` (store prefs, notification
   provider config, schedule markers) and `NodeSetting` (mesh/pairing state).
