@@ -447,3 +447,21 @@ Work Log:
 
 Stage Summary:
 - Stock transfers are now first-class synced entities: pending transfers appear at branch nodes in ~1s, completions replicate both stock legs (merge-or-clone with full product fidelity), cancellations propagate, branch nodes can receive on their own, and every path is exactly-once under replay. Pharmacists are confirmed stock custodians per policy (view/create/complete; cancel is admin-only; cashiers none) and can actually USE the feature — the empty destination dropdown is fixed. Policy knob left open: granting cashiers transfers:view for branch-staff visibility (not done — user scoped to pharmacists). 136 E2E checks green across all suites.
+---
+Task ID: 30
+Agent: Super Z (main)
+Task: Answer "why do features get deleted after some time and have to be redone" — diagnose root cause and ship a permanent self-healing fix.
+
+Work Log:
+- DIAGNOSIS: the hosted preview platform periodically resets the workspace to the LAST GIT COMMIT. A reset kills (1) running processes + .next/standalone build artifacts, (2) data written after the last committed DB snapshot (db/custom.db is git-tracked but only as of the last commit that included it), (3) any uncommitted code. The CODE is almost never lost — what vanishes is runtime state features depend on, which looks like "features were deleted" (Task 26 products-invisible incident; Task 29 "platform had reset AGAIN"; commit f5bd7b5 was a whole recovery task).
+- FIX 1 (boot guard): src/instrumentation.ts — Next.js register() runs once per server start before first request; checks DB invariants (admin user, roles, branches, medicines branchId stamps, OSU catalog); on regression auto-runs the idempotent runbook scripts (seed.ts → seed-roles.ts → migrate-branches.ts → seed-osu-products.ts) via bun, logs as [boot-guard]; never crashes the server; silently skips scripts on standalone-without-source deploys; process-level re-entry guard via globalThis.
+- FIX 2 (doctor): scripts/auto-recover.sh — idempotent 5-step doctor: restore newest db/backups snapshot if DB missing/broken → prisma db push if key tables missing → repair chain only if invariants fail → npm run build if standalone gone → relaunch.sh; prints INVARIANT_OK / AUTO_RECOVER_OK verdicts.
+- FIX 3 (loss window): scripts/snapshot-db.sh — consistent online backup (python sqlite3 .backup) + git-commit of db/custom.db staged from the CONSISTENT copy (never the live file, no torn blobs). KEY FINDING: raw SQLite backup files are non-deterministic at page level with identical row data — initial byte-diff staging committed false positives every run; fixed by fingerprinting ROW DATA (sha256 over all rows of all tables sorted) vs HEAD:db/custom.db, so unchanged data → SNAPSHOT_NO_CHANGES.
+- DOCS: README "Why Features Can 'Disappear' — and How Self-Healing Works" section + 2 runbook rows (auto-recover, snapshot-db).
+- VERIFY (boot guard fires healthy): rebuild + relaunch → HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200, server.log: "[boot-guard] DB invariants healthy — no repair needed".
+- VERIFY (simulated reset): wiped branchId on 3 medicines (exact Task 26 regression), restarted server → guard detected (medsNull:3), ran migrate-branches.ts, post-repair medsNull:0 → HEALTHY; medicines API re-verified MAIN:30 / OSU:9 rows with full data.
+- VERIFY (doctor): auto-recover.sh on healthy system = clean no-op → INVARIANT_OK / AUTO_RECOVER_OK (HTTP:200 HUB:200).
+- VERIFY (snapshot): NO_CHANGES on identical data; COMMITTED after a real write; NO_CHANGES again. Final health HTTP:200 LOGIN:200 HUB:200.
+
+Stage Summary:
+- Features no longer need redoing after platform resets: every server start self-checks its data and auto-repairs the three known regression classes; auto-recover.sh handles process/build/restore; snapshot-db.sh pins healthy state so a reset loses minutes, not days. Loss surface now: only uncommitted code (mitigated by per-task commit discipline). Tools: bash scripts/auto-recover.sh (fix), bash scripts/snapshot-db.sh (pin).

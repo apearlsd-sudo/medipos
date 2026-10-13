@@ -159,6 +159,8 @@ system architecture deep-dive. Short version:
 | Auto-start services (Linux/macOS) | `bash scripts/install-autostart.sh` |
 | Auto-start services (Windows) | `powershell scripts/install-autostart-windows.ps1` |
 | Cloudflare tunnel | `bash scripts/setup-tunnel.sh quick` |
+| Full self-healing pass (safe anytime) | `bash scripts/auto-recover.sh` |
+| Commit a consistent DB snapshot | `bash scripts/snapshot-db.sh` |
 
 ### Health Checks
 
@@ -168,6 +170,33 @@ system architecture deep-dive. Short version:
 | `http://localhost:3000/api/auth/login` (POST) | 200 with demo creds |
 | `http://localhost:3003/hub/health` | 200 (sync hub) |
 | `/api/sync/status` | node role, peers, LAN addresses, UDP discovery |
+
+### Why Features Can "Disappear" — and How Self-Healing Works
+
+The hosted preview workspace periodically **resets itself to the last git
+commit**. A reset kills three things, and each has a countermeasure:
+
+| Loss | Symptom | Countermeasure |
+|------|---------|----------------|
+| Running processes + build artifacts | app down, sync hub down, dev-mode reboot | `relaunch.sh` / `auto-recover.sh` rebuild and restart |
+| Data written after the last committed DB snapshot | products/roles/branch stamps "gone", features that depend on them look broken | `snapshot-db.sh` narrows the window; `auto-recover.sh` restores newest backup or re-runs the idempotent seed chain |
+| Uncommitted code changes | a feature genuinely vanishes | discipline: commit at the end of every task |
+
+**The code itself is rarely lost** (it is committed after every task). What
+usually "disappears" is the runtime state a feature depends on: the SQLite DB
+reverts to its last committed snapshot, or the standalone build / sync hub
+process is reaped. Since Task 30 the app also carries a boot-time data guard
+(`src/instrumentation.ts`): on every server start it checks the DB invariants
+(admin user, roles, branch stamps, OSU catalog) and auto-runs the recovery
+scripts (`seed.ts → seed-roles.ts → migrate-branches.ts → seed-osu-products.ts`)
+when a regression is detected — logged as `[boot-guard]` in `server.log`.
+
+If anything ever looks missing after a gap:
+
+```bash
+bash scripts/auto-recover.sh   # diagnose + repair + rebuild + relaunch, idempotent
+bash scripts/snapshot-db.sh    # then pin the healthy state into git
+```
 
 ---
 
