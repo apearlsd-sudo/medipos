@@ -653,3 +653,27 @@ model DiscountRequest {
   @@index([status])
   @@index([cashierId])
 }
+
+// ---------------------------------------------------------------------------
+// Tier 4 — WhatsApp/SMS alerting. Node-local operational outbox (not synced):
+// each node evaluates its own stock and queues provider messages here.
+// ---------------------------------------------------------------------------
+model NotificationOutbox {
+  id          String    @id @default(cuid())
+  channel     String // whatsapp | sms
+  provider    String // whatsapp_cloud | webhook_sms | manual
+  recipient   String // phone number or comma list
+  template    String // low_stock | expiring | daily_summary | test | custom
+  body        String
+  status      String    @default("queued") // queued | sent | failed | skipped | cancelled
+  error       String? // provider / validation error, or skip reason
+  relatedType String? // medicine | sale | system
+  relatedKey  String? // dedupe + cooldown key, e.g. low_stock:<branch>:<sku>
+  meta        String? // JSON — item counts, evaluated ranges, provider message id
+  sentAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, createdAt])
+  @@index([relatedKey, createdAt])
+  @@index([template])
+}

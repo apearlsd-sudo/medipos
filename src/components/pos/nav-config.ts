@@ -17,6 +17,8 @@ export type ViewKey =
   | 'reports'
   | 'branches'
   | 'users'
+  | 'audit'
+  | 'notifications'
   | 'settings'
 
 /** Subject that carries the session user's permission state. */
@@ -110,6 +112,8 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: 'branches', label: 'Branches', icon: 'Building2', permission: ['branches', 'view'] },
       { key: 'users', label: 'Users & Roles', icon: 'ShieldCheck', permission: ['users', 'view'], altPermission: ['audit', 'view'] },
+      { key: 'audit', label: 'Audit Trail', icon: 'History', permission: ['audit', 'view'] },
+      { key: 'notifications', label: 'Notifications', icon: 'BellRing', permission: ['notifications', 'view'] },
       { key: 'settings', label: 'Settings', icon: 'Settings', permission: ['settings', 'view'] },
     ],
   },

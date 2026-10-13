@@ -26,7 +26,7 @@ export interface PermissionDef {
 }
 
 // ---------------------------------------------------------------------------
-// Module definitions — 21 modules, 61 granular permissions
+// Module definitions — 23 modules, 64 granular permissions
 // ---------------------------------------------------------------------------
 
 const VIEW: PermissionActionDef = { action: 'view', label: 'View', description: 'View this module and its data' }
@@ -188,7 +188,19 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
     group: 'Administration',
     module: 'audit',
     label: 'Audit Trail',
-    actions: [{ ...VIEW, description: 'See who granted, changed or deleted roles, permissions and users' }],
+    actions: [
+      { ...VIEW, description: 'See who granted, changed or deleted roles, permissions and users' },
+      { action: 'export', label: 'Export', description: 'Export the audit trail to CSV' },
+    ],
+  },
+  {
+    group: 'Administration',
+    module: 'notifications',
+    label: 'Notifications & Alerts',
+    actions: [
+      { ...VIEW, description: 'See the WhatsApp/SMS outbox and alert rules' },
+      { action: 'manage', label: 'Manage', description: 'Configure providers, edit alert rules and send messages' },
+    ],
   },
   {
     group: 'Administration',
@@ -288,6 +300,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
     'reports:export',
     'branches:view',
     'settings:view',
+    'notifications:view',
   ],
   cashier: [
     'dashboard:view',

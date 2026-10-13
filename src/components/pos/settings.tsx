@@ -10,12 +10,14 @@ import { PageHeader } from '@/components/pos/shared'
 import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { TwoFactorCard } from '@/components/pos/security-settings'
 import { CommerceCards } from '@/components/pos/commerce-settings'
+import { DataHygieneCard } from '@/components/pos/data-hygiene'
+import { usePwaInstall } from '@/components/pos/pwa-register'
 import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
-import { BadgeCheck, Loader2, Moon, Percent, Printer, Save, ShieldCheck, Store, Sun, Wallet } from 'lucide-react'
+import { BadgeCheck, Download, Loader2, MonitorDown, Moon, Percent, Printer, Save, ShieldCheck, Store, Sun, Wallet } from 'lucide-react'
 
 interface StoreSettings {
   storeName: string
@@ -62,6 +64,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
   const { resolvedTheme, setTheme } = useTheme()
   const { user, can } = useUser()
   const canEditSettings = can('settings', 'edit')
+  const pwa = usePwaInstall()
 
   useEffect(() => {
     fetch('/api/settings', { cache: 'no-store' })
@@ -255,6 +258,37 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               </div>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base"><MonitorDown className="h-4 w-4 text-teal-500" /> App Installation</CardTitle>
+              <CardDescription>Install MediPOS Pro as a desktop/tablet app — it launches full-screen, keeps its own window and works offline.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {pwa.installed ? (
+                <p className="flex items-center gap-2 rounded-xl border border-emerald-300 bg-emerald-50 p-3 text-sm text-emerald-700 dark:border-emerald-500/40 dark:bg-emerald-500/10 dark:text-emerald-300">
+                  <BadgeCheck className="h-4 w-4" /> Installed — MediPOS runs as an app on this device.
+                </p>
+              ) : pwa.available ? (
+                <Button
+                  onClick={async () => {
+                    const outcome = await pwa.install()
+                    if (outcome === 'accepted') toast({ title: 'Installing MediPOS Pro…', description: 'Find it in your app list / home screen.' })
+                  }}
+                  className="w-full rounded-full bg-teal-600 hover:bg-teal-700"
+                >
+                  <Download className="h-4 w-4" /> Install MediPOS Pro on this device
+                </Button>
+              ) : (
+                <p className="rounded-xl border bg-muted/40 p-3 text-xs text-muted-foreground">
+                  To install manually: <b>Chrome/Edge</b> — install icon in the address bar · <b>Android</b> — menu → “Add to Home screen” · <b>iOS Safari</b> — Share → “Add to Home Screen”.
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">Installed app + service worker keep the app shell ready offline; sales made offline queue and sync automatically.</p>
+            </CardContent>
+          </Card>
+
+          <DataHygieneCard />
 
           <Card>
             <CardHeader>

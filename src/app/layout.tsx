@@ -20,11 +20,22 @@ export const metadata: Metadata = {
     "Professional pharmacy point-of-sale system with inventory, batch & expiry tracking, prescriptions, purchasing, customers, and analytics.",
   keywords: ["Pharmacy POS", "Point of Sale", "Pharmacy Management", "Inventory", "MediPOS"],
   authors: [{ name: "MediPOS Team" }],
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "MediPOS Pro",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  themeColor: "#0d9488",
 };
 
 export default function RootLayout({

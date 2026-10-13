@@ -13,6 +13,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/pos/shared'
 import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
 import { DiscountApprovalDialog } from '@/components/pos/discount-approval-dialog'
+import { BarcodeScannerDialog } from '@/components/pos/barcode-scanner'
 import { StartShiftDialog } from '@/components/pos/shift-dialogs'
 import type { ShiftRecord } from '@/components/pos/shift-report'
 import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
@@ -20,7 +21,7 @@ import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/disc
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Percent, Pill, Plus, Printer, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Percent, Pill, Plus, Printer, ScanLine, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -118,6 +119,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   // Discount approval workflow state
   const [approvalOpen, setApprovalOpen] = useState(false)
   const [approvedRequests, setApprovedRequests] = useState<ApprovedDiscountRequest[]>([])
+  const [scannerOpen, setScannerOpen] = useState(false)
   const [approvedListOpen, setApprovedListOpen] = useState(false)
   const [discountRequestId, setDiscountRequestId] = useState<string | null>(null)
 
@@ -229,6 +231,19 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       setSearch('')
       searchRef.current?.focus()
     }
+  }
+
+  // Camera scan result → same resolution rules as a hardware scanner (exact
+  // barcode/SKU match adds to the cart; unknown codes surface a clear error).
+  const onBarcodeScanned = (code: string) => {
+    const exact = meds.find((m) => m.barcode === code || m.sku.toLowerCase() === code.toLowerCase())
+    if (exact) {
+      addToCart(exact)
+      toast({ title: 'Scanned', description: `${exact.name} added to cart.` })
+    } else {
+      toast({ title: 'No matching product', description: `Barcode/SKU "${code}" did not match any product in this catalog.`, variant: 'destructive' })
+    }
+    searchRef.current?.focus()
   }
 
   const updateQty = (id: string, delta: number) => {
@@ -518,12 +533,21 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={onSearchKeyDown}
               placeholder="Scan barcode or search by name / generic / brand… (Enter to add)"
-              className="pl-9"
+              className="pl-9 pr-24"
               aria-label="Product search"
             />
-            {search && (
+            {search ? (
               <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Clear search">
                 <X className="h-4 w-4" />
+              </button>
+            ) : (
+              <button
+                onClick={() => setScannerOpen(true)}
+                className="absolute right-2.5 top-1/2 inline-flex -translate-y-1/2 items-center gap-1 rounded-full bg-teal-600/10 px-2.5 py-1 text-[11px] font-semibold text-teal-700 transition hover:bg-teal-600/20 dark:text-teal-300"
+                aria-label="Scan barcode with camera"
+                title="Scan barcode with the camera"
+              >
+                <ScanLine className="h-3.5 w-3.5" /> Scan
               </button>
             )}
           </div>
@@ -901,6 +925,9 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
 
       {/* Start shift dialog (shift gating) */}
       <StartShiftDialog open={startShiftOpen} onOpenChange={setStartShiftOpen} onStarted={loadCurrentShift} />
+
+      {/* Camera barcode scanner (Tier 4) */}
+      <BarcodeScannerDialog open={scannerOpen} onOpenChange={setScannerOpen} onDetected={onBarcodeScanned} />
 
       {/* Discount approval (threshold exceeded) */}
       <DiscountApprovalDialog

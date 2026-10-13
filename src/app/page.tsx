@@ -21,6 +21,9 @@ import { Expenses } from '@/components/pos/expenses'
 import { Quotations } from '@/components/pos/quotations'
 import { Settings } from '@/components/pos/settings'
 import { Users } from '@/components/pos/users'
+import { Audit } from '@/components/pos/audit'
+import { Notifications } from '@/components/pos/notifications'
+import { PwaRegister } from '@/components/pos/pwa-register'
 import { Login } from '@/components/pos/login'
 import { UserProvider, userCan, type AuthUser } from '@/components/pos/user-context'
 import { canAccessView, type ViewKey } from '@/components/pos/nav-config'
@@ -50,6 +53,8 @@ const VIEW_TITLES: Record<ViewKey, string> = {
   reports: 'Reports',
   branches: 'Branches',
   users: 'Users & Roles',
+  audit: 'Audit Trail',
+  notifications: 'Notifications & Alerts',
   settings: 'Settings',
 }
 
@@ -218,6 +223,7 @@ export default function Home() {
 
   return (
     <UserProvider user={user} logout={logout}>
+      <PwaRegister />
       <div className="min-h-screen">
         <Sidebar
           view={activeView}
@@ -266,6 +272,8 @@ export default function Home() {
             {activeView === 'prescriptions' && <Prescriptions />}
             {activeView === 'reports' && <Reports storeSettings={settings} />}
             {activeView === 'users' && <Users />}
+            {activeView === 'audit' && <Audit />}
+            {activeView === 'notifications' && <Notifications />}
             {activeView === 'settings' && <Settings onSettingsSaved={async () => {
               const s = await loadStoreSettings(true)
               setSettings(s)

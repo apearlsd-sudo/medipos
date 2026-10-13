@@ -32,8 +32,11 @@ export type AuditAction =
   | 'quotation.accepted'
   | 'quotation.declined'
   | 'quotation.converted'
+  // tier 4 — data hygiene & system care
+  | 'system.cleaned'
+  | 'system.backup'
 
-export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine' | 'expense' | 'quotation'
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification'
 
 export interface AuditPriceChange {
   medicine: string
@@ -66,6 +69,10 @@ export interface AuditChanges {
   amount?: number
   quoteNo?: string
   total?: number
+  // tier 4 — data hygiene
+  deleted?: Record<string, number>
+  backupFile?: string
+  retentionDays?: Record<string, number>
 }
 
 export async function logAudit(opts: {
