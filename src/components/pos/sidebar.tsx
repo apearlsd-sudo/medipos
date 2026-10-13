@@ -63,8 +63,10 @@ function NavContent({ view, onNavigate, collapsed, onToggleCollapse, alertCount,
         )}
       </div>
 
-      {/* Navigation */}
-      <ScrollArea className="flex-1 py-3">
+      {/* Navigation — min-h-0 lets the area shrink inside the flex column so
+          the viewport actually scrolls on short screens instead of overflowing
+          and clipping the lower menu groups (Reports / Administration). */}
+      <ScrollArea className="min-h-0 flex-1 overflow-hidden py-3">
         <nav className={collapsed ? 'px-2' : 'px-3'} aria-label="Main navigation">
           {groups.map((group) => (
             <div key={group.title} className="mb-4">
