@@ -373,3 +373,18 @@ Work Log:
 
 Stage Summary:
 - Sidebar now fully navigable on short laptop screens; the previously invisible Reports + Administration group and the pinned user card are reachable via a working scrollbar on desktop, collapsed, and mobile Sheet modes. No data/RBAC change — pure layout fix. Commit 726e2a3.
+
+---
+Task ID: 26-branch-data-stamp-fix
+Agent: main
+Task: User: "products are not showing"
+
+Work Log:
+- Diagnosis: DB had all 30 medicines active (no data loss), and /api/medicines unscoped returned 30 — but ANY branch-scoped request (?branchId=MAIN|OSU) returned 0. Cause: every operational row had branchId=NULL. The header branch switcher injects ?branchId into all GETs (page.tsx scopedFetch), and resolveBranchScope filters strictly by branchId — so selecting any branch emptied products (also sales/shifts/purchases views for branch-locked users). Root cause: after the Task 21 platform-rollback rebuild, scripts/seed.ts re-created data WITHOUT branch stamping and the designated post-seed step scripts/migrate-branches.ts (stamps all NULLs to the default branch, splits Linda to OSU, clones OSU sample products) was never re-run; seed-osu-products.ts therefore found 0 MAIN-stamped medicines and cloned nothing.
+- Extent survey: User 4/4 NULL, Medicine 30/30, Sale 108/177, Purchase 6/12, Shift 15/15, StockTake 4/4.
+- Repair (existing idempotent scripts, no code change): bun run scripts/migrate-branches.ts -> assigned 4 users / 30 medicines / 108 sales / 6 purchases / 15 shifts / 4 stock-takes to MAIN, linda -> OSU; bun run scripts/seed-osu-products.ts -> 8 OSU catalog clones (SKU -OSU suffix). Post-state: Medicine MAIN=30 OSU=8 null=0; Sale 177/0; Shift 15/0; User 3+1.
+- Verify: API MAIN scope 30 / OSU scope 8 / all-branches 38; MAIN search paracetamol -> MED-1001; browser as admin switched header to Osu Branch -> Medicines page shows 8 products, 1 low stock, stock value GHS-equivalent $1,466.20, correct OSU SKUs (screenshot verify_osu_products.png). Sidebar scroll fix from Task 25 confirmed live en route.
+- Ops note: post-rollback restoration checklist must run, in order: seed.ts -> seed-roles -> migrate-branches.ts -> seed-osu-products.ts (migrate-branches is idempotent: updateMany where branchId:null only, SKU-keyed clones with exists-check).
+
+Stage Summary:
+- Branch-scoped product visibility restored everywhere (Medicines list, POS search, Stock Control, Purchases, branch-locked logins). No app-code change; repaired DB committed. Commit: db + worklog.
