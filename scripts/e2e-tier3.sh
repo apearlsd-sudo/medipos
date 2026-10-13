@@ -60,11 +60,14 @@ BCATS=$(curl -s -b $B http://localhost:$BRPORT/api/expense-categories | jqpy "[c
 BEXP=$(curl -s -b $B -X POST http://localhost:$BRPORT/api/expenses -H 'Content-Type: application/json' \
   -d "{\"categoryId\":\"$BCATS\",\"description\":\"Branch ECG bill\",\"amount\":77.25,\"paymentMethod\":\"cash\"}")
 BEXPNO=$(echo "$BEXP" | jqpy "d['expense']['expenseNo']")
+BEXPID=$(echo "$BEXP" | jqpy "d['expense']['id']")
 [ -n "$BEXPNO" ] && ok "branch expense created ($BEXPNO)" || bad "branch expense failed"
 
+# Wait for THIS run's row (matched by id — a number/name match would instantly
+# succeed on a previous run's replicated row and un-hermetic the totals math).
 FOUND=""
 for i in $(seq 1 20); do
-  FOUND=$(curl -s -b $H "http://localhost:3000/api/expenses?days=30&search=Branch%20ECG%20bill" | jqpy "any(e['expenseNo'].startswith('T3:') for e in d['expenses'])")
+  FOUND=$(curl -s -b $H "http://localhost:3000/api/expenses?days=30&search=Branch%20ECG%20bill" | jqpy "any(e['id']=='$BEXPID' for e in d['expenses'])")
   [ "$FOUND" = "True" ] && break; sleep 1.5
 done
 [ "$FOUND" = "True" ] && ok "branch expense replicated to HQ as T3:$BEXPNO (≤30s)" || bad "branch expense never reached HQ"

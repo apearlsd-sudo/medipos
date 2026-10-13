@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, ExpiryBadge, PageHeader, StockBadge, TableSkeleton } from '@/components/pos/shared'
+import { InventorySyncButtons } from '@/components/pos/inventory-sync'
 import { ReturnsAndQuarantine } from '@/components/pos/stock-returns'
 import { fmtDate, fmtRelative } from '@/lib/format'
 import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Boxes, History, TimerReset } from 'lucide-react'
@@ -140,6 +141,7 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
         breadcrumb="Stock Control"
         actions={
           <>
+            <InventorySyncButtons onChanged={load} />
             <Button variant="outline" onClick={onGotoPurchases} className="rounded-full"><Boxes className="h-4 w-4" /> Purchase Order</Button>
             <Button onClick={() => setAdjustOpen(true)} className="rounded-full bg-teal-600 hover:bg-teal-700"><ArrowUpFromLine className="h-4 w-4" /> Adjust Stock</Button>
           </>

@@ -13,6 +13,7 @@
 import { db } from '@/lib/db'
 import { publishLive } from '@/lib/live'
 import { planPackSale } from '@/lib/packs'
+import { deriveSkuForBranch } from '@/lib/stock-transfer'
 
 export interface WireOp {
   id: string
@@ -47,6 +48,11 @@ export async function applySyncOp(
     case 'medicine.updated':
     case 'medicine.created':
       return applyMedicineUpsert(op, p, opts)
+    case 'medicine.upsert':
+      return applyCatalogUpsertBySku(op, p, opts)
+    case 'stock.delta':
+    case 'stock.set':
+      return applyStockOpBySku(op, p)
     case 'inventory.adjusted':
       return applyInventoryAdjusted(op, p)
     case 'customer.updated':
@@ -219,6 +225,136 @@ async function applyMedicineUpsert(
     await db.medicine.update({ where: { id }, data })
   }
   publishLive(['medicine', 'sync'], `Catalog update from ${opts.asHQ ? 'branch' : 'HQ'} applied`, 'sync')
+  return 'ok'
+}
+
+// --- SKU-keyed catalog + stock ops (copy-catalog / inventory-file import) ----
+// The emitting node may not share medicine ids with the receiver, so these ops
+// resolve rows by SKU → barcode → name inside the branch named in the payload
+// (auto-provisioned by code when unknown). Catalog travels, stock does not:
+// an upsert never touches quantities on an existing row — only stock.delta /
+// stock.set move stock, and both leave an inventoryLog keyed by the wire op id
+// so a re-delivered op is a clean duplicate, never a double-apply.
+
+async function branchIdForCode(p: Record<string, unknown>): Promise<string | null> {
+  const code = str(p.branchCode).trim()
+  if (!code) return null
+  const existing = await db.branch.findFirst({ where: { code }, select: { id: true } })
+  if (existing) return existing.id
+  const created = await db.branch.create({
+    data: { code, name: str(p.branchName).trim() || code, isActive: true },
+    select: { id: true },
+  })
+  return created.id
+}
+
+async function categoryFor(name: string): Promise<string> {
+  const trimmed = name.trim() || 'General'
+  const hit = await db.category.findUnique({ where: { name: trimmed }, select: { id: true } })
+  if (hit) return hit.id
+  const created = await db.category.create({ data: { name: trimmed }, select: { id: true } })
+  return created.id
+}
+
+async function resolveMedicineBySku(branchId: string | null, p: Record<string, unknown>) {
+  const sku = str(p.sku)
+  const barcode = str(p.barcode)
+  const name = str(p.name)
+  const scope = branchId ? { branchId } : {}
+  if (sku) {
+    const bySku = await db.medicine.findFirst({ where: { sku, ...scope } })
+    if (bySku) return bySku
+  }
+  if (barcode) {
+    const byBarcode = await db.medicine.findFirst({ where: { barcode, ...scope } })
+    if (byBarcode) return byBarcode
+  }
+  if (name) {
+    const byName = await db.medicine.findFirst({ where: { name, ...scope } })
+    if (byName) return byName
+  }
+  return null
+}
+
+async function applyCatalogUpsertBySku(
+  op: WireOp,
+  p: Record<string, unknown>,
+  opts: { asHQ: boolean },
+): Promise<ApplyResult> {
+  let branchId = await branchIdForCode(p)
+  let existing = await resolveMedicineBySku(branchId, p)
+  if (!existing && !branchId) {
+    // No branch context — fall back to the row the globally-unique SKU names.
+    existing = await db.medicine.findUnique({ where: { sku: str(p.sku) } })
+    branchId = existing?.branchId ?? null
+  }
+  if (!branchId) return 'skipped'
+  const data = {
+    name: str(p.name, existing?.name ?? 'Unnamed'),
+    genericName: str(p.genericName) || null,
+    brand: str(p.brand) || null,
+    unit: str(p.unit, existing?.unit ?? 'Box'),
+    barcode: str(p.barcode) || existing?.barcode || null,
+    costPrice: num(p.costPrice, existing?.costPrice ?? 0),
+    sellingPrice: num(p.sellingPrice, existing?.sellingPrice ?? 0),
+    prescriptionRequired: p.prescriptionRequired === true,
+    reorderLevel: Math.max(0, Math.floor(num(p.reorderLevel, existing?.reorderLevel ?? 20))),
+    location: str(p.location) || existing?.location || null,
+    // Formulary flag only travels when the emitter sent it — never false-reset
+    ...(p.insuranceCovered !== undefined ? { insuranceCovered: p.insuranceCovered === true } : {}),
+  }
+  const note = `Catalog update from ${opts.asHQ ? 'branch' : 'HQ'} applied`
+  if (existing) {
+    // Catalog travels, stock does not — never touch quantities here.
+    await db.medicine.update({ where: { id: existing.id }, data })
+    publishLive(['medicine', 'sync'], note, 'sync')
+    return 'ok'
+  }
+  const sku = str(p.sku) || `SYNC-${(op.targetKey || op.id).slice(-8)}`
+  const taken = await db.medicine.findUnique({ where: { sku }, select: { id: true } })
+  const branchCode = (await db.branch.findUnique({ where: { id: branchId }, select: { code: true } }))?.code || 'BR'
+  const finalSku = taken ? await deriveSkuForBranch(sku, branchCode) : sku
+  const categoryId = await categoryFor(str(p.category, 'General'))
+  await db.medicine.create({
+    data: {
+      ...data,
+      sku: finalSku,
+      categoryId,
+      branchId,
+      status: 'active',
+      stockQty: Math.max(0, Math.floor(num(p.initialQty, num(p.stockQty, 0)))),
+    },
+  })
+  publishLive(['medicine', 'sync'], note, 'sync')
+  return 'ok'
+}
+
+async function applyStockOpBySku(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
+  // Replay guard: the wire op id is stable across re-delivery.
+  const dup = await db.inventoryLog.findFirst({ where: { reference: op.id, type: 'import' } })
+  if (dup) return 'duplicate'
+  let branchId = await branchIdForCode(p)
+  let med = await resolveMedicineBySku(branchId, p)
+  if (!med && !branchId) med = await db.medicine.findUnique({ where: { sku: str(p.sku) } })
+  if (!med) return 'skipped'
+  const isSet = op.op === 'stock.set'
+  const nextQty = isSet
+    ? Math.max(0, Math.floor(num(p.qty, med.stockQty)))
+    : Math.max(0, med.stockQty + Math.floor(num(p.delta, 0)))
+  const applied = nextQty - med.stockQty
+  await db.$transaction([
+    db.medicine.update({ where: { id: med.id }, data: { stockQty: nextQty } }),
+    db.inventoryLog.create({
+      data: {
+        medicineId: med.id,
+        type: 'import',
+        quantity: applied,
+        reason: str(p.reason, isSet ? 'Synced stock set' : 'Synced stock adjustment'),
+        reference: op.id,
+      },
+    }),
+  ])
+  publishLive(['stock', 'sync'], `Stock ${isSet ? 'set' : 'adjustment'} applied from sync`, 'sync')
   return 'ok'
 }
 

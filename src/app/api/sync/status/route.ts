@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { syncConfig, HQ_NODE_ID } from '@/lib/sync'
 import { ensureMesh, meshStatus } from '@/lib/mesh'
+import { effectiveHqEndpoints } from '@/lib/mesh/core'
 import { selfEndpoints } from '@/lib/sync-gateway'
 
 export const dynamic = 'force-dynamic'
@@ -14,13 +15,15 @@ export async function GET(req: NextRequest) {
   ensureMesh()
   try {
     const cfg = syncConfig()
-    const [pendingOps, state, peers, endpoints, mesh] = await Promise.all([
+    const [pendingOps, state, peers, endpoints, mesh, hq] = await Promise.all([
       db.syncOp.count({ where: { nodeId: cfg.nodeId, appliedAt: null } }),
       db.syncState.findUnique({ where: { id: HQ_NODE_ID } }),
       db.syncNode.findMany({ orderBy: { lastSeenAt: 'desc' }, take: 20 }),
       selfEndpoints(),
       meshStatus(),
+      effectiveHqEndpoints(),
     ])
+    const nodeList = peers.map((p) => ({ id: p.id, name: p.name, lastSeenAt: p.lastSeenAt, opsApplied: p.opsApplied }))
     return NextResponse.json({
       role: cfg.role,
       nodeId: cfg.nodeId,
@@ -30,7 +33,11 @@ export async function GET(req: NextRequest) {
       lastSyncAt: state?.lastSyncAt ?? null,
       lastError: state?.lastError ?? null,
       lastPulledSeq: state?.lastPulledSeq ?? 0,
-      peers: peers.map((p) => ({ id: p.id, name: p.name, lastSeenAt: p.lastSeenAt, opsApplied: p.opsApplied })),
+      syncEnabled: !!cfg.syncKey,
+      port: Number(process.env.PORT) || 3000,
+      nodes: nodeList,
+      peers: nodeList,
+      hqUrl: cfg.role === 'branch' ? hq.primary : null,
       lanAddresses: endpoints.selfLanUrls,
       tunnelUrl: endpoints.selfTunnelUrl,
       hubUrl: endpoints.selfHubUrl,

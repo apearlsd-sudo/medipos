@@ -11,6 +11,9 @@ import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-contex
 import { TwoFactorCard } from '@/components/pos/security-settings'
 import { CommerceCards } from '@/components/pos/commerce-settings'
 import { DataHygieneCard } from '@/components/pos/data-hygiene'
+import { NetworkSyncCard } from '@/components/pos/network-sync'
+import { DeviceDiscoveryCard } from '@/components/pos/device-discovery'
+import { WorkstationSyncCard } from '@/components/pos/workstation-sync'
 import { usePwaInstall } from '@/components/pos/pwa-register'
 import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
@@ -226,6 +229,11 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <p className="text-xs text-muted-foreground">Set a value to 0 to ignore that trigger. Sales are blocked server-side until a manager with the “Discount Approvals · Approve” permission authorizes them.</p>
             </CardContent>
           </Card>
+
+          {/* Sync & devices — node replication, device discovery, this workstation's offline queue */}
+          <NetworkSyncCard />
+          <DeviceDiscoveryCard />
+          <WorkstationSyncCard />
         </div>
 
         <div className="space-y-4">

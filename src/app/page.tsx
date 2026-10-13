@@ -23,6 +23,7 @@ import { Settings } from '@/components/pos/settings'
 import { Users } from '@/components/pos/users'
 import { Audit } from '@/components/pos/audit'
 import { Notifications } from '@/components/pos/notifications'
+import { Transfers } from '@/components/pos/transfers'
 import { PwaRegister } from '@/components/pos/pwa-register'
 import { Login } from '@/components/pos/login'
 import { UserProvider, userCan, type AuthUser } from '@/components/pos/user-context'
@@ -42,6 +43,7 @@ const VIEW_TITLES: Record<ViewKey, string> = {
   categories: 'Categories',
   inventory: 'Stock Control',
   'stock-take': 'Stock Take',
+  transfers: 'Stock Transfers',
   purchases: 'Purchases',
   sales: 'Sales & Invoices',
   approvals: 'Discount Approvals',
@@ -261,6 +263,7 @@ export default function Home() {
             {activeView === 'categories' && <Categories onGotoMedicines={() => navigate('medicines')} />}
             {activeView === 'inventory' && <Inventory onGotoPurchases={() => navigate('purchases')} />}
             {activeView === 'stock-take' && <StockTake storeSettings={settings} />}
+            {activeView === 'transfers' && <Transfers />}
             {activeView === 'purchases' && <Purchases onPurchasesChanged={loadAlerts} />}
             {activeView === 'sales' && <Sales onSalesChanged={loadAlerts} storeSettings={settings} />}
             {activeView === 'approvals' && <Approvals />}

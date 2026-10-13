@@ -47,6 +47,8 @@ model Branch {
   discountRequests DiscountRequest[]
   expenses         Expense[]
   quotations       Quotation[]
+  transfersOut     StockTransfer[]   @relation("TransfersOut")
+  transfersIn      StockTransfer[]   @relation("TransfersIn")
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 }
@@ -676,4 +678,43 @@ model NotificationOutbox {
   @@index([status, createdAt])
   @@index([relatedKey, createdAt])
   @@index([template])
+}
+
+model StockTransfer {
+  id              String            @id @default(cuid())
+  referenceNo     String            @unique // TRF-YYYYMMDD-####
+  fromBranchId    String
+  fromBranch      Branch            @relation("TransfersOut", fields: [fromBranchId], references: [id])
+  toBranchId      String
+  toBranch        Branch            @relation("TransfersIn", fields: [toBranchId], references: [id])
+  note            String?
+  status          String            @default("pending") // pending | completed | cancelled
+  createdById     String?
+  createdByName   String
+  completedAt     DateTime?
+  completedByName String?
+  items           StockTransferItem[]
+  createdAt       DateTime          @default(now())
+
+  @@index([fromBranchId])
+  @@index([toBranchId])
+  @@index([status, createdAt])
+}
+
+model StockTransferItem {
+  id             String        @id @default(cuid())
+  transferId     String
+  transfer       StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  medicineId     String? // source row at the origin branch
+  name           String
+  sku            String
+  unit           String
+  batchNumber    String?
+  expiryDate     DateTime?
+  qty            Int
+  costPrice      Float
+  sellingPrice   Float
+  destMedicineId String? // row the stock was merged into on receive
+
+  @@index([transferId])
 }

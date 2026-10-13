@@ -58,7 +58,10 @@ AMA=$(curl -s -b $H http://localhost:3000/api/customers?search=Ama | jqpy "d['cu
 KOFI=$(curl -s -b $H http://localhost:3000/api/customers?search=Kofi | jqpy "d['customers'][0]['id']")
 # hermetic loyalty fixture: Kofi starts every run with 60 points
 python3 -c "import sqlite3; c=sqlite3.connect('db/custom.db'); c.execute('UPDATE Customer SET points=60 WHERE id=?', ('$KOFI',)); c.commit()" 
-MED=$(curl -s -b $H "http://localhost:3000/api/medicines?search=Paracetamol" | jqpy "d['medicines'][0]['id'] + '|' + str(d['medicines'][0]['sellingPrice']) + '|' + (d['medicines'][0].get('branchId') or '')")
+# Pick the Paracetamol with the most stock on hand — the catalog holds branch
+# clones (e.g. MED-1001-OSU) whose smaller quantities would starve the
+# multi-unit credit test (qty 40) after a few suite runs.
+MED=$(curl -s -b $H "http://localhost:3000/api/medicines?search=Paracetamol" | jqpy "(lambda m: m['id'] + '|' + str(m['sellingPrice']) + '|' + (m.get('branchId') or ''))(max(d['medicines'], key=lambda x: x['stockQty']))")
 MEDID=$(echo "$MED" | cut -d'|' -f1); MEDP=$(echo "$MED" | cut -d'|' -f2); MAINBR=$(echo "$MED" | cut -d'|' -f3)
 echo "  (customer $AMA/$KOFI, med $MEDID @ $MEDP)"
 [ -n "$AMA" ] && [ -n "$MEDID" ] && ok "fixtures found" || { bad "fixtures missing"; exit 1; }

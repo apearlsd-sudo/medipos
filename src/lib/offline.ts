@@ -50,7 +50,7 @@ export const OFFLINE_SYNCED_EVENT = 'medipos:synced'
 
 type StateListener = (s: OfflineState) => void
 
-interface OutboxItem {
+export interface OutboxItem {
   id: string
   url: string
   method: string
@@ -260,10 +260,13 @@ function ensurePingLoop(rawFetch: typeof fetch): void {
 
 // --- flush / replay --------------------------------------------------------------
 
-export async function flushNow(): Promise<void> {
+export async function flushNow(): Promise<{ reached: boolean; synced: number; failed: number }> {
   const ok = await pingOnce(rawFetchOf(box()))
-  if (ok) await flushOutbox(rawFetchOf(box()))
-  else setState({ online: false, lastError: 'Server unreachable' })
+  if (!ok) {
+    setState({ online: false, lastError: 'Server unreachable' })
+    return { reached: false, synced: 0, failed: box().state.failed }
+  }
+  return flushOutbox(rawFetchOf(box())).then((r) => ({ reached: true, ...r }))
 }
 
 function rawFetchOf(b: NonNullable<typeof g.__mediposOffline>): typeof fetch {
@@ -271,14 +274,15 @@ function rawFetchOf(b: NonNullable<typeof g.__mediposOffline>): typeof fetch {
   return (box() as unknown as { rawFetch?: typeof fetch }).rawFetch ?? ((typeof window !== 'undefined' ? window.fetch : fetch) as typeof fetch)
 }
 
-export async function flushOutbox(rawFetch: typeof fetch): Promise<void> {
+export async function flushOutbox(rawFetch: typeof fetch): Promise<{ synced: number; failed: number }> {
   const b = box()
-  if (b.flushing) return
+  if (b.flushing) return { synced: 0, failed: b.state.failed }
   b.flushing = true
   setState({ syncing: true })
   try {
     const items = (await outboxAll()).filter((i) => i.status === 'pending').sort((a, z) => a.ts - z.ts)
     let synced = 0
+    let failedNow = 0
     for (const item of items) {
       try {
         const res = await rawFetch(item.url, {
@@ -299,6 +303,7 @@ export async function flushOutbox(rawFetch: typeof fetch): Promise<void> {
           item.status = 'failed'
           item.error = j.error ?? `Rejected (HTTP ${res.status})`
           await outboxUpdate(item)
+          failedNow++
         }
       } catch {
         break // network died mid-pass — resume on the next trigger
@@ -308,6 +313,7 @@ export async function flushOutbox(rawFetch: typeof fetch): Promise<void> {
     if (synced > 0 && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(OFFLINE_SYNCED_EVENT, { detail: { synced } }))
     }
+    return { synced, failed: failedNow }
   } finally {
     b.flushing = false
     setState({ syncing: false })

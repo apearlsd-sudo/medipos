@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, ExpiryBadge, PageHeader, StockBadge, TableSkeleton } from '@/components/pos/shared'
+import { CopyCatalogButton } from '@/components/pos/inventory-sync'
 import { BarcodeSVG } from '@/components/pos/barcode'
 import { useUser } from '@/components/pos/user-context'
 import { fmtDate, fmtMoney, currencySymbol, UNITS } from '@/lib/format'
@@ -217,6 +218,7 @@ export function Medicines() {
         breadcrumb="Medicines"
         actions={
           <>
+            <CopyCatalogButton onChanged={load} />
             <Button variant="outline" onClick={() => openLabels()} className="rounded-full"><Barcode className="h-4 w-4" /> Print Labels</Button>
             <Button variant="outline" onClick={exportCSV} className="rounded-full"><Download className="h-4 w-4" /> Export</Button>
             {canManage && (

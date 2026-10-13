@@ -61,18 +61,27 @@ export async function GET(req: NextRequest) {
     // ---- Expenses & net-position section ----------------------------------
     if (section === 'expenses') {
       const branchWhere = scope.branchId ? { branchId: scope.branchId } : {}
-      const [expenses, byCategory, byDay] = await Promise.all([
+      // Status filters live IN the queries: summing a take-limited slice that
+      // mixes voided rows in undercounts the real total once the window holds
+      // more than `take` expenses (voided rows ate into the 200-row budget).
+      const [expenses, voidedAgg, recentRows, byCategory, byDay] = await Promise.all([
         db.expense.findMany({
-          where: { createdAt: { gte: since }, ...branchWhere },
+          where: { createdAt: { gte: since }, status: 'completed', ...branchWhere },
           include: { category: { select: { name: true } } },
           orderBy: { createdAt: 'desc' },
           take: 200,
         }),
+        db.expense.aggregate({ where: { createdAt: { gte: since }, status: 'voided', ...branchWhere }, _sum: { amount: true } }),
+        db.expense.findMany({
+          where: { createdAt: { gte: since }, ...branchWhere },
+          include: { category: { select: { name: true } } },
+          orderBy: { createdAt: 'desc' },
+          take: 40,
+        }),
         db.expense.groupBy({ by: ['categoryId'], where: { createdAt: { gte: since }, status: 'completed', ...branchWhere }, _sum: { amount: true }, _count: true }),
         db.expense.findMany({ where: { createdAt: { gte: since }, status: 'completed', ...branchWhere }, select: { amount: true, createdAt: true } }),
       ])
-      const completed = expenses.filter((e) => e.status === 'completed')
-      const expensesTotal = +completed.reduce((s, e) => s + e.amount, 0).toFixed(2)
+      const expensesTotal = +expenses.reduce((s, e) => s + e.amount, 0).toFixed(2)
       const cats = await db.expenseCategory.findMany({ where: { id: { in: byCategory.map((c) => c.categoryId) } }, select: { id: true, name: true } })
 
       // Day series aligned with the reports window for overlay charting
@@ -92,13 +101,13 @@ export async function GET(req: NextRequest) {
         days,
         scope: { branchId: scope.branchId, label: scope.label || 'All branches' },
         total: expensesTotal,
-        voidedTotal: +expenses.filter((e) => e.status === 'voided').reduce((s, e) => s + e.amount, 0).toFixed(2),
-        count: completed.length,
+        voidedTotal: +(voidedAgg._sum.amount ?? 0).toFixed(2),
+        count: expenses.length,
         byCategory: byCategory
           .map((c) => ({ category: cats.find((x) => x.id === c.categoryId)?.name ?? 'Unknown', total: +(c._sum.amount ?? 0).toFixed(2), count: c._count }))
           .sort((a, b) => b.total - a.total),
         daily: [...dayMap.values()],
-        recent: expenses.slice(0, 40).map((e) => ({
+        recent: recentRows.map((e) => ({
           id: e.id,
           expenseNo: e.expenseNo,
           category: e.category.name,

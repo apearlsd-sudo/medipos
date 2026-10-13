@@ -26,7 +26,7 @@ export interface PermissionDef {
 }
 
 // ---------------------------------------------------------------------------
-// Module definitions — 23 modules, 64 granular permissions
+// Module definitions — 23 modules, granular permissions (count via PERMISSION_COUNT)
 // ---------------------------------------------------------------------------
 
 const VIEW: PermissionActionDef = { action: 'view', label: 'View', description: 'View this module and its data' }
@@ -126,6 +126,17 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
       { action: 'create', label: 'Start', description: 'Start new count sessions' },
       { action: 'count', label: 'Count', description: 'Record physical counts' },
       { action: 'complete', label: 'Finalize', description: 'Complete sessions and apply variances to stock' },
+    ],
+  },
+  {
+    group: 'Inventory',
+    module: 'transfers',
+    label: 'Stock Transfers',
+    actions: [
+      VIEW,
+      CREATE,
+      { action: 'complete', label: 'Receive', description: 'Receive transfers into this branch and move the stock' },
+      { action: 'cancel', label: 'Cancel', description: 'Cancel pending transfers' },
     ],
   },
   {
@@ -282,6 +293,9 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
     'stock_take:create',
     'stock_take:count',
     'stock_take:complete',
+    'transfers:view',
+    'transfers:create',
+    'transfers:complete',
     'purchases:view',
     'purchases:create',
     'purchases:edit',

@@ -41,6 +41,7 @@ async function main() {
         costPrice: med.costPrice,
         sellingPrice: med.sellingPrice,
         prescriptionRequired: med.prescriptionRequired,
+        insuranceCovered: med.insuranceCovered,
         location: med.location,
         status: 'active',
         branchId: osu.id,

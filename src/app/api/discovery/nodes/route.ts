@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { ensureMesh, meshStatus } from '@/lib/mesh'
-import { registerDiscovered } from '@/lib/mesh/core'
-import { selfHttpUrl } from '@/lib/mesh/core'
+import { registerDiscovered, selfHttpUrl, effectiveHqEndpoints, getNodeSetting } from '@/lib/mesh/core'
+import { syncConfig } from '@/lib/sync'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,13 +13,34 @@ export async function GET(req: NextRequest) {
   if (gate.response) return gate.response
   ensureMesh()
   try {
-    const [nodes, mesh] = await Promise.all([
+    const [nodes, mesh, hq, tunnelUrl] = await Promise.all([
       db.discoveredNode.findMany({ orderBy: { lastSeen: 'desc' }, take: 50 }),
       meshStatus(),
+      effectiveHqEndpoints(),
+      getNodeSetting('tunnelUrl'),
     ])
-    return NextResponse.json({ nodes, mesh, selfUrl: selfHttpUrl() })
+    const cfg = syncConfig()
+    return NextResponse.json({
+      nodes,
+      mesh,
+      selfUrl: selfHttpUrl(),
+      self: {
+        nodeId: cfg.nodeId,
+        nodeName: cfg.nodeName,
+        role: cfg.role,
+        tunnelUrl,
+        hqPrimary: hq.primary,
+        hqPrimarySource: hq.primarySource,
+        hqFallback: hq.fallback,
+      },
+    })
   } catch {
-    return NextResponse.json({ nodes: [], mesh: null, selfUrl: null })
+    return NextResponse.json({
+      nodes: [],
+      mesh: null,
+      selfUrl: null,
+      self: { nodeId: '', nodeName: '', role: 'hq', tunnelUrl: null, hqPrimary: null, hqPrimarySource: null, hqFallback: null },
+    })
   }
 }
 

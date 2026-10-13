@@ -32,11 +32,17 @@ export type AuditAction =
   | 'quotation.accepted'
   | 'quotation.declined'
   | 'quotation.converted'
+  // inventory movement (transfers & file import / catalog copy)
+  | 'transfer.created'
+  | 'transfer.completed'
+  | 'transfer.cancelled'
+  | 'inventory.imported'
+  | 'inventory.catalog_copied'
   // tier 4 — data hygiene & system care
   | 'system.cleaned'
   | 'system.backup'
 
-export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification'
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer'
 
 export interface AuditPriceChange {
   medicine: string
@@ -73,6 +79,9 @@ export interface AuditChanges {
   deleted?: Record<string, number>
   backupFile?: string
   retentionDays?: Record<string, number>
+  // inventory import / catalog copy
+  imported?: number
+  catalog?: { created: number; existing: number; priceUpdated: number }
 }
 
 export async function logAudit(opts: {

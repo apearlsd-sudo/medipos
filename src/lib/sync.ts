@@ -78,6 +78,29 @@ export async function recordSyncOp(
   }
 }
 
+/**
+ * Richer emit API for ops that need branch context on the receiver (catalog
+ * copies, inventory-file imports). The SyncOp log has no meta column, so the
+ * branch code/name fold into the payload — appliers that care read them,
+ * everyone else ignores the extra keys.
+ */
+export async function enqueueSyncOp(
+  op: string,
+  targetKey: string | null,
+  payload: unknown,
+  meta?: { branchCode?: string; branchName?: string },
+): Promise<void> {
+  const hasMeta = !!(meta?.branchCode || meta?.branchName)
+  const enriched = hasMeta
+    ? {
+        ...(payload as Record<string, unknown>),
+        branchCode: meta?.branchCode ?? null,
+        branchName: meta?.branchName ?? null,
+      }
+    : payload
+  await recordSyncOp(op, targetKey, enriched)
+}
+
 /** Tell the co-located sync hub to nudge every connected branch (~1s sync). */
 async function nudgeHub(): Promise<void> {
   try {

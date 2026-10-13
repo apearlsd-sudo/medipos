@@ -6,6 +6,7 @@ export type ViewKey =
   | 'categories'
   | 'inventory'
   | 'stock-take'
+  | 'transfers'
   | 'purchases'
   | 'sales'
   | 'approvals'
@@ -71,6 +72,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: 'categories', label: 'Categories', icon: 'LayoutGrid', permission: ['categories', 'view'] },
       { key: 'inventory', label: 'Stock Control', icon: 'Boxes', permission: ['inventory', 'view'], badge: 'alerts' },
       { key: 'stock-take', label: 'Stock Take', icon: 'ClipboardCheck', permission: ['stock_take', 'view'] },
+      { key: 'transfers', label: 'Stock Transfers', icon: 'ArrowLeftRight', permission: ['transfers', 'view'] },
     ],
   },
   {
