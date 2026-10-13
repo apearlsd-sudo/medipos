@@ -358,3 +358,18 @@ Work Log:
 
 Stage Summary:
 - Tier 4 fully live and the 16-item roadmap is complete. All four features end-to-end (API + UI + RBAC + E2E). Notification delivery is provider-real (WhatsApp Cloud API / SMS webhook) but sandbox-unverifiable beyond the local webhook — statuses fail/skip honestly with reasons and retry stays available. Deferred niceties: notifications evaluate is manual-button driven (no scheduler — document daily cadence or wire to sync cycle later); SW does not cache data views (by design, the offline engine owns data); barcode scanning limited to POS search (stock-take counting could reuse the dialog later).
+
+---
+Task ID: 25-sidebar-scroll-fix
+Agent: main
+Task: User: "some sidebar menu items are not showing"
+
+Work Log:
+- Diagnosis path: verified DB role permissions first (admin 64 / pharmacist 43 / cashier 14 — all match the catalog, no stale-role cause), then drove the live app with agent-browser as admin. Accessibility tree contained all 21 items, but geometry probes exposed the real bug: at a 900px window the sidebar ScrollArea viewport measured 1113px tall with scrollHeight === clientHeight (canScroll:false) and the Settings button at y=1137-1173 — completely below the fold and unreachable.
+- Root cause: classic flex+Radix ScrollArea trap. In src/components/pos/sidebar.tsx the nav ScrollArea is a column-flex child with flex-1 but no min-height:0, so it refuses to shrink below content height (flex items default to min-height:auto). The Root grew to 1113px, the inner viewport (size-full = 100% of Root) never overflowed, Radix never engaged scrolling, and everything past the window bottom was silently clipped: the Reports item, the entire Administration group (Branches, Users & Roles, Audit Trail, Notifications, Settings) and the user card. The mobile Sheet sidebar shares NavContent and had the same defect. Only sidebar.tsx:67 had the pattern (grep across src — all other ScrollArea usages are capped by max-h or unconstrained by design).
+- Fix (1 line + comment): ScrollArea className "flex-1 py-3" -> "min-h-0 flex-1 overflow-hidden py-3". With min-height:0 the area now shrinks to the real available space (739px at 900h), the viewport overflows properly and Radix scrolls.
+- Deploy: eslint clean on the file; npm run build; relaunch.sh (this environment serves .next/standalone directly — the deploy/ copy step is vestigial and its cp failure is benign; standalone/.next/static + public + .env confirmed fresh) -> HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY.
+- Verify: fix present in served chunk f9cb0fdea5912cc8.js; admin at 900px: canScroll true, scroll-to-bottom brings Settings to y=799 (visible), screenshot verify_sidebar_after_fix.png (before-state preserved as verify_sidebar_before_fix.png); cashier regression at 700px: exactly the 10 permission-granted items, RBAC filtering intact, sidebar scrolls to Settings.
+
+Stage Summary:
+- Sidebar now fully navigable on short laptop screens; the previously invisible Reports + Administration group and the pinned user card are reachable via a working scrollbar on desktop, collapsed, and mobile Sheet modes. No data/RBAC change — pure layout fix. Commit 726e2a3.
