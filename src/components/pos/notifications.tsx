@@ -52,6 +52,9 @@ interface SettingsShape {
   notifyExpiringEnabled: string
   notifyExpiringDays: string
   notifyDailySummaryEnabled: string
+  notifyScheduleEnabled: string
+  notifyScheduleHour: string
+  notifyScheduleLastRun?: string
   notifyTplLowStock: string
   notifyTplExpiring: string
   notifyTplDaily: string
@@ -85,6 +88,11 @@ function statusBadge(status: string): string {
 function fmtWhen(iso: string): string {
   const d = new Date(iso)
   return `${fmtDate(d)} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+}
+
+const HOUR_CHOICES: string[] = Array.from({ length: 24 }, (_, h) => String(h))
+function hourLabel(h: string): string {
+  return `${String(Number(h)).padStart(2, '0')}:00${h === '2' ? ' (default)' : ''}`
 }
 
 export function Notifications() {
@@ -272,8 +280,33 @@ export function Notifications() {
         ))}
         <Card className="border-teal-600/30 py-4">
           <CardContent className="px-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stock check</p>
-            <Button onClick={evaluate} disabled={evaluating || !canManage} size="sm" className="mt-1 w-full rounded-full bg-teal-600 hover:bg-teal-700">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Nightly schedule</p>
+              <Switch
+                checked={settings?.notifyScheduleEnabled !== 'false'}
+                disabled={!canManage}
+                onCheckedChange={(v) => set('notifyScheduleEnabled', String(v))}
+                aria-label="Run alert checks nightly"
+              />
+            </div>
+            <Select
+              value={settings?.notifyScheduleHour ?? '2'}
+              onValueChange={(v) => set('notifyScheduleHour', v)}
+              disabled={!canManage}
+            >
+              <SelectTrigger className="mt-2 h-8 w-full" aria-label="Nightly run hour">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="max-h-56">
+                {HOUR_CHOICES.map((h) => (
+                  <SelectItem key={h} value={h}>{hourLabel(h)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1.5 text-[11px] leading-tight text-muted-foreground">
+              Last nightly run: {settings?.notifyScheduleLastRun || 'never'}
+            </p>
+            <Button onClick={evaluate} disabled={evaluating || !canManage} size="sm" className="mt-2 w-full rounded-full bg-teal-600 hover:bg-teal-700">
               {evaluating ? <Loader2 className="h-4 w-4 animate-spin" /> : <BellRing className="h-4 w-4" />}
               Run check now
             </Button>

@@ -27,6 +27,9 @@ export const NOTIFY_SETTING_KEYS = [
   'notifyExpiringEnabled',
   'notifyExpiringDays',
   'notifyDailySummaryEnabled',
+  'notifyScheduleEnabled', // nightly automatic evaluation (notify-scheduler)
+  'notifyScheduleHour', // local hour 0-23, default 2
+  'notifyScheduleLastRun', // written by the scheduler only — YYYY-MM-DD
   'notifyTplLowStock',
   'notifyTplExpiring',
   'notifyTplDaily',

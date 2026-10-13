@@ -12,11 +12,12 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { VarianceBadge, VarianceValueBadge } from '@/components/pos/stock-take-badges'
+import { BarcodeScannerDialog } from '@/components/pos/barcode-scanner'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
 import {
-  AlertTriangle, Check, CheckCircle2, ClipboardCheck, Loader2, PackageSearch, PlayCircle, ScrollText, Search, XCircle,
+  AlertTriangle, Check, CheckCircle2, ClipboardCheck, Loader2, PackageSearch, PlayCircle, ScanLine, ScrollText, Search, XCircle,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
 // ---------------------------------------------------------------------------
@@ -190,6 +191,9 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set())
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
+  const [scannerOpen, setScannerOpen] = useState(false)
+  const [focusItemId, setFocusItemId] = useState<string | null>(null)
+  const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
 
   const load = useCallback(async () => {
     try {
@@ -215,6 +219,7 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
     setSearch('')
     setFilter('all')
     setSavedIds(new Set())
+    setFocusItemId(null)
     load()
   }, [open, load])
 
@@ -264,6 +269,48 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
     if (filter === 'variance') list = list.filter((i) => (i.varianceQty ?? 0) !== 0)
     return list
   }, [items, search, filter])
+
+  // Camera scan → resolve the code against the catalog (exact barcode/SKU
+  // first, single-hit fallback — same resolution as the POS), then jump to
+  // that line in the sheet and focus its count input.
+  const resolveScan = useCallback(async (code: string) => {
+    try {
+      const res = await fetch(`/api/medicines?search=${encodeURIComponent(code)}`, { cache: 'no-store' })
+      if (!res.ok) throw new Error('lookup failed')
+      const meds: Array<{ id: string; sku: string; barcode: string | null; name: string }> =
+        (await res.json()).medicines ?? []
+      const q = code.trim().toLowerCase()
+      const exact =
+        meds.find((m) => m.barcode === code.trim() || m.sku.toLowerCase() === q) ??
+        (meds.length === 1 ? meds[0] : undefined)
+      if (!exact) {
+        toast({ title: 'Product not found', description: `Nothing in the catalog matches “${code}”.`, variant: 'destructive' })
+        return
+      }
+      const line = items.find((i) => i.medicineId === exact.id)
+      if (!line) {
+        toast({ title: 'Not in this count sheet', description: `${exact.name} (${exact.sku}) is not part of this take.`, variant: 'destructive' })
+        return
+      }
+      setSearch(line.sku)
+      setFilter('all')
+      setFocusItemId(line.id)
+      toast({ title: 'Scanned', description: `${line.medicineName} — enter the counted quantity.` })
+    } catch {
+      toast({ title: 'Scan failed', description: 'Could not look up that code — try again.', variant: 'destructive' })
+    }
+  }, [items])
+
+  // Focus (and select) the count input of the scanned line once it renders.
+  useEffect(() => {
+    if (!focusItemId) return
+    const t = setTimeout(() => {
+      const el = inputRefs.current.get(focusItemId)
+      el?.focus()
+      el?.select()
+    }, 80)
+    return () => clearTimeout(t)
+  }, [focusItemId, search])
 
   const progressPct = take && take.totalItems > 0 ? (take.countedItems / take.totalItems) * 100 : 0
   const allCounted = take ? take.countedItems === take.totalItems && take.totalItems > 0 : false
@@ -316,6 +363,16 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                 <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search product, SKU, category…" className="pl-9" aria-label="Search count lines" />
               </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="rounded-full border-teal-500/50 text-teal-700 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-500/10"
+                onClick={() => setScannerOpen(true)}
+                title="Scan a barcode with the camera to jump to its line"
+              >
+                <ScanLine className="h-4 w-4" />
+                Scan
+              </Button>
               <div className="flex gap-1">
                 {([
                   { k: 'all', label: 'All' },
@@ -354,7 +411,10 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
                     const preview = draft === '' ? null : Number(draft)
                     const liveVariance = preview !== null && !Number.isNaN(preview) ? preview - item.systemQty : null
                     return (
-                      <TableRow key={item.id} className="hover:bg-muted/30">
+                      <TableRow
+                        key={item.id}
+                        className={`hover:bg-muted/30 ${item.id === focusItemId ? 'bg-teal-50/70 ring-1 ring-inset ring-teal-400 dark:bg-teal-500/10' : ''}`}
+                      >
                         <TableCell>
                           <p className="max-w-56 truncate font-medium">{item.medicineName}</p>
                           <p className="text-xs text-muted-foreground">
@@ -369,6 +429,7 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
                             step={1}
                             inputMode="numeric"
                             value={draft}
+                            ref={(el) => { if (el) inputRefs.current.set(item.id, el); else inputRefs.current.delete(item.id) }}
                             onChange={(e) => {
                               setDrafts((d) => ({ ...d, [item.id]: e.target.value }))
                               setSavedIds((s) => { const n = new Set(s); n.delete(item.id); return n })
@@ -427,6 +488,14 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
           </>
         )}
       </DialogContent>
+      {/* Camera barcode scanner — resolves to a count-sheet line */}
+      <BarcodeScannerDialog
+        open={scannerOpen}
+        onOpenChange={setScannerOpen}
+        onDetected={resolveScan}
+        title="Scan stock-take item"
+        description="Point the camera at the product barcode — the sheet jumps to that line."
+      />
     </Dialog>
   )
 }
