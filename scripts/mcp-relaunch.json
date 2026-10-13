@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":12,"method":"tools/call","params":{"name":"Bash","arguments":{"command":"bash /home/z/my-project/scripts/relaunch.sh","description":"Relaunch MediPOS preview server","timeout":90000}}}

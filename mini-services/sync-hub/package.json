@@ -1,0 +1,11 @@
+{
+  "name": "medipos-sync-hub",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MediPOS Pro sync hub — WebSocket live link for branch devices + reverse proxy in front of the Next.js app. One port (default 3003) serves wss://…/ws and the proxied HTTPS app, which makes it the single cloudflared tunnel target.",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "start": "node index.mjs"
+  }
+}

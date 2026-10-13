@@ -56,6 +56,7 @@ regresses; stock math re-runs deterministically on the receiver).
 
 ### Sync operation catalog (abridged)
 `sale.created`, `sale.verified`, `medicine.created/upsert`, `inventory.adjusted`,
+`stock.delta/set` (SKU-keyed, emitted by catalog copy / inventory-file import),
 `customer.updated`, `ledger.entry`, `loyalty.entry`, `claim.status`,
 `insurer.updated`, `expense.created/voided`, `quotation.updated/status`,
 `stock.returned`, `stocktake.*`. New models must be added to the push/pull

@@ -1,0 +1,416 @@
+     1→# Worklog
+     2→
+     3→---
+     4→Task ID: 1
+     5→Agent: Main Agent (Super Z)
+     6→Task: Build a professional Pharmacy POS system (MediPOS Pro) inspired by dreamsPOS Pharmacy POS reference, with advanced features and professional theme.
+     7→
+     8→Work Log:
+     9→- Analyzed reference URL (dreamspos pharmacy POS) via agent-browser: captured nav structure (Dashboard, Medicines, Categories, Batches, Stock, POS Sales, Purchases, Prescriptions, Reports) and design language (dark teal sidebar, KPI stat cards, data tables with filters, status badges).
+    10→- Initialized fullstack environment (Next.js 16 + Tailwind 4 + shadcn/ui + Prisma/SQLite + recharts).
+    11→- Designed Prisma schema: Category, Supplier, Medicine (batch/expiry/Rx flags), Customer, Sale+SaleItem, Purchase+PurchaseItem, Prescription, InventoryLog, StoreSetting. Pushed to SQLite.
+    12→- Created scripts/seed.ts: 10 categories, 5 suppliers, 8 customers, 30 medicines, 106 sales over 30 days, 6 purchases, 8 prescriptions, inventory logs, store settings.
+    13→- Built 16 API routes: /api/dashboard (KPIs, 14-day trend, low stock, expiring, top selling), medicines CRUD (+soft delete to discontinued), categories, suppliers, customers, sales (POST creates sale + deducts stock + writes inventory logs in a transaction; DELETE cancels + restores stock), purchases (POST increments stock transactionally), prescriptions (verify/dispense/reject via PUT), inventory (adjustments + audit logs), reports (revenue/COGS/profit/payment methods/category revenue), settings.
+    14→- Built design system: teal pharmacy theme in globals.css (light+dark oklch tokens, custom scrollbars, print CSS for receipts), shared components (StatusBadge, StockBadge, ExpiryBadge, PageHeader breadcrumb, StatCard, skeletons, avatars).
+    15→- Built app shell: dark collapsible sidebar with grouped nav + alert badge, sticky header with global search, POS CTA, theme toggle, alerts popover; mobile sheet drawer; footer.
+    16→- Built 12 modules: Dashboard (4 KPIs, area/donut charts, low stock + expiring panels, top selling, recent transactions, quick actions), POS Terminal (product grid, category tabs, barcode/search with Enter-to-add, cart with qty controls, order discount, tax, checkout dialog with 4 payment methods + change calc + quick cash, printable receipt), Medicines (filters: search/category/stock/expiry/status, add/edit dialog, CSV export), Purchases (stats, create dialog with line items, settle dues), Sales (filters, invoice detail dialog with print, cancel+restock), Customers (CRUD + stats), Suppliers (CRUD), Categories (card grid CRUD), Stock Control (tabs: low stock/expiry tracking/movement logs, adjust stock dialog), Prescriptions (verify workflow), Reports (period selector, revenue trend, payment method donut, category bars, CSV export), Settings (store info, tax/thresholds, appearance).
+    17→- Fixed lint errors: missing Input import (sales.tsx), setState-in-effect patterns (header/settings mounted → CSS dark: variant; page.tsx deferred via setTimeout).
+    18→- Fixed POS horizontal overflow (grid min-width:auto) with min-w-0 on products column.
+    19→- End-to-end verified with agent-browser: dashboard render, POS full sale flow (cart→$7.69→cash $10→change $2.31→receipt INV-2026-0106, stock 520→519 & 220→219), medicines table, stock control tabs, purchase creation (Tramadol 8→28 units, $92.25), sales list, prescription verify (pending→verified), dark mode, mobile 390px layout + drawer, collapsed sidebar, sidebar collapse, alerts badge. No console errors. Lint clean.
+    20→
+    21→Stage Summary:
+    22→- Deliverable: complete Pharmacy POS SPA at src/app/page.tsx (state-based views, only / route) + 16 API routes + Prisma SQLite db (db/dev.db).
+    23→- Key files: prisma/schema.prisma, scripts/seed.ts, src/app/api/**, src/components/pos/** (sidebar, header, shared, dashboard, pos-terminal, medicines, purchases, sales, customers, suppliers, categories, inventory, prescriptions, reports, settings, nav-config), src/app/globals.css (theme), src/app/layout.tsx (ThemeProvider).
+    24→- Verified: lint clean, all APIs 200, browser-verified interactivity end-to-end.
+    25→
+    26→---
+    27→Task ID: 2
+    28→Agent: Main Agent (Super Z)
+    29→Task: Implement 4 advanced features on MediPOS Pro: (1) authentication with roles (cashier/pharmacist/admin), (2) thermal-receipt formatting + barcode label printing, (3) more report types + PDF export, (4) currency/locale changes.
+    30→
+    31→Work Log:
+    32→- Added User model to Prisma (username, scrypt passwordHash, name, role admin|pharmacist|cashier, status, lastLoginAt) and pushed to SQLite; re-seeded 4 users (admin/admin123, pharmacist/pharm123, cashier/cash123, linda/linda123) + new settings keys (currencyCode, currencyLocale, receiptHeader, receiptFooter, receiptShowBarcode).
+    33→- Built src/lib/auth.ts: scrypt hashing, HMAC-SHA256 signed session tokens (7d, httpOnly cookie medipos_session), getSessionUser/requireUser/requireRole helpers, sanitizeUser.
+    34→- Created APIs: /api/auth/login|logout|me, /api/users CRUD (admin-only, self-protection guards for role change/suspend/delete).
+    35→- Applied role guards to ALL 20 existing route handlers: cashier = read+sell only (403 on reports/users/settings PUT/inventory/medicines write); pharmacist = mgmt (no users/settings write); admin = all. Sale POST now attributes cashierName from session user.
+    36→- Built login screen (split-panel branding + demo account chips), auth bootstrap in page.tsx with global 401 fetch interceptor -> auto logout, loading splash, UserProvider context.
+    37→- Role-based UI: nav-config roles per item + canAccessView; sidebar filters nav by role and shows real user; header user dropdown (initials, role badge, email, sign out); dashboard greeting personalized; view guard clamps to dashboard; Users & Roles admin module (role summary cards, table, create/edit dialog, password reset, suspend/activate, delete).
+    38→- Currency/locale system in lib/format.ts: 16-currency catalog + 14 locales, module-level config with setCurrencyConfig, Intl.NumberFormat-based fmtMoney/fmtDate/fmtDateTime with symbol fallback; hydrated from settings at bootstrap + after save (whole-app re-render). Settings page: currency/locale selects with live preview block.
+    39→- Thermal receipt: src/components/pos/receipt.tsx (80mm monospace layout, store info from settings, items/totals/change, header+footer messages, Code128 barcode of invoice no), lib/print.ts printWithPageStyle injecting @page 80mm rule, .print-area print CSS in globals.css; used in POS checkout success dialog AND Sales module reprint dialog; receipts configurable in Settings (header/footer/barcode toggle).
+    40→- Barcode label printing: lib/barcode.ts pure-TS Code128B encoder (validated: 107 patterns, module sums, checksum math), barcode.tsx SVG renderer; Medicines "Print Labels" dialog (search picker, qty steppers, 3 label sizes 30x20/38x25/50x30mm, live preview, hidden print sheet, A4 @page rule).
+    41→- Reports: API extended with cashierStats, productStats, stockValuation, expiryReport, purchaseStats; Reports UI rebuilt with 6 tabs (Overview charts, Product Performance, Staff Performance w/ share bars, Inventory Valuation, Expiry Report w/ status chips, Purchases); CSV export generalized per tab; PDF export via jspdf + jspdf-autotable (teal header band, store name, period, page numbers) - pipeline unit-tested.
+    42→- Fixed: Users function name collision with lucide Users icon (UsersIcon alias), userRef render-write -> useEffect, setState-in-effect lint in store-settings hook, dashboard hardcoded "Admin" greeting -> session user, Rules-of-hooks (useUser moved above conditional return).
+    43→- Browser E2E verified: login screen, admin login -> all nav incl. Users & Roles page, POS sale ($7.17) -> thermal receipt w/ barcode + session cashier name, Sales reprint receipt, Reports tabs with live data + PDF export (no console errors), label dialog preview w/ scannable barcodes, currency switch USD->GHS propagated app-wide then reverted, cashier login -> filtered nav (no Purchases/Reports/Users), view-only settings, personalized greeting; mobile 390px receipt dialog. Lint clean, all APIs 200/401/403 as designed.
+    44→
+    45→Stage Summary:
+    46→- Deliverable: MediPOS Pro with multi-role auth, thermal receipt + barcode label printing, 6 report types with PDF/CSV export, and 16-currency/14-locale support.
+    47→- Key new files: src/lib/auth.ts, src/lib/barcode.ts, src/lib/print.ts, src/lib/store-settings.ts, src/components/pos/{login,users,receipt,barcode,user-context}.tsx; APIs auth/* + users/*.
+    48→- Demo credentials: admin/admin123 (full), pharmacist/pharm123 (mgmt), cashier/cash123 (POS only).
+    49→
+    50→---
+    51→Task ID: 3
+    52→Agent: Main Agent (Super Z)
+    53→Task: Implement pharmacy shift management system: start/end shifts, per-user shift sales records, total sales + qty sold reports, time-based (hourly) breakdowns, cash drawer reconciliation, X/Z thermal reports, and many more features.
+    54→
+    55→Work Log:
+    56→- Prisma schema: added Shift model (shiftNo unique SH-YYYY-####, userId/userName/userRole, openingCash, closingCash, expectedCash, variance, status open|closed, note/closeNote, startedAt/endedAt) + CashMovement model (addition|payout|drop, amount, reason, userName) + Sale.shiftId FK; pushed to SQLite.
+    57→- Built src/lib/shifts.ts server helper: computeShiftSummary(shiftId) -> totals (net sales, txns, items sold, gross/discounts/tax), payment-method breakdown, cash-in-drawer math (opening + cash sales + additions − payouts − drops), drawer movements, hourly buckets (per-hour txn/item/total), product qty/revenue ranking; nextShiftNo() generator.
+    58→- New APIs: GET/POST /api/shifts (role-aware list: cashier sees own only; POST validates one open shift per user -> 409), GET /api/shifts/current (live open shift + summary), GET /api/shifts/[id] (detail + summary + transactions; 403 cross-user for cashiers), PUT /api/shifts/[id]/close (reconciliation snapshot: expected/counted/variance/endedAt; self or manager), POST /api/shifts/[id]/movements (payout/drop require reason; blocked on closed shifts). Sales POST now attributes shiftId from user's open shift and returns shift.shiftNo for receipts.
+    59→- Built src/components/pos/shift-report.tsx: 80mm thermal X-Report (in-shift preview) / Z-Report (closed) receipt with store header, shift meta, totals, payment breakdown, full drawer math + movements list, top-5 items by qty, sales-by-hour table, balanced/over/short difference line; reuses .print-area CSS + printWithPageStyle(THERMAL_PAGE_CSS).
+    60→- Built src/components/pos/shift-dialogs.tsx: StartShiftDialog (opening float input + quick chips + note), EndShiftDialog (two-step: counted-cash entry with live variance -> Z-report preview + Print 80mm), CashMovementDialog (add cash/payout/safe-drop type picker, reason validation), ShiftDetailDialog (4 tabs: Summary stat cards + payment mix bars + drawer reconciliation; Transactions table w/ time+method+status; Products ranked qty bars; By Hour recharts bar chart + hour cards; Print Z/X button + hidden thermal target).
+    61→- Built src/components/pos/shifts.tsx main module: active-shift panel (live Net Sales/Items Sold/Avg Sale/In Drawer cards, payment mix, movements strip w/ badges, Cash In/Out + X-Report + End Shift actions, 30s ticker + 60s summary auto-refresh), no-shift hero (last shift recap), Shift History (search by shiftNo/cashier, status filter, quick stats: shifts today/running/total sales/avg per shift, CSV export, table w/ duration + reconciliation badges Balanced/Over/Short + Running pulse, view action); fmtDuration helper exported.
+    62→- Integrations: nav-config 'shifts' view (all roles, Timer icon in SALES group) + sidebar ICONS entry; page.tsx view registration + title; POS terminal: shift fetch, amber "No active shift" banner / teal active banner, cart-header shift chip, Charge button gating (no shift -> toast + StartShiftDialog), shift refresh after each sale; receipt.tsx shows "Shift: SH-..." line; header.tsx live shift chip (pulsing dot + shiftNo + duration, polls /api/shifts/current 60s, click -> shifts view).
+    63→- scripts/seed-shifts.ts: spread historical sale timestamps across 9:00-21:00 business hours, seeded 14 closed shifts over 7 days (2/day: Linda morning, Alex evening) w/ linked sales, computed expected/closing/variance (mostly balanced + Short 2.50/Short 1.25/Over samples), safe drops + payouts, plus live OPEN shift SH-2026-0015 for admin w/ 3 fresh sales; re-runnable.
+    64→- Fixed during build: missing recharts imports (lint), unused imports, require() pattern -> direct import, added fmtTime to lib/format, FK-safe seeding (no temp shiftId), duplicate POS nav item removal, stale Prisma client in running dev server (killed old process tree holding :3000, restarted).
+    65→- Browser E2E verified (agent-browser): admin login -> Shift Management w/ live panel (GH-58.12/10 items/GH-117.63 drawer + payment mix), End Shift -> counted 117.63 -> variance Balanced -> Z-report thermal preview w/ correct math (58.70 gross - 1.00 disc + 0.42 tax = 58.12 net) + toast; start new shift SH-2026-0016; POS sale INV-2026-0116 w/ "Shift: SH-2026-0016" on receipt; shift dashboard live-updates (In Drawer 100+9.23 cash); safe drop movement -50 recorded w/ reason validation (400 without); closed-shift detail (empty state SH-14 + data SH-13: 4 txns, product qty bars, By Hour chart 12:00-15:00); cashier login -> filtered nav, own-only empty history, POS gating (banner + Charge -> Start New Shift dialog) -> started SH-2026-0017 -> sale INV-2026-0117 attributed w/ shift line on receipt; mobile 390px shifts layout clean. Lint clean, no console errors (only pre-existing Radix aria warning).
+    66→
+    67→Stage Summary:
+    68→- Deliverable: full shift management system on MediPOS Pro - shift lifecycle (start w/ opening float -> live per-user sales/qty tracking -> cash drawer ops -> end-of-shift reconciliation -> Z-Report), X-Report mid-shift, hourly "at a particular time" breakdowns, product qty reports, shift history w/ CSV export, role-aware visibility (admin/pharmacist all, cashier own).
+    69→- Key new files: prisma Shift+CashMovement models, src/lib/shifts.ts, src/app/api/shifts/** (4 route files), src/components/pos/{shift-report,shift-dialogs,shifts}.tsx, scripts/seed-shifts.ts.
+    70→- Demo state: 15 closed shifts + SH-2026-0017 open for cashier Kofi (has 1 sale); admin's fresh shift can be started from UI. Demo credentials unchanged: admin/admin123, pharmacist/pharm123, cashier/cash123, linda/linda123.
+    71→
+    72→---
+    73→Task ID: 4
+    74→Agent: Main Agent (Super Z)
+    75→Task: Implement pharmacy stock taking (physical inventory count) with positive/negative variance tracking and period variance reports.
+    76→
+    77→Work Log:
+    78→- Prisma schema: added StockTake (stockTakeNo ST-YYYY-####, title, scope all|category, status in_progress|completed|cancelled, started/completedBy, applyToStock, live aggregate counters: totalItems/countedItems/systemQty/countedQty/varianceQty/varianceValue/positiveLines/negativeLines/matchedLines) + StockTakeItem (per-line snapshot: systemQty, countedQty nullable, varianceQty, unitCost snapshot, varianceValue, countedBy/At, note); pushed to SQLite.
+    79→- Built src/lib/stock-take.ts: aggregateTakeItems (counted-vs-system math, signed variance at cost), refreshTakeCounters (persist live aggregates to parent), nextStockTakeNo, buildStockTakeReport(from,to) (completed takes in period, per-product variance ranking filtered to non-zero rows, accuracy/shortage/surplus summary).
+    80→- New APIs (mgmt-only via requireRole admin|pharmacist; cashier 403 verified): GET/POST /api/stock-takes (one-open-session guard 409; POST snapshots active medicines incl. category scope), GET /api/stock-takes/[id], PUT [id]/count (validates whole >=0, computes variance = counted − system, valuates at cost, refreshes counters), PUT [id]/complete (blocks until all lines counted; delta-based stock application preserves concurrent sales; writes InventoryLog type stock_take per changed product), PUT [id]/cancel (audit-kept, no stock effect), GET /api/stock-takes/report?from=&to= (defaults last 30 days).
+    81→- Built src/components/pos/stock-take-badges.tsx: VarianceBadge (+N surplus sky / −N short red / Matched emerald), VarianceValueBadge (+/− signed money), signedQty helper.
+    82→- Built src/components/pos/stock-take-dialogs.tsx: StartTakeDialog (title, scope all/category w/ live category picker, note; opens count sheet on start), CountSheetDialog (5xl workspace: progress bar + live surplus/short/net-value chips, search + All/Not counted/Counted/Variance filters, per-row counted input auto-saving on Enter/blur with saving/saved indicators and live variance preview, Review & Complete gated on 100% progress), CompleteTakeDialog (summary tiles, net value variance panel, variance-lines table, apply-to-stock switch + completion note), CancelTakeDialog (reason), TakeDetailDialog (read-only: meta, stat tiles, chips incl. Applied-to-stock, opening/closing notes, per-line table with countedBy/At).
+    83→- Built src/components/pos/stock-take.tsx main module: active-session panel (progress, system→counted units, signed net qty + line chips, value impact, Count Products / Review & Complete / Cancel), no-session hero, Count History tab (search/status filters, stats: completed, net variance value, accuracy, sessions on record; table w/ variance + value badges + view), Variance Report tab (from/to date inputs + 30/60/90d presets, 4 summary cards, per-session variance bar chart colored by sign, top-variance-products horizontal chart, sessions-in-period table, product variance ranking table; CSV export of summary+sessions+products; PDF export via jsPDF/autoTable with teal header, summary block, 2 tables, page numbers).
+    84→- Integrations: nav-config 'stock-take' view (Inventory group, ClipboardCheck icon, MGMT roles), sidebar ICONS entry, page.tsx VIEW_TITLES + view registration w/ storeSettings prop.
+    85→- scripts/seed-stock-takes.ts: 4 completed takes over 6 weeks (2 category counts + 2 full counts by linda/admin) with matched/surplus/shortage mixes, applied variances adjust medicine stock + write ST- referenced inventory logs; re-runnable.
+    86→- Fixes: removed unused icon import; renamed invalid <Label-lite> JSX (hyphen = unknown DOM element) to FieldLabel; restructured TakeDetailDialog fetch to async callback (react-hooks/set-state-in-effect); report topVariances filters zero-variance rows; stale Prisma client in dev server required full .next cache clear + restart (touching modules insufficient).
+    87→- API smoke (curl): create ST-2026-0005 (30 items/6014 units), counts +3/0/−5 → live aggregates correct (+2.70/−13.30), completion guard 400 on 27 uncounted, complete → stock 258→261 & 259→254 + ST- audit logs, report aggregates (86 lines, 79.1% acc), cashier 403, cancel path, duplicate-open 409.
+    88→- Browser E2E (agent-browser): login → Stock Take nav (MGMT only); active panel for open ST-2026-0007; count sheet: entered 263/175/254 → badges +2 surplus/−4 short/Matched + chips Net −2 · −7.00 (math verified vs cost prices); counted rest via API → Review & Complete dialog (30/30, +1/−1 tiles, −GH₵7.00 panel, variance table, apply switch) → completed w/ toast, stats recompute (6 completed, 82.8%); Variance Report: 30d shows 4 sessions, 90d shows 6 (period filter works), charts colored by sign, ranking table; CSV + Export PDF clicked w/o console errors; detail dialog ST-2026-0004 w/ notes + audit rows; started ST-2026-0008 from UI → new snapshot reflects applied variances (263/175/254) → counted 2 lines → active panel math +GH₵0.40 ✓ left open as demo; mobile 390px clean; lint clean; dev.log clean (only pre-existing Radix DialogTitle warning from another module).
+    89→
+    90→Stage Summary:
+    91→- Deliverable: full stock-taking system on MediPOS Pro — count session lifecycle (snapshot → physical counting w/ auto-save → variance review → apply-to-stock w/ audit trail), positive/negative signed variance display at line/session/period levels, and a time-period variance report w/ charts, accuracy metrics, CSV + PDF export.
+    92→- Key new files: prisma StockTake+StockTakeItem, src/lib/stock-take.ts, src/app/api/stock-takes/** (6 route files), src/components/pos/{stock-take,stock-take-dialogs,stock-take-badges}.tsx, scripts/seed-stock-takes.ts.
+    93→- Demo state: 6 completed takes + 1 cancelled + ST-2026-0008 open (2/30 counted) for the active-panel demo; variances applied to system stock reflect in inventory. Demo credentials unchanged: admin/admin123, pharmacist/pharm123, cashier/cash123, linda/linda123.
+    94→
+    95→---
+    96→Task ID: 5
+    97→Agent: Main Agent (Super Z)
+    98→Task: Upgrade Users & Roles into a full RBAC system — super admin can create custom roles with granular privileges/permissions, manage them in a live permission matrix, and assign them to users.
+    99→
+   100→Work Log:
+   101→- Prisma schema: added Role (slug/name/description/isSystem) + Permission (key "module:action", module, action) models with implicit m:n; User.roleId FK + denormalized role slug; pushed to SQLite, client regenerated.
+   102→- Built src/lib/permissions.ts: single-source catalog — 16 modules × granular actions = 48 permissions (view/create/edit/delete + pos.access, sales.cancel, shifts.manage, inventory.adjust, stock_take start/count/finalize, prescriptions.verify, reports.export, settings.edit), grouped for UI, validPermissionKeys filter, slugifyRoleName, SYSTEM_ROLE_PERMISSIONS defaults replicating the legacy admin/pharmacist/cashier split (48/33/10).
+   103→- scripts/seed-roles.ts: upserted 48 permissions, created 3 system roles (Super Admin/Pharmacist/Cashier), linked 4 existing users by legacy slug; re-runnable.
+   104→- src/lib/auth.ts: SessionUser now carries roleId/roleName/isSuperAdmin/permissions (['*'] wildcard for super admin); added can() + requirePermission(req, module, action) with readable 403 messages; sanitizeUser returns rich role payload (login/me include roleRef+permissions).
+   105→- New APIs: GET/POST /api/roles (list w/ userCount + permission keys; create custom role w/ unique slug generation), PUT/DELETE /api/roles/[id] (edit name/desc/permissions; delete guarded: system roles undeletable, roles with users blocked until reassignment; Super Admin role fully locked).
+   106→- Users API: role assignment via roleId (or legacy slug fallback), roleRef-joined responses, last-active-super-admin protection on demote/suspend/delete, self role-change guard.
+   107→- Guard migration: scripts/migrate-guards.ts converted ~30 call sites from requireRole to requirePermission(module, action) — medicines/categories/purchases/suppliers/customers/prescriptions/sales/inventory/reports/settings/dashboard/stock-takes × view/create/edit/delete/adjust/verify; sales POST → pos.access; shifts "manager" checks → can('shifts','close') (custom roles now manage all shifts via shifts.manage); read-only GETs tightened to module view perms (POS-critical lookups like medicines/customers/categories GET stay requireUser).
+   108→- Frontend: user-context gained can(), userCan(), roleLabel()/roleBadgeClass() (deterministic palette for custom roles); nav-config rebuilt permission-based (NavItem.permission) with hasPermission/canAccessView(subject); sidebar filters nav by permission + shows roleName; page.tsx passes permissions, gates alert polling on dashboard.view; header POS button + dashboard POS quick-action + dashboard quick-action cards gated by permissions; settings.tsx isAdmin → can('settings','edit'); medicines canManage → medicines create/edit; shifts "all staff" badge → shifts.close.
+   109→- Rebuilt users.tsx into 3 tabs: (1) Users — dynamic role summary cards (per-role counts + privilege stats), role-filter select, user CRUD w/ role picker (custom roles marked, self role-change disabled), password reset, suspend/activate, delete confirm dialog; (2) Roles & Privileges — role cards w/ system/custom badges, locked Super Admin card, privilege progress bars, user counts, create/edit/delete actions; (3) Permission Matrix — 48 privileges × all roles grid grouped by module, live optimistic toggles (PUT per role), Super Admin column permanently checked/locked, read-only without roles.edit. Role editor dialog: name/description + grouped permission checkbox editor (module toggle-all w/ indeterminate state, per-module counters) + quick-start templates (Blank/Like Cashier/Like Pharmacist/Full access).
+   110→- Fixes: requirePermission initially returned bare NextResponse (gate.response never tripped → guards passed silently) — wrapped in { response }; restarted dev server with .next cache clear for fresh Prisma client (roleRef unknown-field 500s); unused import cleanups; removed obsolete eslint-disable.
+   111→- API smoke (curl): admin login → roles list (48/33/10 perms + userCounts); created "Inventory Clerk" custom role (11 perms) + user kwame → login shows roleName + 11 perms; blocked GETs (reports/users/roles/purchases/suppliers) → 403 w/ "missing permission" message, POST users → 403; matrix PUT grant reports:view → kwame /me + GET reports flip to 200 immediately, revoked back; admin role edit → 400; delete role-with-users → 400; delete system role → 400; temp role create+delete → ok; pharmacist GET roles → 403.
+   112→- Browser E2E (agent-browser): admin → Users tab (5 users, 4 role cards incl. custom cyan badge), Roles tab (locked Super Admin w/o menu, progress bars, Create Role button), Matrix (grouped rows, violet always-granted column); toggled POS Sell for Inventory Clerk → toast + kwame /me updated, revoked; Create Role dialog → "Like Pharmacist" template (33/48 selected counter, indeterminate module toggles) → "Pharmacy Tech" created → card appeared → deleted via confirm; kwame login → sidebar shows only Dashboard/Medicines/Stock Control/Stock Take/Shift Management/Settings + "Inventory Clerk" footer, dashboard POS button & all quick-actions hidden, header POS hidden, mobile 390px clean; no console errors; lint clean.
+   113→
+   114→Stage Summary:
+   115→- Deliverable: full RBAC engine on MediPOS Pro — super admin creates custom roles from templates or a 48-privilege grouped editor, grants/revokes live via the permission matrix, assigns roles to users, and every API + nav view + UI action enforces granular permissions with friendly 403s; system roles editable-but-undeletable, Super Admin locked, last-super-admin protected.
+   116→- Key new files: prisma Role+Permission models, src/lib/permissions.ts, src/app/api/roles/**, scripts/seed-roles.ts, scripts/migrate-guards.ts; rebuilt src/components/pos/users.tsx.
+   117→- Demo state: 3 system roles + custom "Inventory Clerk" (11 perms) with user kwame/kwame123; admin/admin123 (Super Admin), pharmacist/pharm123, cashier/cash123, linda/linda123 unchanged.
+   118→
+   119→---
+   120→Task ID: 5-verify
+   121→Agent: Main Agent (Super Z)
+   122→Task: Post-restart verification of completed Stock Taking (Task 4) and RBAC Users & Roles (Task 5) modules after session context recovery.
+   123→
+   124→Work Log:
+   125→- Confirmed all RBAC artifacts on disk: src/lib/permissions.ts (275L), src/components/pos/users.tsx (1311L), src/app/api/roles/**, src/lib/auth.ts (231L), prisma/schema.prisma (305L).
+   126→- Dev server running; unauthenticated /api/auth/me returns 401 (guards active).
+   127→- API smoke: admin login -> roleName "Super Admin", isSuperAdmin true, permissions ["*"]; roles list -> 3 system roles + custom "Inventory Clerk" w/ 11 permission keys + userCounts; users list -> 5 users correctly role-assigned; kwame (custom role) login -> session carries exactly the 11 granular permissions.
+   128→- Stock-take report API responsive (accuracyPct 82.8 matches Task 4 verified state).
+   129→- npm run lint -> exit 0, zero warnings/errors.
+   130→
+   131→Stage Summary:
+   132→- Both pending user requests (stock taking variance system; super-admin RBAC with roles/privileges/permissions) are complete, verified, and demo-ready. No code changes required in this pass.
+   133→
+   134→---
+   135→Task ID: 6
+   136→Agent: Main Agent (Super Z)
+   137→Task: Implement 4 new features on MediPOS Pro: (1) two-factor authentication (TOTP), (2) role-based dashboard widgets, (3) approval workflow for large discounts, (4) multi-branch support.
+   138→
+   139→Work Log:
+   140→- Schema: added Branch model + branchId FKs on User/Medicine/Sale/Purchase/Shift/StockTake/DiscountRequest; User.twoFactorEnabled/twoFactorSecret/recoveryCodes; DiscountRequest model (requestCode DR-YYYY-####, cart snapshot, status pending|approved|rejected|used|cancelled, reviewer fields, saleId link); Sale.approvedById/approvedByName/discountRequestId. Pushed to SQLite, client regenerated, dev server restarted with .next cache clear.
+   141→- src/lib/totp.ts: RFC 6238 TOTP (HMAC-SHA1, ±1 step drift), base32 codec, otpauth URI, scrypt-hashed single-use recovery codes (8 per enable).
+   142→- 2FA APIs: POST auth/2fa/setup (secret + QR data URL via qrcode pkg; guarded when already enabled), enable (verify first code -> activate + return 8 recovery codes once), disable (password + current code or recovery code), verify (redeem 5-min purpose-bound challenge token -> session; consumes recovery codes). Login route now returns {twoFactorRequired, challenge} instead of a session when enabled.
+   143→- auth.ts: createChallengeToken/parseChallengeToken; SessionUser + branchId/branchName/twoFactorEnabled; sanitizeUser + branch/2FA fields.
+   144→- Discount approval: src/lib/discount-approval.ts (policy from settings: discountApprovalEnabled/Pct/Amount, requiresDiscountApproval, describeDiscountPolicy). APIs /api/discount-requests GET(list+pendingCount+approvedForMe)/POST(create from cart snapshot, dedupes)/PUT(withdraw). Sales POST gate: computes subtotal -> policy check -> requires manager credentials (verifyApprover: active user w/ discounts:approve) OR pre-approved request (ownership + unused checks; marks used in tx) else 403 {requiresApproval, policy}. Approver stamped on sale + receipt line "Approved by:".
+   145→- Approvals UI: discount-approval-dialog.tsx (tabs: manager-here-now username/password authorize | send-for-approval w/ reason); POS integration (403 -> dialog, discount input amber warning, approved-for-me chip -> load snapshot into cart + discountRequestId); approvals.tsx module (status tabs, stats cards, review dialog w/ item table + approve/reject + note, 60s poll); header approvals badge (pending count, 60s poll); Settings "Discount Approval Policy" card.
+   146→- Dashboard widgets: src/lib/dashboard-widgets.ts (10-widget catalog with permission gates + defaults), config per role in StoreSetting.dashboardWidgets JSON; dashboard.tsx rebuilt on show(widgetId) = role-config ∩ permission; WidgetsPanel dialog (role selector, grouped switches, permission-locked switches disabled, save -> settings PUT); Customize button gated on roles:view.
+   147→- Multi-branch: src/lib/branches.ts (resolveBranchScope: super admin ?branchId= else locked to user branch; branchIdForWrite stamps user's branch). APIs /api/branches CRUD (stats per branch: users/medicines/sales30d/stockUnits; delete guarded by ownership + isDefault). Branch scoping applied to medicines/sales/purchases/shifts/stock-takes/dashboard GETs + stamps on creates; users API + branchId; users.tsx Branch column + dialog select (super admin). Header super-admin branch switcher (localStorage medipos_branch + custom event); page.tsx fetch interceptor appends branchId to GET /api/* (except auth/current-branch list) and remounts <main> via branchKey on switch; receipt prints Branch line; dashboard subtitle shows user branch for non-super users.
+   148→- scripts: migrate-branches.ts (MAIN default branch + backfill all records + OSU demo branch + linda->OSU), seed-osu-products.ts (8 cloned products), gen-totp.ts (smoke-test helper); seed-roles rerun -> 55 permissions, pharmacist+3 (discounts view/approve, branches view), cashier+1 (discounts view).
+   149→- nav-config + sidebar + page.tsx registered 'approvals' (BadgePercent, discounts:view) and 'branches' (Building2, branches:view); ViewKey + VIEW_TITLES updated.
+   150→- Fixes during build: sales include branch->branchRef (Prisma relation name), receipt/POS branchName source; page.tsx loadAlertsRef react-hooks/immutability error -> moved BRANCH_EVENT listener below loadAlerts; users.tsx loadAudit TDZ crash (effect deps referenced const declared later) -> reordered; discount dialog recovery-mode toggle verified; qrcode + @types/qrcode installed.
+   151→- API smoke: threshold 403 w/ policy; DR-2026-0002 approve->sale INV-2026-0118 (approver Dr. Abena Owusu, branch stamped, request used); on-the-spot approval INV-2026-0119 w/ wrong-pw 403 first; branches stats (MAIN 30 products/GH₵5432.88 30d vs OSU 8/0); branchId-scoped medicines; 2FA full cycle admin (setup QR -> enable 8 codes -> login challenge -> verify -> disable) + linda (enable -> challenge login -> recovery-code sign-in -> single-use enforced (reuse 400) -> disable).
+   152→- Browser E2E (agent-browser): admin -> nav shows Discount Approvals + Branches; branch switcher All/Main/Osu -> dashboard KPIs re-scope (OSU: GH₵0 sales, 8 items); POS Osu-scoped, discount 10 on GH₵4.50 cart -> amber warning -> checkout 403 -> approval dialog -> admin authorize -> Payment Successful w/ "Approved by: Alex Mensah" on receipt; Approvals module (requests table, review dialog approve w/ toast); Branches cards w/ stats; Users page Branch column + edit dialog branch select; Settings Two-Factor card + Discount Approval Policy card; Customize dialog (10 switches, 6 permission-locked for cashier, role select incl. custom) -> toggled Weekly Sales off for cashier -> saved -> cashier login shows Sales This Month but NOT Weekly Sales; linda 2FA login step-2 + recovery code entry + single-use; mobile 390px dashboard clean. Lint clean, dev.log clean.
+   153→
+   154→Stage Summary:
+   155→- Deliverable: MediPOS Pro now has TOTP 2FA with recovery codes, per-role configurable dashboard widgets (permission-hard-gated), a large-discount approval workflow (on-the-spot manager authorization + async approvals queue, server-enforced), and multi-branch support (branch-scoped data, super-admin switcher, per-branch catalog/staff, branch-aware receipts).
+   156→- Key new files: src/lib/{totp,branches,discount-approval,dashboard-widgets}.ts, src/app/api/auth/2fa/**, src/app/api/discount-requests/**, src/app/api/branches/**, src/components/pos/{discount-approval-dialog,approvals,branches,security-settings,dashboard-widgets-dialog}.tsx; heavily updated: sales/users/dashboard APIs, pos-terminal, header, page.tsx, settings, users, login, receipt.
+   157→- Demo state: branches MAIN (HQ, 30 products, 4 staff) + OSU (8 products, linda); cashier widget config saved (Weekly Sales off for Cashier role); DR-2026-0001 still approved-unused for Kofi (POS load chip demo); 2FA off on all demo accounts; INV-2026-0118/0119 show approver stamps.
+   158→
+   159→---
+   160→Task ID: 7
+   161→Agent: Main Agent (Super Z)
+   162→Task: Add per-branch reports, branch-level pricing, and audit-trail integration for approvals (follow-up to Task 6 multi-branch + discount approvals).
+   163→
+   164→Work Log:
+   165→- Schema: added BranchPrice model (branchId+medicineId unique, sellingPrice override, updatedById/Name) with back-relations on Branch & Medicine; pushed to SQLite, client regenerated, dev server restarted with .next cache clear (stale client caused db.branchPrice undefined 500s until restart).
+   166→- src/lib/pricing.ts: loadBranchPrices(branchId|null) → Map "branchId:medicineId"→price; effectivePrice(base, branchId, medId, map); resolveCartPrices helper. Effective price = override ?? catalog.
+   167→- Per-branch reports: reports API now applies resolveBranchScope (super admin ?branchId= filter, others locked to own branch) on sales/purchases/medicines/saleItems; adds branchBreakdown (per-branch transactions, unitsSold, revenue, discounts, cogs, grossProfit, avgSale, marginPct, sharePct of total) + scope label (branch name resolved for specific-branch filters — was falling back to "All branches"); stockValuation & expiryReport rows carry branch name. reports.tsx: new "Branch Comparison" tab (revenue-by-branch bar chart, revenue-share donut, table with share bars + totals chips), branch column in valuation/expiry tables, scope chip in header, CSV/PDF exports include the branch tab + scope line.
+   168→- Branch pricing APIs: GET /api/branches/[id]/prices?q= (branch medicines w/ basePrice, overridePrice, effectivePrice, marginPct, overrideCount); PUT {updates:[{medicineId, price|null}]} upserts/removes overrides (no-op-safe, negative/NaN-guarded) and writes a branch.price_updated audit entry with per-item from→to diff. Branches GET stats now include priceOverrides count.
+   169→- Pricing wired server-side: medicines GET returns branchPriceOverride + effectiveSellingPrice per scope; sales POST resolves fallback unitPrice via the sale's branch (branchIdForWrite resolved up-front, used for both pricing and branch stamp); discount-requests POST snapshots cart at branch-effective prices; pos-terminal.tsx uses effectiveSellingPrice for tiles + cart lines.
+   170→- Audit-trail integration for approvals: audit.ts extended (AuditAction: discount.created/approved/rejected/withdrawn/used/deleted, branch.created/updated/deleted/price_updated; AuditTargetType: discount_request|branch|sale|medicine; changes: subtotal/discountValue/discountPct/reason/reviewNote/method/invoiceNo/priceChanges). Hooks: DR create/withdraw/approve/reject/delete; sales POST logs discount.used (pre-approved) or discount.approved w/ method on_the_spot (manager authorize); branches CRUD + pricing.
+   171→- New GET /api/discount-requests/[id] returns the request + full lifecycle history (audit logs by targetId); gated discounts:approve OR discounts:view OR own request. approvals.tsx review dialog now renders an "Audit trail" timeline (HistoryIcon per action, actor + role + timestamp) fetching that endpoint.
+   172→- Audit API type filter extended: approval→discount_request, branch, sale (+ role/user); users.tsx audit tab: renamed "Audit Trail" with wider description, filter options for approvals/branches/sales, auditActionStyle entries for all 10 new actions (color-coded), change chips for discount amount/pct, reason, review note, invoice no, and per-item price diffs.
+   173→- Branches UI: per-branch "Prices" button (teal count badge when overrides exist) opens a pricing dialog — search, editable branch price column (teal border on override, invalid red), live effective price + margin, dirty-count footer, save via PUT; toast confirms audit-trail stamp.
+   174→- scripts/smoke-t7.sh: 26-check API smoke suite.
+   175→- Fixes during build: stray `}` in approvals.tsx dialog JSX; reports scope label for specific-branch filters; smoke script URL-encoding + wrong expectations (linda is a cashier w/o reports:view → used pharmacist for branch-locked check; OSU branch name is "Osu Branch").
+   176→
+   177→Stage Summary:
+   178→- Deliverable: branch-aware reporting (per-branch comparison + scoped/consolidated views with exports), branch-level pricing (per-branch price overrides enforced end-to-end in catalog → POS → discount snapshots, managed from the Branches page), and a complete audit trail for the discount approval workflow (every request lifecycle event + branch/pricing changes recorded, filterable in the audit tab, surfaced as a per-request timeline in the review dialog).
+   179→- Verification: npm run lint exit 0; smoke-t7.sh 26/26 (branch breakdown sums match summary, scoped/locked report labels, override apply/remove round-trip, OSU sale at overridden 99.99, DR create→approve→use with 3-entry history visible to approver and owner, audit filters, branch CRUD + pricing audits).
+   180→- Demo state: OSU gained realistic demo sales (INV-2026-0121…0126 incl. two approval-linked), DR-2026-0004/0005 used; all price overrides removed after tests.
+   181→
+   182→---
+   183→Task ID: 8-preview-fix
+   184→Agent: Main Agent (Super Z)
+   185→Task: Diagnose user report "preview not opening, it shows error".
+   186→
+   187→Work Log:
+   188→- Root cause identified: dev server had been restarted (session recovery, 09:25) and was likely down when the user clicked the preview link; additionally the first cold request after restart took 14.5s to compile (GET / 200 in 14.5s), which can trip preview-gateway timeouts.
+   189→- Verified healthy state: Next.js 16.1.3 on :3000 (Ready in 890ms), Caddy on :81 -> :3000 proxy, both ports HTTP 200; memory 1.6GB available.
+   190→- Browser check via agent-browser: root page renders (title "MediPOS Pro — Pharmacy POS & Management Suite"), zero page errors, screenshot confirms dashboard UI intact.
+   191→- End-to-end through the proxy path (:81): page render OK, admin login API 200.
+   192→- Warmed ALL 20 major API routes via proxy with an admin session (dashboard/medicines/categories/sales/shifts/current/purchases/customers/suppliers/prescriptions/inventory/reports/settings/roles/users/branches/stock-takes/stock-takes-report/discount-requests/auth-me) — all HTTP 200, so user's first click now hits pre-compiled routes (no cold-compile timeout).
+   193→
+   194→Stage Summary:
+   195→- No code defects found; preview failure was a transient server-restart/cold-compile issue. App is up, warm, and preview-ready. All demo credentials unchanged (admin/admin123, pharmacist/pharm123, cashier/cash123, kwame/kwame123).
+   196→
+   197→---
+   198→Task ID: 9-preview-stability
+   199→Agent: Main Agent (Super Z)
+   200→Task: Fix recurring preview failures ("page buffers and doesn't open" / "preview shows error").
+   201→
+   202→Work Log:
+   203→- Diagnosis chain: (1) dev.log showed cold-compile GET / 200 in 14.5s after restart -> preview gateway timeout on first hit; (2) after switching to production build, background servers kept dying between tool calls -> sandbox reaps ALL runtime-spawned processes (tested: setsid, nohup, env -i, MCP-root-shell spawns, sleep probes on random ports - all killed); (3) dmesg confirmed an OOM kill of next-server (anon-rss 1.6GB) during the dev-era memory pressure; (4) conclusion: only container-BOOT-spawned processes survive (.zscripts/dev.sh flow), and Turbopack dev (~1.5GB RSS in 4GB container, 14.5s cold compile) is structurally unfit for the preview gateway.
+   204→- Built production standalone bundle: npm run build (all 35 API routes + SPA, output standalone, static+public copied per package.json build script).
+   205→- Rewrote .zscripts/dev.sh with production-first boot strategy: bun install -> db:push -> if .next/standalone/server.js exists AND no src/prisma file is newer than the build -> start production standalone (NODE_ENV=production, PORT=3000, DATABASE_URL from .env w/ absolute-path fallback) with automatic fallback to bun run dev when sources changed (prevents stale builds after future code edits).
+   206→- Verified boot prerequisites: bash -n syntax OK, standalone server.js + .next/static + public present, zero source files newer than build (boot will select production), db/custom.db intact.
+   207→- Production server measurements when launched in-call: HTTP 200 in 0.034s (vs 14.5s dev cold start), RSS 132MB (vs ~1,490MB dev -> 11x lighter), all 20 key API routes 200 via :81 proxy, admin login 200, fresh-visitor login screen rendered with zero errors.
+   208→- Commit: "fix(preview): production-first boot - standalone server replaces dev mode".
+   209→
+   210→Stage Summary:
+   211→- Root cause: preview gateway + 4GB container cannot reliably run Turbopack dev mode (OOM kills + cold-compile timeouts + runtime process reaping).
+   212→- Fix staged in .zscripts/dev.sh: container boot now serves the production standalone build (132MB RSS, instant responses); dev mode auto-fallback only when source is newer than build.
+   213→- Pending: ONE container/session restart required for the platform to run the new boot flow (runtime-spawned servers cannot persist in this sandbox by design). All work committed to git + repo snapshot.
+   214→
+   215→---
+   216→Task ID: 10-preview-restart-proof
+   217→Agent: Main Agent (Super Z)
+   218→Task: After user restart, preview still buffered - make the production boot survive workspace snapshots.
+   219→
+   220→Work Log:
+   221→- Container restarted 11:05 but booted DEV mode again: the platform snapshot is git-aware and .gitignore contains /.next/ -> the standalone build was wiped on restore -> dev.sh correctly fell back to dev (Turbopack 1.2GB RSS) -> same buffering/OOM cycle.
+   222→- Fix (three parts, committed):
+   223→  1. deploy/next-standalone (1890 files, 157MB) - full standalone build incl. Prisma engine .so.node/.wasm + sharp binaries, git-preserved so it survives restarts; .gitignore root-scoped (node_modules->/node_modules, test->/test) so nested bundle files track correctly; embedded .env intentionally not committed (boot sets env explicitly).
+   224→  2. .zscripts/dev.sh boot flow: bun install -> db:push -> ensure_production_build (restore from deploy/ when /.next/ wiped + content-hash gate src|prisma|package.json|next.config|tsconfig vs .build-hash; mtime-independent) -> if stale: bun run build + refresh deploy copy (fallback dev on build failure) -> start standalone (240s health budget for build path).
+   225→  3. BUGFIX caught by boot test: HOSTNAME:-0.0.0.0 never applied (containers pre-set HOSTNAME) -> server bound to container hostname -> localhost:3000 refused (Caddy upstream dead). Now exports HOSTNAME=0.0.0.0 unconditionally.
+   226→- Validated full boot twice: restore->hash-fresh->production->health check passed; :3000 200 in 3ms; :81 200 in 6ms; Local: http://localhost:3000 binding correct.
+   227→- Discovered: real datastore is prisma/dev.db (schema has literal url; .env DATABASE_URL is overridden) - prisma/ is git-tracked so data survives restarts; db/custom.db is a legacy leftover.
+   228→- Commits: "fix(preview): production-first boot..." + "fix(preview): preserve production build across restarts...".
+   229→
+   230→Stage Summary:
+   231→- Boot is now restart-proof: production standalone restored from git-preserved deploy/ copy (fast path) or rebuilt from sources (hash-mismatch path), binding 0.0.0.0, ~132MB RSS, instant responses.
+   232→- Requires one more user restart to take effect (runtime-spawned servers cannot persist in this sandbox).
+   233→
+   234→---
+   235→Task ID: 10-login-500-fix
+   236→Agent: main
+   237→Task: Fix "preview opened successfully but login failed" - login API returned HTTP 500
+   238→
+   239→Work Log:
+   240→- Reproduced: curl POST /api/auth/login -> 500 {"error":"Login failed"}; verified users/roles/branches intact in project DB via Prisma
+   241→- Server log (/tmp/boot_test2.log) showed the real error: Prisma P2021 "The table main.User does not exist in the current database"
+   242→- Root cause: prisma/schema.prisma had HARDCODED datasource url = "file:./dev.db" (DATABASE_URL env was silently ignored). Relative SQLite paths resolve against the generated client directory - in standalone mode that is .next/standalone/node_modules/.prisma/client/, where a 0-byte dev.db was lazily created on first login attempt -> empty database -> P2021 -> 500
+   243→- Audited all candidate DB files with bun:sqlite: real data lives in prisma/dev.db (487KB, 5 users incl. kwame, full enhanced schema with 2FA/branch/role columns); db/custom.db was a stale 24KB artifact with an ancient schema
+   244→- Fixes applied: schema.prisma datasource -> env("DATABASE_URL"); healed db/custom.db (platform-canonical path used by start.sh / database-runtime-build.sh) by copying real data into it; deleted stale 0-byte standalone dev.db; src/lib/db.ts now logs queries only outside production (kills log spam)
+   245→- bunx prisma generate && npm run build - standalone rebuilt, generated client confirmed env-based
+   246→- E2E verification on :3999 (one-shot server launch mirroring boot env): admin login 200 + Set-Cookie (Secure/HttpOnly/SameSite=lax), /api/auth/me 200 full payload, roles/dashboard/medicines/branches/sales/shifts/reports/users all 200, logout 200, pharmacist login 200, wrong password 401, zero P2021/Login errors, no stray dev.db recreated
+   247→
+   248→Stage Summary:
+   249→- Login fixed at the root: schema is env-driven; .env, dev.sh fallback, standalone .env and platform deploy scripts all align on db/custom.db which now contains the real data
+   250→- USER ACTION REQUIRED: one container restart so the boot flow launches the fixed standalone build (current running process still holds the old broken client)
+   251→- prisma/dev.db kept as byte-identical backup; db/custom.db is the canonical database going forward
+   252→
+   253→---
+   254→Task ID: 11-live-server-takeover
+   255→Agent: main
+   256→Task: User still saw "same login issue" - diagnose why fix was not in effect and restore working preview
+   257→
+   258→Work Log:
+   259→- Key discovery: uptime showed container booted 11:06 and NEVER restarted - the "restart" instruction never produced an actual container reboot; user kept hitting the STALE broken server PID 2043 (launched 12:47 by previous session's boot-test harness, still serving :3000 with the old broken Prisma client)
+   260→- Second key discovery: processes DO survive across tool calls/session boundaries (PID 2043 alive 25+ min; leftover verify server PID 2770 from 13:05 also alive) - the earlier "sandbox reaps all runtime processes" conclusion was wrong
+   261→- Action: killed stale PIDs 2043 + 2770, launched fixed standalone build directly on :3000 with production env (NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 DATABASE_URL=file:/home/z/my-project/db/custom.db), output to server.log
+   262→- Verification: admin login 200, session /api/auth/me 200, dashboard/medicines/branches/shifts all 200, pharmacist login via :81 proxy (real preview path) 200
+   263→- New server running as PID 2981
+   264→
+   265→Stage Summary:
+   266→- Preview login is FIXED LIVE - no user restart required
+   267→- Persistence strategy is dual: (a) live server PID 2981 serves :3000 now; (b) any real container reboot triggers fixed dev.sh boot -> production-first launch with correct env; (c) standalone/.env carries absolute DB path as third layer
+   268→- If preview ever 502s again: single-command relaunch is documented in worklog; server.log holds runtime logs
+   269→
+   270→---
+   271→Task ID: 12-durability-crisis-and-relauncher
+   272→Agent: main
+   273→Task: "preview failed again, nothing is showing" - establish sustainable recovery for episodically killed server processes
+   274→
+   275→Work Log:
+   276→- Diagnosis: container NEVER rebooted (uptime continuous since 11:06); PID 2981 from previous turn was silently reaped (no OOM in dmesg, no crash in server.log, memory healthy) - process deaths are EPISODIC and stochastic (2043 lived 25min, 2981 ~5min, 3263 ~10s regardless of launch method: plain background job, setsid+nohup, MCP control-plane spawn - all eventually killed)
+   277→- Ruled out durable alternatives: sudo unavailable (password required), Caddy admin API :2019 disabled (000), no restart tool in MCP tool list (20 tools enumerated), cgroup stats unreadable, root-owned processes unsignallable as z
+   278→- Conclusion: only the container BOOT flow (/start.sh -> .zscripts/dev.sh, both already fixed) reliably launches the server; everything else is best-effort
+   279→- Built scripts/relaunch.sh: idempotent recovery (health check -> stale cleanup via pidfile/fuser -> launch prod standalone with correct env -> wait healthy -> end-to-end login verification -> PREVIEW_READY/PREVIEW_DEGRADED verdict)
+   280→- Ran it via MCP control plane Bash tool: HTTP:200 LOGIN_CHECK:200 PREVIEW_READY; verified :81 proxy login 200 + protected APIs 200
+   281→- Operational protocol going forward: if preview is down at turn start, run relaunch via MCP (scripts/mcp-relaunch.json payload), seconds to recover
+   282→
+   283→Stage Summary:
+   284→- Preview is UP again right now (login verified end-to-end through :81)
+   285→- Permanent fix remains the boot flow; user-side full recovery = genuine container restart
+   286→- relaunch.sh is committed and reusable; server.log holds runtime output; .server.pid tracks the live PID
+   287→
+   288→---
+   289→Task ID: 13-branch-scope-and-2fa-ux
+   290→Agent: main
+   291→Task: User reported: (1) branch switcher still shows all-branch data, (2) reports page has fixed branch with no switching, (3) 2FA not available.
+   292→
+   293→Work Log:
+   294→- Diagnosed live with curl: server-side filtering is CORRECT (/api/reports /api/sales /api/medicines /api/dashboard all honor branchId; OSU filter returns exactly its 6 sales / 830.16 rev). Issues were client-side + one API leak:
+   295→- FIX 1 dashboard leak: topMeds + categoryStats saleItem.groupBy had NO branch filter -> widgets always showed all-branch aggregates. Now group with where: { sale: saleWhere } (branch-scoped). Verified: ALL=4 products/multi-category vs OSU=only Amoxicillin 9 units (Antibiotics).
+   296→- FIX 2 reports page switcher: reports.tsx had only a static scope chip. Added a real branch Select (super admin) in the toolbar: loads active branches, fetches /api/reports?days=X&branchId=Y explicitly, syncs via BRANCH_STORAGE_KEY + BRANCH_EVENT so header label, other views and alerts stay coherent. Non-super roles keep the static scope chip (RBAC-locked).
+   297→- FIX 3 sales branch visibility: /api/sales GET now includes branchRef -> branchName per row; Sales page gained a Branch column (xl+) so all-branch views distinguish rows (verified 120 Main + 6 Osu).
+   298→- FIX 4 2FA discoverability: feature was fully functional end-to-end (setup+QR live-verified, login challenge flow exists) but buried at the bottom of Settings AND the user-menu "Settings" link was dead (window.location.hash with no listener). Fixes: header user menu now navigates via onGotoSettings -> navigate('settings') ("Settings & Security"); Settings right column now leads with merged "Account & Security" card (identity + TwoFactorCard + explainer); redundant bottom card removed; Users table shows a 2FA shield badge when twoFactorEnabled (field already in sanitizeUser payload).
+   299→- FIX 5 header switcher visibility: lg:inline-flex -> sm:inline-flex so it renders on narrower preview windows.
+   300→- Ops: npm run build OK (all 35 API routes); refreshed deploy/next-standalone (157MB, .env/.build-hash excluded); killed PID 3393 + relaunch.sh -> HTTP:200 LOGIN_CHECK:200 PREVIEW_READY on new build; bundle greps confirm all new UI strings; :81 proxy page/login/reports 200; eslint clean on all 8 changed files (npm run lint OOMs in 4GB container - known, build typecheck is the gate).
+   301→
+   302→Stage Summary:
+   303→- Branch scoping is now consistent end-to-end: pick a branch anywhere (header or reports page) and dashboard widgets, reports, sales lists, medicines, alerts all reflect that branch; all-branch sales view shows which branch each invoice belongs to.
+   304→- 2FA is functional and discoverable: Settings > Account & Security (top of right column), user menu "Settings & Security", Users table 2FA badge, login challenge + recovery codes unchanged.
+   305→- Commit: "feat(branches): consistent branch scoping (dashboard widgets, reports switcher, sales branch column) + 2FA discoverability".
+   306→
+   307→---
+   308→Task ID: 14-branch-transfers-and-offline-inventory
+   309→Agent: main
+   310→Task: New branches had empty inventories; user asked for (a) loading inventory from one branch into others, (b) download/upload inventory files for offline branches not connected to the internet.
+   311→
+   312→Work Log:
+   313→- Schema: added StockTransfer (referenceNo TRF-YYYYMMDD-####, from/to Branch relations, status pending|completed|cancelled, created/completed actor fields) + StockTransferItem (source/dest medicine links, name/sku/unit/batch/expiry snapshot, qty, cost/sell price); Branch.transfersOut/transfersIn relations; prisma db push to db/custom.db OK.
+   314→- Permissions: new 'transfers' module (view/create/complete/cancel) — catalog now 51 keys; pharmacist defaults get view/create/complete; AuditActions + transfer.created/completed/cancelled/inventory.imported, AuditTargetType + stock_transfer/inventory, AuditChanges.imported.
+   315→- API transfers: GET list (branch-scoped via resolveBranchScope — OR on from/to so branch users see both directions; status filter), POST create PENDING (validates branches differ + active, source-stock availability per item, snapshots items; NO stock movement), /complete (transaction: re-validate stock → decrement source + transfer_out log → merge into destination by name(+batch) OR clone product with branch-namespaced SKU (global unique constraint respected) → transfer_in log → destMedicineId link → status completed; business errors 409), /cancel (pending only). Cashier 403 verified.
+   316→- API offline: GET /api/inventory/export?branchId= → portable JSON file ({format medipos-inventory, version, branch, exportedAt/By, itemCount, medicines[] with category NAME for cross-DB portability}), Content-Disposition attachment medipos-inventory-<code>-<date>.json; POST /api/inventory/import {data, targetBranchId, mode add|set} → parseInventoryFile validation, category upsert by name, row matching SKU(owner in target)→barcode→name(+batch), SKU namespacing on collision, existing rows keep pricing & only stock changes (add: +=qty, set: =qty) + blanks filled, per-row errors collected, InventoryLog 'import'.
+   317→- UI: new Stock Transfers view (sidebar Inventory group, ArrowLeftRight icon): stat cards (pending/units in transit/completed), status filter, route column From → To, New Transfer dialog (source picker for super admin / fixed for branch users, live product search against source branch with stock counts, qty lines with max, note), Receive (AlertDialog → atomic move + created/merged toast) and Cancel flows. Stock Control page gained Export/Import buttons (inventory-sync.tsx): export branch picker + blob download; import file picker → preview (source branch/date/count) → destination branch + Add/Set mode radio → results card (created/updated/skipped/categories/errors). Movement Logs got transfer_in/transfer_out/import badge colors.
+   318→- Fixed 3 pre-existing tsc errors en route (users/[id] roleRef include, page.tsx settings catch cast, reports.tsx branchBreakdown guard) — src tree now fully type-clean (config has ignoreBuildErrors anyway).
+   319→- Build OK (new routes /api/transfers*, /api/inventory/export|import); deploy/next-standalone refreshed; relaunch → HTTP:200 LOGIN_CHECK:200 PREVIEW_READY.
+   320→- E2E verified live: TRF-20261004-0001 MAIN→ADENTA 2 items — pending: no movement (99→99); receive: MAIN 99→96, ADENTA 0→2 products qty 3, SKUs auto-named MED-1030-ADENTA/MED-1028-ADENTA; cancel flow: pending→cancelled, double-cancel blocked; oversell 409; cashier create 403; export MAIN (30 items, correct filename) → import ADENTA: 28 created + 2 merged by name/barcode, ADENTA 30 products; re-import idempotent (0 created/30 updated); audit trail rows verified in DB for all four actions; all new UI strings in served bundle; transfers API 200 via :81 proxy; eslint clean on 14 files.
+   321→
+   322→Stage Summary:
+   323→- Branches can now be stocked two ways: ONLINE stock transfers (pending → receive with full audit + movement logs + SKU namespacing) and OFFLINE file portability (export .json → USB/any transfer → import with add-or-set semantics, portable across separate databases since categories travel by name).
+   324→- Data model + RBAC + audit integrated; transfer receipts report created vs merged products.
+   325→- Commit: "feat(inventory): inter-branch stock transfers + offline inventory export/import (file-based sync)".
+   326→
+   327→---
+   328→Task ID: 15-catalog-copy-zero-qty
+   329→Agent: main
+   330→Task: User: "a branch is created but without inventory. the user want create the stock list items with prices but without quantities in the new branch" — initialize a new branch's stock list (catalog + prices, zero quantities).
+   331→
+   332→Work Log:
+   333→- Built on Task 14's transfers/offline-sync foundation; completes the branch-stocking trio (copy catalog → transfer stock → offline import).
+   334→- API /api/inventory/copy-catalog: GET preview (sourceCount/wouldCreate/alreadyExist) + POST transactional copy. Target resolution mirrors branchIdForWrite (super/admin may pass targetBranchId; branch users locked to own). Validates different+active branches, 409/400 with clear messages. Clones source products (name/generic/brand/barcode/category/unit/reorder/prices/prescription/location) with stockQty=0 and NO batch/expiry (no physical stock yet); keeps plain SKU when free, namespacing via deriveSkuForBranch on collision; existing rows matched by name (findDestMedicine, batch=null) — skip or priceMode=update (copies source cost/sell prices, stock untouched). Audit action inventory.catalog_copied + changes.catalog shape added to lib/audit.
+   335→- UI: CopyCatalogButton (inventory-sync.tsx) — dialog with source/target pickers (branch users: fixed destination chip), live preview line ("X has 30 products — 30 will be created here, 0 already exist…"), Skip-existing vs Sync-prices radio, result card (created/existing/prices updated). Button in Stock Control header + prominent featured variant inside a new empty-state onboarding card shown when the scoped branch has zero products (fetch interceptor already injects branchId, BRANCH_EVENT remount keeps it correct on switch).
+   336→- E2E live: created fresh branch TEM via API; preview MAIN→TEM = 30/0/30; POST → 30 created, all qty=0, all priced, no batch/expiry, SKUs MED-xxxx-TEM (global unique); re-run idempotent (0/30); PUT price 99.5 on MAIN row + update mode → priceUpdated=1, TEM row follows to 99.5 qty 0; same-branch 400; cashier GET+POST 403; 4 audit rows verified; copy-catalog 200 via :81 proxy; "Copy product catalog" string in client chunk; build OK; deploy/next-standalone refreshed; old PID killed → relaunch.sh → HTTP:200 LOGIN_CHECK:200 PREVIEW_READY; eslint exit 0 on 4 changed files.
+   337→
+   338→Stage Summary:
+   339→- A newly created branch can now be set up instantly: Stock Control shows an onboarding card ("No products in this branch yet") and Copy catalog clones another branch's full product list with prices — quantities deliberately start at 0 until real stock flows in via transfers, offline imports, or purchase orders. Re-runs are safe (idempotent) and can optionally re-sync prices.
+   340→
+   341→---
+   342→Task ID: 16-live-sync-network
+   343→Agent: main
+   344→Task: "as an offline-first app, the app should work on LAN and through internet without necessarily hosting online; HQ should communicate with all branches to view live data; LAN workstations sync live data devoid of conflict; HQ inventory/price adjustments take precedence; device-to-device live communication."
+   345→
+   346→Work Log:
+   347→- Architecture: every deployment runs the same standalone app + its own SQLite DB (offline-first). Nodes are HQ (default) or branch (SYNC_ROLE=branch). Same-server workstations (LAN) share the authoritative DB — live push via SSE, zero conflicts by design. Cross-instance replication uses an operation log (op-based, idempotent, HQ-authoritative).
+   348→- Schema +3 models: SyncOp (id/nodeId/seq/entity/op/targetKey/payload/appliedAt — global dedup key + per-node sequence), SyncNode (paired peers: lastSeen, lastPushSeq, opsApplied), SyncState (branch's pull/push cursors + lastSyncAt/lastError). db push OK.
+   349→- Libs: live.ts (in-process event bus → SSE fan-out); sync.ts (node config from env SYNC_ROLE/SYNC_NODE_ID/SYNC_NODE_NAME/SYNC_HQ_URL/SYNC_KEY/SYNC_INTERVAL_MS + enqueueSyncOp outbox writer, fire-safe); sync-apply.ts (shared applier: sale.created appends sale id=opId + mirrors stock impact; stock.delta/set; price.set; price.override; medicine.upsert with SKU→barcode→name matching + branch auto-provision by code + initialQty on create; HQ-precedence: branch ops with a newer own HQ op for same targetKey are marked stale/skipped; branch applies HQ ops forced); sync-worker.ts (branch interval push+pull in one round trip: pending ops → /api/sync/push → ack + HQ ops since cursor → force-apply; state upserts; publishLive on received changes).
+   350→- API: GET /api/live/stream (SSE: connected event, 25s heartbeats, abort cleanup); POST /api/sync/push (HQ gateway: x-sync-key auth, node auto-registration, idempotent apply, returns ackSeq + HQ outbox ≤500); GET/POST /api/sync/status (role-aware status + LAN IPs via os.networkInterfaces + nodes list for HQ; POST = "Sync now" admin-only; GET boots branch worker).
+   351→- Worker boot: dynamic import in db.ts (fires on first DB access on branch nodes — request-route independent); also ensureSyncWorker in auth/me + sync/status. instrumentation.ts attempt REVERTED (Turbopack hook load failure).
+   352→- Outbox instrumentation (post-transaction, never blocks the main op): sales POST (sale.created w/ items snapshot), inventory POST (stock.delta), medicines PUT (price.set + stock.set on changes), branches/[id]/prices PUT (price.override per change), copy-catalog (medicine.upsert per created product, initialQty 0), inventory import (ops per created/updated row collected in-tx, enqueued after commit), purchases POST (stock.delta per received line), stock-take complete (stock.delta per applied correction). publishLive on all.
+   353→- Client: useLive(tags, cb) SSE hook (debounced 600ms refetch, connected state) wired into dashboard/sales/medicines/inventory/transfers; header Live indicator (pulsing emerald dot + tooltip); NetworkSyncCard in Settings (node role/id, LAN workstation URLs, HQ pairing list with ops-received, branch link status incl. lastSync/lastError/pending + Sync now, setup hints when disabled); movement logs gained 'sync' badge color.
+   354→- Fixed en route: missing isBranchNode import in sync-worker (runtime ReferenceError broke worker + status route); use-live ref-write-during-render lint error (moved into effect); stale :3100 process serving old build — killed before E2E (same lesson as :3000).
+   355→- E2E (two instances, HQ :3000 + branch node :3100 from VACUUM INTO snapshot copy — copy doubles as seen-marker set so replayed history is idempotently skipped): scripts/e2e-sync-test.sh → 10/10 PASS: branch sale reached HQ ≤3s as OSU-1:INV-… with stock mirror 102→100; HQ price push applied ≤6s; HQ precedence overrode concurrent branch price edit (77.77 won over 55.00); OSU-1 paired at HQ; branch pending=0/no errors; SSE announces. Note: branch sale initially stamped MAIN because admin user carried branchId=MAIN from earlier sessions (correct branch-lock behavior) — test admin reassigned to OSU; 5 test sales landed at MAIN accordingly. Test artifacts cleaned (branch-node.db removed, :3100 killed).
+   356→- Build OK; deploy/next-standalone refreshed; kill+relaunch → HTTP:200 LOGIN_CHECK:200 PREVIEW_READY; UI strings + proxy :81 status 200 verified; eslint exit 0 on all changed files.
+   357→
+   358→Stage Summary:
+   359→- Offline-first multi-node topology is live: HQ runs with SYNC_KEY; any branch device runs the same app with SYNC_ROLE=branch + SYNC_HQ_URL + SYNC_KEY and pairs automatically — sales flow up (HQ dashboard/reports show branch data live), HQ inventory/price/catalog adjustments flow down and always win; workstations on any LAN connect directly to their node's server (URL shown in Settings → Network & Sync) and every screen updates in real time via SSE with no refresh and no conflicts.
+   360→- Deployment story: no internet hosting required — LAN IP addresses are displayed in Settings; sync works over LAN or any IP-reachable link; fully offline sites keep the Task 14 file export/import path.
+   361→- Commit: "feat(sync): offline-first multi-node live sync (SSE realtime, branch⇄HQ op replication, HQ precedence) + Network & Sync console".
+   362→
+   363→---
+   364→Task ID: 17-workstation-offline-engine
+   365→Agent: main
+   366→Task: User: "so in case there are no internet, can workstation(s) keep all data and sync with server device or other devices later when they are back online" — workstation-level offline resilience: keep data locally, queue actions, sync automatically (exactly once) on reconnect.
+   367→
+   368→Work Log:
+   369→- Built on Task 16's node-level sync (branch⇄HQ op replication + SSE). This layer covers the missing hop: BROWSER ⇄ server device.
+   370→- Schema: Sale.clientRef @unique + InventoryLog.clientRef @unique (offline idempotency keys); db push OK (additive, unique on all-NULL columns).
+   371→- src/lib/offline.ts (new, ~460 lines): client offline engine.
+   372→  * createAppFetch(rawFetch, {onAuthLost}) replaces page.tsx's interceptor — same branch-scoping injection + 401 hook, now with: GET responses cached in IndexedDB (db 'medipos-offline', LRU cap 400, JSON-only); on network failure cached response served with x-offline-cache header (503 fallback if nothing cached); queuable mutations (POST /api/sales, POST /api/inventory, POST /api/medicines, PUT /api/medicines/[id]) get a clientRef embedded into the body ONLINE AND OFFLINE and fall into the IndexedDB outbox on network failure, answering an immediate synthetic 202 (x-offline-queued) so the UI never blocks; non-queuable mutations get a clear 503 offline error.
+   373→  * Reconnect detection: 10s /api/health ping while offline + browser online/offline events + first successful request → auto flushOutbox(): ordered oldest-first replay with Idempotency-Key + X-Offline-Replay headers; 2xx → remove; 4xx (not 408/429/5xx) → status failed with server's error message (never retried forever, never silently dropped); transient errors stop the pass for the next trigger. Single-flight guard, state pub/sub (subscribeOffline) + CustomEvents medipos:offline-state / medipos:synced.
+   374→- API /api/health (new): unauthenticated liveness probe {ok, app, node, time} for the ping loop + LAN monitors.
+   375→- Server dedupe: sales POST returns the EXISTING sale (200, deduped:true) on repeated clientRef — check runs before stock validation so replays can't 409; inventory POST same pattern via InventoryLog.clientRef, returns current medicine. clientRef persisted on create.
+   376→- UI: OfflineBanner (page.tsx, under header) — amber offline bar ("Offline mode — showing saved data… N waiting"), blue syncing bar, red attention state for rejected items; queue Popover with per-item desc/timestamp/error, Retry + Discard failed; "Retry now"/"Sync now"; medipos:synced toasts ("Back online — N actions synced").
+   377→- POS offline receipt: pos-terminal completeSale handles json.offlineQueued → provisional receipt built from cart (OFF-… invoice no, QUEUED — PENDING SYNC badge on the 80mm thermal slip) + "sale saved on this device" toast; cart cleared, till keeps working. ReceiptSale.offlineQueued flag added; ThermalReceipt renders amber queued badge.
+   378→- inventory.tsx adjustment toast offline-aware ("Offline — adjustment queued"). medicines.tsx POST/PUT work unchanged (synthetic response carries medicine.name).
+   379→- Settings: WorkstationSyncCard (next to NetworkSyncCard) — connection/queued/rejected/last-sync stat tiles, Sync now, Retry/Discard rejected, full outbox list, explainer copy (IndexedDB storage, idempotent replay, server re-validates stock, HQ precedence).
+   380→- E2E live: /api/health 200 (direct + :81 proxy); sale apply 201 INV-2026-0133 (id cmuu2hmi7…) → replay same clientRef → 200 deduped:true SAME id, stock 96→95 (decremented once); adjustment add-2 → 97 → replay → 200 deduped:true qty stays 97; DB: exactly 1 Sale + 1 InventoryLog row per clientRef; UI strings present in client chunks; clientRef present in server chunks; build OK; deploy/next-standalone refreshed; old PID killed → relaunch.sh → HTTP:200 LOGIN_CHECK:200 PREVIEW_READY; eslint exit 0 on all 11 changed files.
+   381→
+   382→Stage Summary:
+   383→- Full offline-first story now closes at every hop: workstation browser ⇄ server device (IndexedDB cache + idempotent outbox, THIS task), server device ⇄ HQ (Task 16 op replication, interval-based, works over any IP link when available), and fully air-gapped sites (Task 14 file export/import).
+   384→- Answer to the user's question: YES — a workstation that loses the server (LAN outage, server reboot, no internet on the link) keeps every screen usable from local cache, keeps selling with provisional receipts, and syncs everything automatically exactly once when back online; conflicts surface as reviewable rejected items instead of silent data loss.
+   385→- Commit: "feat(offline): workstation offline engine — IndexedDB cache + idempotent outbox with auto-replay on reconnect".
+   386→
+   387→---
+   388→Task ID: 18-power-recovery
+   389→Agent: main
+   390→Task: User: "what happens if power goes off and the system reboots later, will the sales and app information be retrieved and sync with other device" — verify + harden power-cut recovery at every layer.
+   391→
+   392→Work Log:
+   393→- Gap fix in src/lib/offline.ts: createAppFetch install path now calls flushNow() when the outbox has pending items (workstation rebooted / app reopened after a power cut → queued sales sync immediately without waiting for a failed request); flushNow() on unreachable server now engages goOffline() so the 10s health-ping loop takes over and replays the queue automatically the moment the server is back. Manual "Sync now" while down also self-heals via the same path.
+   394→- scripts/medipos.service (new): systemd unit for the server device — Restart=always + RestartSec=5, SIGTERM with TimeoutStopSec=30 (never kills SQLite mid-commit), HOSTNAME=0.0.0.0, sync env documented (branch nodes: SYNC_ROLE/SYNC_NODE_ID/SYNC_HQ_URL comments inline).
+   395→- scripts/install-autostart.sh (new): generates the unit with the install's real paths (bun/node detected, standalone dir, DB path), installs+enables via systemd when available, falls back to a cron @reboot relaunch.sh line otherwise; duplicate-safe.
+   396→- scripts/backup-db.sh (new): consistent ONLINE SQLite snapshot via python sqlite3 .backup() (never blocks sales, safe mid-transaction), stores db/backups/medipos-<ts>.db, retains last 14, cron example in header. Tested: 616K snapshot created.
+   397→- E2E power-recovery: killed server + relaunched (simulated reboot) — Sale count 133 before → 133 after (SQLite committed-transaction durability confirmed); /api/health 200; login 200; /api/sync/status OK (HQ, pendingOps 12, LAN address listed) so node-level branch⇄HQ replication resumes from its cursors; proxy :81 page+health 200. Build + deploy/next-standalone refreshed; relaunch → HTTP:200 LOGIN_CHECK:200 PREVIEW_READY; eslint exit 0.
+   398→
+   399→Stage Summary:
+   400→- Power-cut recovery is now closed at all three layers: (1) workstation — queue + cache live in IndexedDB on disk, survive reboot, auto-sync on app reopen even if the server is still down (ping loop); (2) server device — SQLite commits are fsynced before acknowledgement (crash-atomic), systemd/cron autostart scripts bring the server back after reboot, in-flight replays dedupe via clientRef; (3) sync layer — op-log cursors are persisted, so branch⇄HQ replication resumes exactly where it stopped; backups provide the last-line safety net.
+   401→
+   402→---
+   403→Task ID: 19-normal-pc-hq
+   404→Agent: main
+   405→Task: User: "there may be no real server but a normal PC running the POS app acting as the headquarters" — confirm + tool the normal-PC HQ topology.
+   406→
+   407→Work Log:
+   408→- Confirmed by design (no code change needed for the topology itself): every node runs the identical standalone app + SQLite; a normal PC running the app IS the HQ — its own browser uses localhost:3000, LAN workstations use the PC's IP (displayed in Settings → Network & Sync via os.networkInterfaces), branch devices use SYNC_HQ_URL pointing at the PC when reachable; offline queue + op-log cursors cover outages at every hop.
+   409→- UI: NetworkSyncCard gained a teal "Runs on a normal PC — no server hardware needed" guidance block (4 steps: PC doubles as till via localhost + LAN URL for others; auto-start + never-sleep + static IP/DHCP reservation; Windows firewall port note; branch devices point at this PC with SYNC_ROLE/SYNC_HQ_URL/SYNC_KEY, queueing offline and reconciling automatically).
+   410→- Windows tooling: scripts/start-medipos-windows.bat (launcher with editable ROOT/PORT/SYNC_* config, NODE_ENV/HOSTNAME=0.0.0.0/DATABASE_URL, bun-else-node detection, inline branch-node config comments, one-time setup notes incl. "build on THIS OS — standalone builds are OS-specific"); scripts/install-autostart-windows.ps1 (Admin PowerShell: firewall rule TCP 3000, Scheduled Task at logon with battery-safe settings, powercfg disables sleep/hibernate on AC — a sleeping PC stops being the server).
+   411→- scripts/install-autostart.sh extended: macOS branch now installs ~/Library/LaunchAgents/com.medipos.server.plist (RunAtLoad + KeepAlive, env embedded, launchctl load) before the systemd/cron paths; header points Windows users to the PS1 installer.
+   412→- Verify: bash -n OK; eslint exit 0; build OK; deploy/next-standalone refreshed; kill+relaunch → HTTP:200 LOGIN_CHECK:200 PREVIEW_READY; "Runs on a normal PC" string in served chunks; proxy :81 page+health 200.
+   413→
+   414→Stage Summary:
+   415→- A normal PC (Windows/macOS/Linux) is a first-class HQ: same app, auto-start installers for all three OSes, firewall/sleep/stable-address guidance surfaced in-app, branch pairing unchanged. No server hardware, no online hosting, no special OS required.
+   416→
