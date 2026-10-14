@@ -64,7 +64,8 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
     label: 'Shifts',
     actions: [
       VIEW,
-      { action: 'close', label: 'Manage', description: 'Close any shift and perform drawer reconciliation for others' },
+      { action: 'view_own', label: 'Own History', description: 'View own shift history and reports only — no other staff shifts' },
+      { action: 'close', label: 'Manage', description: 'Close any shift, perform drawer reconciliation for others and filter history per staff member' },
     ],
   },
   {
@@ -320,7 +321,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
     'dashboard:view',
     'pos:access',
     'sales:view',
-    'shifts:view',
+    'shifts:view_own',
     'discounts:view',
     'medicines:view',
     'customers:view',

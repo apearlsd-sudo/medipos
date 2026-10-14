@@ -465,3 +465,22 @@ Work Log:
 
 Stage Summary:
 - Features no longer need redoing after platform resets: every server start self-checks its data and auto-repairs the three known regression classes; auto-recover.sh handles process/build/restore; snapshot-db.sh pins healthy state so a reset loses minutes, not days. Loss surface now: only uncommitted code (mitigated by per-task commit discipline). Tools: bash scripts/auto-recover.sh (fix), bash scripts/snapshot-db.sh (pin).
+---
+Task ID: 31
+Agent: Super Z (main)
+Task: Shift Management — per-user selection with their reports + grantable "view only own shift history" access.
+
+Work Log:
+- PERMISSION CATALOG: shifts module gains `shifts:view_own` ("Own History — view own shift history and reports only"). SYSTEM_ROLE_PERMISSIONS: pharmacist keeps view+close (manager), cashier default swaps shifts:view → shifts:view_own (still 14 grants; catalog now 69 permissions). seed-roles.ts re-run (idempotent, `set:` replaces system grants) → 69/46/14.
+- API LIST (shifts/route.ts GET): explicit gate — managers (shifts:view OR shifts:close) see all staff and may pass ?userId=<id>; view_own users are forced to where.userId=self server-side (spoofed ?userId ignored); neither → 403. Doc comment updated.
+- API DETAIL (shifts/[id]/route.ts GET): managers inspect any shift; view_own users only their own (403 otherwise). Close route untouched — already isSelf||isManager.
+- NEW GET /api/users/lite — staff picker (id/name/username/role/branchId) gated to users:view OR shift managers; branch-scoped via resolveBranchScope; mirrors Task 29 branches/lite pattern. BUG CAUGHT: first draft filtered User.isActive — model uses status:'active' (PrismaClientValidationError in server.log), fixed + rebuilt.
+- NAV: Shift Management item gains altPermission ['shifts','view_own'] (nav-config any-of support existed).
+- UI (shifts.tsx): managers get a staff Select ("All Staff" + users/lite names) wired to server-side ?userId filter with auto-reload; header badge "all staff" vs "my history"; own-only users see no selector and a self-scoped list; search placeholder adapts; CSV export honors the active user filter.
+- DEPLOY NOTE: fuser -k 3000 failed to reap the old next-server (pid survived) → relaunch said ALREADY_UP on stale build; hard kill -9 by ss pid then relaunch — the known idempotency trap, worth remembering.
+- VERIFY (API matrix, all PASS): admin all 15 rows (Alex+Linda); admin/pharmacist ?userId=Kofi → exactly his 1 row; manager detail of cashier shift 200; cashier list own-only (0 leaks), spoofed ?userId ignored, users/lite 403, other's detail 403. Positive path proven by live lifecycle: cashier start SH-2026-0016 → close balanced → own history 1 row → own detail 200.
+- VERIFY (UI, agent-browser): admin — "Filter by staff member" combobox lists 4 staff, picking Linda Asare filters table to her 7 shifts, opening SH-2026-0013 shows her report dialog (summary present); cashier — no selector, "my history" badge, only SH-2026-0016. Evidence: verify_shifts_userfilter.png / verify_shifts_report_linda.png / verify_shifts_cashier_own.png.
+- VERIFY (regression): tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 = 136/136 green. Health HTTP:200 LOGIN:200 HUB:200. snapshot-db pinned post-task DB state.
+
+Stage Summary:
+- Shift history is now properly permissioned: anyone without shifts:view/close can be granted view_own to see ONLY their own shifts and reports (server-enforced, spoof-proof), while managers get per-staff filtering with full per-shift reports in Shift Management. Cashier default is now own-only; grants are adjustable per role in Settings → Roles & Permissions.

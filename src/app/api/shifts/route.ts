@@ -4,7 +4,10 @@ import { can, requireUser } from '@/lib/auth'
 import { nextShiftNo, computeShiftSummary } from '@/lib/shifts'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
-/** GET /api/shifts — role-aware list. Admin/pharmacist see all; cashier sees own. */
+/** GET /api/shifts — permission-aware list.
+ *  Managers (shifts:view / shifts:close) see all staff shifts and may filter
+ *  with ?userId=<id>. Users with only shifts:view_own are scoped to their own
+ *  shifts server-side (any ?userId they send is ignored). */
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
   if (gate.response) return gate.response
@@ -14,8 +17,18 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search')?.trim()
     const scope = resolveBranchScope(gate.user, searchParams)
 
+    const isManager = can(gate.user, 'shifts', 'view') || can(gate.user, 'shifts', 'close')
+    if (!isManager && !can(gate.user, 'shifts', 'view_own')) {
+      return NextResponse.json({ error: 'Access denied — requires shift history privileges.' }, { status: 403 })
+    }
+
     const where: Record<string, unknown> = {}
-    if (!can(gate.user, 'shifts', 'close')) where.userId = gate.user.id
+    if (isManager) {
+      const userId = searchParams.get('userId')?.trim()
+      if (userId && userId !== 'all') where.userId = userId
+    } else {
+      where.userId = gate.user.id
+    }
     if (scope.branchId) where.branchId = scope.branchId
     if (status && status !== 'all') where.status = status
     if (search) {

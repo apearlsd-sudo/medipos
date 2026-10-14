@@ -63,6 +63,7 @@ function VarianceBadge({ shift }: { shift: ShiftRecord }) {
 
 export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
   const { user, can } = useUser()
+  const isManager = can('shifts', 'view') || can('shifts', 'close')
   const [current, setCurrent] = useState<{ shift: ShiftRecord; summary: ShiftSummaryData } | null>(null)
   const [history, setHistory] = useState<ShiftRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -70,6 +71,8 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
 
   const [statusFilter, setStatusFilter] = useState('all')
   const [search, setSearch] = useState('')
+  const [staff, setStaff] = useState<{ id: string; name: string; username: string; role: string }[]>([])
+  const [userFilter, setUserFilter] = useState('all')
   const [startOpen, setStartOpen] = useState(false)
   const [endOpen, setEndOpen] = useState(false)
   const [movementOpen, setMovementOpen] = useState(false)
@@ -78,9 +81,10 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
 
   const load = useCallback(async () => {
     try {
+      const qs = isManager && userFilter !== 'all' ? `?userId=${encodeURIComponent(userFilter)}` : ''
       const [curRes, histRes] = await Promise.all([
         fetch('/api/shifts/current', { cache: 'no-store' }),
-        fetch('/api/shifts', { cache: 'no-store' }),
+        fetch(`/api/shifts${qs}`, { cache: 'no-store' }),
       ])
       const curJson = await curRes.json()
       const histJson = await histRes.json()
@@ -89,9 +93,18 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [isManager, userFilter])
 
   useEffect(() => { load() }, [load])
+
+  // Managers: load the staff picker once (users/lite is gated server-side)
+  useEffect(() => {
+    if (!isManager) return
+    fetch('/api/users/lite', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : { users: [] }))
+      .then((j) => setStaff(j.users ?? []))
+      .catch(() => setStaff([]))
+  }, [isManager])
 
   // Live ticker for duration + periodic summary refresh while a shift is open
   useEffect(() => {
@@ -296,10 +309,25 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
           <div className="flex items-center gap-2">
             <History className="h-5 w-5 text-teal-600 dark:text-teal-400" />
             <h2 className="text-lg font-bold">Shift History</h2>
-            {can('shifts', 'close') && <Badge variant="outline" className="rounded-full text-xs">all staff</Badge>}
+            {isManager ? (
+              <Badge variant="outline" className="rounded-full text-xs">all staff</Badge>
+            ) : (
+              <Badge variant="outline" className="rounded-full text-xs">my history</Badge>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search shift no or cashier…" className="w-full sm:w-56" aria-label="Search shifts" />
+            {isManager && (
+              <Select value={userFilter} onValueChange={setUserFilter}>
+                <SelectTrigger className="w-44" aria-label="Filter by staff member"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Staff</SelectItem>
+                  {staff.map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isManager ? 'Search shift no or cashier…' : 'Search shift no…'} className="w-full sm:w-56" aria-label="Search shifts" />
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
               <SelectContent>

@@ -12,9 +12,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const shift = await db.shift.findUnique({ where: { id } })
     if (!shift) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
-    // Cashiers may only inspect their own shifts
-    if (!can(gate.user, 'shifts', 'close') && shift.userId !== gate.user.id) {
-      return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
+    // Managers (view/close) may inspect any shift; shifts:view_own users only their own
+    const isManager = can(gate.user, 'shifts', 'view') || can(gate.user, 'shifts', 'close')
+    if (!isManager) {
+      if (!can(gate.user, 'shifts', 'view_own') || shift.userId !== gate.user.id) {
+        return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
+      }
     }
 
     const summary = await computeShiftSummary(id)
