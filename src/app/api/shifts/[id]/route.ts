@@ -3,7 +3,9 @@ import { db } from '@/lib/db'
 import { can, requireUser } from '@/lib/auth'
 import { computeShiftSummary } from '@/lib/shifts'
 
-/** GET /api/shifts/[id] — full shift detail incl. summary, transactions, products, hourly. */
+/** GET /api/shifts/[id] — full shift detail incl. summary, transactions, products, hourly.
+ *  Only the Super Admin may inspect any shift; every other user is limited to
+ *  their own shift history (foreign shifts → 403). */
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const gate = await requireUser(req)
   if (gate.response) return gate.response
@@ -12,12 +14,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const shift = await db.shift.findUnique({ where: { id } })
     if (!shift) return NextResponse.json({ error: 'Shift not found' }, { status: 404 })
 
-    // Managers (view/close) may inspect any shift; shifts:view_own users only their own
-    const isManager = can(gate.user, 'shifts', 'view') || can(gate.user, 'shifts', 'close')
-    if (!isManager) {
-      if (!can(gate.user, 'shifts', 'view_own') || shift.userId !== gate.user.id) {
-        return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
-      }
+    // All-staff access is reserved for the Super Admin; every other user may
+    // only open their own shifts, whatever shift permissions they hold.
+    const hasAccess =
+      can(gate.user, 'shifts', 'view') ||
+      can(gate.user, 'shifts', 'view_own') ||
+      can(gate.user, 'shifts', 'close')
+    if (!hasAccess || (!gate.user.isSuperAdmin && shift.userId !== gate.user.id)) {
+      return NextResponse.json({ error: 'Access denied.' }, { status: 403 })
     }
 
     const summary = await computeShiftSummary(id)

@@ -5,20 +5,17 @@ import { resolveBranchScope } from '@/lib/branches'
 
 // ---------------------------------------------------------------------------
 // GET /api/users/lite — staff picker (id/name/username/role) for shift
-// management's per-user filter. Granted to users:view OR shift managers
-// (shifts:view / shifts:close) — the selector only matters to people who can
-// already see all staff shifts. Branch-scoped when the header switcher is set.
+// management's per-user filter. That filter is a Super Admin tool (only the
+// Super Admin can view all staff shifts), so access is granted to users:view
+// holders OR the Super Admin. Branch-scoped when the header switcher is set.
 // ---------------------------------------------------------------------------
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
   if (gate.response) return gate.response
   try {
-    const allowed =
-      can(gate.user, 'users', 'view') ||
-      can(gate.user, 'shifts', 'view') ||
-      can(gate.user, 'shifts', 'close')
+    const allowed = can(gate.user, 'users', 'view') || gate.user.isSuperAdmin
     if (!allowed) {
-      return NextResponse.json({ error: 'Access denied — requires users or shift management privileges.' }, { status: 403 })
+      return NextResponse.json({ error: 'Access denied — requires staff directory privileges.' }, { status: 403 })
     }
 
     const { searchParams } = new URL(req.url)

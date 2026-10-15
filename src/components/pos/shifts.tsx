@@ -62,8 +62,10 @@ function VarianceBadge({ shift }: { shift: ShiftRecord }) {
 // ---------------------------------------------------------------------------
 
 export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
-  const { user, can } = useUser()
-  const isManager = can('shifts', 'view') || can('shifts', 'close')
+  const { user } = useUser()
+  // Only the Super Admin sees all staff shifts; everyone else is pinned to
+  // their own history (enforced server-side — this flag only drives the UI).
+  const canSeeAll = user.isSuperAdmin
   const [current, setCurrent] = useState<{ shift: ShiftRecord; summary: ShiftSummaryData } | null>(null)
   const [history, setHistory] = useState<ShiftRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -81,7 +83,7 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
 
   const load = useCallback(async () => {
     try {
-      const qs = isManager && userFilter !== 'all' ? `?userId=${encodeURIComponent(userFilter)}` : ''
+      const qs = canSeeAll && userFilter !== 'all' ? `?userId=${encodeURIComponent(userFilter)}` : ''
       const [curRes, histRes] = await Promise.all([
         fetch('/api/shifts/current', { cache: 'no-store' }),
         fetch(`/api/shifts${qs}`, { cache: 'no-store' }),
@@ -93,18 +95,18 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
     } finally {
       setLoading(false)
     }
-  }, [isManager, userFilter])
+  }, [canSeeAll, userFilter])
 
   useEffect(() => { load() }, [load])
 
-  // Managers: load the staff picker once (users/lite is gated server-side)
+  // Super admin only: load the staff picker once (users/lite is gated server-side)
   useEffect(() => {
-    if (!isManager) return
+    if (!canSeeAll) return
     fetch('/api/users/lite', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { users: [] }))
       .then((j) => setStaff(j.users ?? []))
       .catch(() => setStaff([]))
-  }, [isManager])
+  }, [canSeeAll])
 
   // Live ticker for duration + periodic summary refresh while a shift is open
   useEffect(() => {
@@ -309,14 +311,14 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
           <div className="flex items-center gap-2">
             <History className="h-5 w-5 text-teal-600 dark:text-teal-400" />
             <h2 className="text-lg font-bold">Shift History</h2>
-            {isManager ? (
+            {canSeeAll ? (
               <Badge variant="outline" className="rounded-full text-xs">all staff</Badge>
             ) : (
               <Badge variant="outline" className="rounded-full text-xs">my history</Badge>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {isManager && (
+            {canSeeAll && (
               <Select value={userFilter} onValueChange={setUserFilter}>
                 <SelectTrigger className="w-44" aria-label="Filter by staff member"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -327,7 +329,7 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
                 </SelectContent>
               </Select>
             )}
-            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isManager ? 'Search shift no or cashier…' : 'Search shift no…'} className="w-full sm:w-56" aria-label="Search shifts" />
+            <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={canSeeAll ? 'Search shift no or cashier…' : 'Search shift no…'} className="w-full sm:w-56" aria-label="Search shifts" />
             <Select value={statusFilter} onValueChange={setStatusFilter}>
               <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
               <SelectContent>
@@ -349,7 +351,7 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {[
             { label: 'Shifts Today', value: String(historyStats.todayCount), hint: `${fmtMoney(historyStats.todaySales)} sold today` },
-            { label: 'Shifts Running', value: String(historyStats.openCount), hint: 'across all staff' },
+            { label: 'Shifts Running', value: String(historyStats.openCount), hint: canSeeAll ? 'across all staff' : 'your shifts only' },
             { label: 'Sales on Record', value: fmtMoney(historyStats.totalSales), hint: `${historyStats.totalItems} items sold` },
             { label: 'Avg per Shift', value: fmtMoney(historyStats.avgSales), hint: `${history.length} shifts total` },
           ].map((s) => (

@@ -64,9 +64,9 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
     module: 'shifts',
     label: 'Shifts',
     actions: [
-      VIEW,
+      { action: 'view', label: 'View', description: 'Access Shift Management — own shift history and reports (all-staff history is reserved for the Super Admin)' },
       { action: 'view_own', label: 'Own History', description: 'View own shift history and reports only — no other staff shifts' },
-      { action: 'close', label: 'Manage', description: 'Close any shift, perform drawer reconciliation for others and filter history per staff member' },
+      { action: 'close', label: 'Manage', description: 'Close any shift and perform drawer reconciliation for others (staff history visibility is Super Admin only)' },
     ],
   },
   {

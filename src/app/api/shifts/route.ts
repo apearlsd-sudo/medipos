@@ -4,10 +4,11 @@ import { can, requireUser } from '@/lib/auth'
 import { nextShiftNo, computeShiftSummary } from '@/lib/shifts'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
-/** GET /api/shifts — permission-aware list.
- *  Managers (shifts:view / shifts:close) see all staff shifts and may filter
- *  with ?userId=<id>. Users with only shifts:view_own are scoped to their own
- *  shifts server-side (any ?userId they send is ignored). */
+/** GET /api/shifts — role-scoped list.
+ *  ONLY the Super Admin sees all staff shifts (and may narrow with ?userId=<id>).
+ *  Every other user — regardless of shifts:view / shifts:close grants — is
+ *  server-FORCED to their own shift history (any ?userId they send is ignored).
+ *  Access itself requires a shift privilege (view / view_own / close). */
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
   if (gate.response) return gate.response
@@ -17,13 +18,19 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search')?.trim()
     const scope = resolveBranchScope(gate.user, searchParams)
 
-    const isManager = can(gate.user, 'shifts', 'view') || can(gate.user, 'shifts', 'close')
-    if (!isManager && !can(gate.user, 'shifts', 'view_own')) {
+    const hasAccess =
+      can(gate.user, 'shifts', 'view') ||
+      can(gate.user, 'shifts', 'view_own') ||
+      can(gate.user, 'shifts', 'close')
+    if (!hasAccess) {
       return NextResponse.json({ error: 'Access denied — requires shift history privileges.' }, { status: 403 })
     }
 
+    // All-staff history is reserved for the Super Admin; everyone else is pinned
+    // to their own shifts server-side (spoofed ?userId cannot widen the scope).
+    const canSeeAll = gate.user.isSuperAdmin
     const where: Record<string, unknown> = {}
-    if (isManager) {
+    if (canSeeAll) {
       const userId = searchParams.get('userId')?.trim()
       if (userId && userId !== 'all') where.userId = userId
     } else {

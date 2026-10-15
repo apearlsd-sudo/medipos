@@ -96,6 +96,7 @@ async function main() {
         userId: p.user.id,
         userName: p.user.name,
         userRole: p.user.role,
+        branchId: p.user.branchId, // app-created shifts carry the owner's branch
         openingCash: p.opening,
         closingCash: closing,
         expectedCash: expected,
@@ -119,6 +120,7 @@ async function main() {
       userId: admin.id,
       userName: admin.name,
       userRole: admin.role,
+      branchId: admin.branchId,
       openingCash: 100,
       status: 'open',
       note: 'current live shift',
