@@ -44,7 +44,7 @@ interface ReportData {
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting'
+type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting' | 'vat'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
@@ -61,6 +61,7 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'analytics', label: 'Analytics Pack', icon: BarChart3 },
   { key: 'expenses', label: 'Expenses & Net', icon: Wallet },
   { key: 'accounting', label: 'Accounting Pack', icon: FileSpreadsheet },
+  { key: 'vat', label: 'VAT Filing', icon: ReceiptText },
 ]
 
 // Day-close section cache (for CSV export) — module-level, refreshed by the section.
@@ -68,6 +69,9 @@ let dayCloseCache: DayCloseData | null = null
 
 // C2 — accounting pack cache (module-level, refreshed by the section)
 let accountingCache: AccountingPackData | null = null
+
+// Task 55 — GRA VAT filing summary cache (module-level, refreshed by the section)
+let vatFilingCache: VatFilingData | null = null
 
 export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
   const [data, setData] = useState<ReportData | null>(null)
@@ -201,6 +205,35 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         ]
         return { title: `Accounting Pack ${ap.month}`, head: [], body: rows }
       }
+      case 'vat': {
+        const vf = vatFilingCache
+        if (!vf) return { title: 'VAT Filing', head: [], body: [] }
+        const compLabels = vf.eras[0]?.componentAmounts.map((c) => c.label) ?? []
+        const rows: (string | number)[][] = [
+          [`GRA VAT filing summary — ${vf.month} — ${vf.store.name}`],
+          ['TIN', vf.store.tin ?? '—', '', 'Generated', new Date(vf.generatedAt).toLocaleString()],
+          [],
+          ['Output VAT by statutory structure'],
+          ['Structure', 'Sales', 'Taxable base', ...compLabels, 'Total tax'],
+          ...vf.eras.map((e) => [e.label, e.salesCount, e.taxableBase, ...e.componentAmounts.map((c) => c.amount), e.tax]),
+          ['Unattributable legacy tax', vf.unattributable.salesCount, '', ...compLabels.map(() => ''), vf.unattributable.tax],
+          [],
+          ['Exempt / zero-rated sales', vf.exempt.salesCount, vf.exempt.gross],
+          ['Refunds (credit adjustments)', vf.refunds.count, vf.refunds.total, 'Est. VAT adj.', vf.refunds.vatAdjustment],
+          [],
+          ['Taxable base', vf.totals.taxableBase],
+          ['Output VAT', vf.totals.outputVat],
+          ['Less refund VAT adjustment', vf.refunds.vatAdjustment],
+          ['Net VAT payable', vf.totals.netVatPayable],
+          [],
+          ['Reconciliation', 'Ledger tax', vf.reconciliation.ledgerTax, 'Attributed', vf.reconciliation.attributedTax, 'Unattributable', vf.reconciliation.unattributableTax, 'Difference', vf.reconciliation.difference],
+          [],
+          ['Per-branch breakdown'],
+          ['Branch', 'Code', 'Sales', 'Taxable base', 'Output tax', 'Exempt sales', 'Gross', 'Refunds'],
+          ...vf.branches.map((b) => [b.branchName, b.branchCode, b.salesCount, b.taxableBase, b.tax, b.exemptGross, b.gross, b.refunds]),
+        ]
+        return { title: `VAT Filing ${vf.month}`, head: [], body: rows }
+      }
       default:
         return {
           title: 'Sales Summary',
@@ -212,7 +245,8 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
 
   const exportCSV = () => {
     const { title, head, body } = currentTable()
-    const periodLabel = tab === 'accounting' && accountingCache ? `Month ${accountingCache.month}` : `Last ${data?.periodDays} days`
+    const monthTabPeriod = (m: string) => `Month ${m}`
+    const periodLabel = tab === 'accounting' && accountingCache ? monthTabPeriod(accountingCache.month) : tab === 'vat' && vatFilingCache ? monthTabPeriod(vatFilingCache.month) : `Last ${data?.periodDays} days`
     const rows = [['Report', title], ['Period', periodLabel], ['Scope', data?.scope?.label || 'All branches'], [], head, ...body]
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
@@ -230,7 +264,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
     const storeName = storeSettings?.storeName || 'MediPOS Pharmacy'
     const currency = storeSettings?.currencyCode || 'USD'
     const scopeLabel = data.scope?.label || 'All branches'
-    const periodLabel = tab === 'accounting' && accountingCache ? `Month ${accountingCache.month}` : `Last ${data.periodDays} days`
+    const periodLabel = tab === 'accounting' && accountingCache ? `Month ${accountingCache.month}` : tab === 'vat' && vatFilingCache ? `Month ${vatFilingCache.month}` : `Last ${data.periodDays} days`
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     const pageW = doc.internal.pageSize.getWidth()
@@ -351,6 +385,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
       {/* ---------------- Tier 3: expenses & net position ---------------- */}
       {tab === 'expenses' && <ExpensesSection days={days} onData={setExpensesCache} grossProfit={data?.summary.grossProfit ?? 0} />}
       {tab === 'accounting' && <AccountingSection />}
+      {tab === 'vat' && <VatFilingSection />}
 
       {/* ---------------- Overview ---------------- */}
       {tab === 'overview' && (
@@ -473,9 +508,9 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         </>
       )}
 
-      {/* ---------------- Table tabs ---------------- */}
-      {tab !== 'overview' && tab !== 'branches' && <ReportDataTable tab={tab} data={data} />}
-      {tab !== 'overview' && tab !== 'branches' && <p className="text-center text-xs text-muted-foreground">{tabMeta.label} · showing up to 20 rows · use Export PDF / CSV for the full list</p>}
+      {/* ---------------- Table tabs (tabs with dedicated sections are excluded) ---------------- */}
+      {(['products', 'staff', 'stock', 'expiry', 'purchases'] as ReportTab[]).includes(tab) && <ReportDataTable tab={tab} data={data} />}
+      {(['products', 'staff', 'stock', 'expiry', 'purchases'] as ReportTab[]).includes(tab) && <p className="text-center text-xs text-muted-foreground">{tabMeta.label} · showing up to 20 rows · use Export PDF / CSV for the full list</p>}
     </div>
   )
 }
@@ -1570,6 +1605,246 @@ function AccountingSection() {
         <CardHeader><CardTitle className="text-base">Credit aging snapshot</CardTitle></CardHeader>
         <CardContent>
           {simple(['0–30 days', '31–60 days', '61–90 days', '90+ days', 'Total outstanding'], [[data.creditAging.d30, data.creditAging.d60, data.creditAging.d90, data.creditAging.d90p, data.creditAging.totalOutstanding]])}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// ---------------- Task 55: GRA VAT filing summary (era-aware, per-branch) ----------------
+interface VatFilingData {
+  month: string
+  branchLabel?: string
+  store: { name: string; address: string | null; phone: string | null; tin: string | null }
+  eras: Array<{
+    key: string
+    label: string
+    components: Array<{ label: string; pct: number }>
+    eraWindow: { from: string; to: string | null } | null
+    isCurrentEra: boolean
+    salesCount: number
+    taxableBase: number
+    tax: number
+    componentAmounts: Array<{ label: string; pct: number; amount: number }>
+  }>
+  unattributable: { salesCount: number; gross: number; tax: number }
+  exempt: { salesCount: number; gross: number }
+  refunds: { count: number; total: number; vatAdjustment: number }
+  branches: Array<{ branchId: string; branchName: string; branchCode: string; salesCount: number; taxableBase: number; tax: number; exemptGross: number; gross: number; refunds: number }>
+  totals: { taxableBase: number; outputVat: number; netVatPayable: number; ledgerGross: number }
+  reconciliation: { ledgerTax: number; attributedTax: number; unattributableTax: number; difference: number }
+  generatedAt: string
+}
+
+function VatFilingSection() {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7))
+  const [data, setData] = useState<VatFilingData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    const run = () => {
+      setLoading(true)
+      fetch(`/api/reports/vat-filing?month=${month}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j) => { if (alive && j && !j.error) { setData(j); vatFilingCache = j } })
+        .finally(() => { if (alive) setLoading(false) })
+    }
+    const t = setTimeout(run, 0)
+    return () => { alive = false; clearTimeout(t) }
+  }, [month])
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-52 rounded-full" />
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
+    )
+  }
+
+  const stat = (label: string, value: number, tone?: string, sub?: string) => (
+    <Card className="p-5">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone ?? ''}`}>{fmtMoney(value)}</p>
+      {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
+    </Card>
+  )
+  const balanced = data.reconciliation.difference === 0
+  // Component columns are dynamic (1–3 components per structure).
+  const compLabels = data.eras[0]?.componentAmounts.map((c) => c.label) ?? []
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-44 rounded-full" aria-label="VAT filing month" />
+        <span className="text-xs text-muted-foreground">
+          GRA filing summary for {data.store.name}{data.store.tin ? ` · TIN ${data.store.tin}` : ''} — every sale attributed to the statutory structure it was sold under.
+        </span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {stat('Taxable base', data.totals.taxableBase, undefined, `${data.eras.reduce((s, e) => s + e.salesCount, 0)} taxable transactions`)}
+        {stat('Output VAT', data.totals.outputVat, 'text-teal-600 dark:text-teal-400', data.unattributable.salesCount > 0 ? `incl. ${fmtMoney(data.reconciliation.unattributableTax)} legacy tax` : 'fully attributed to eras')}
+        {stat('Refund VAT adj.', data.refunds.vatAdjustment, 'text-amber-600 dark:text-amber-400', `${data.refunds.count} refund(s) · est. from original sale rate`)}
+        {stat('Net VAT payable', data.totals.netVatPayable, 'text-rose-600 dark:text-rose-400', `output ${fmtMoney(data.totals.outputVat)} − adj ${fmtMoney(data.refunds.vatAdjustment)}`)}
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Output VAT by statutory structure — {data.month}</CardTitle></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Structure</TableHead>
+                <TableHead className="text-center">Sales</TableHead>
+                <TableHead className="text-right">Taxable base</TableHead>
+                {compLabels.map((l) => <TableHead key={l} className="text-right">{l}</TableHead>)}
+                <TableHead className="text-right">Total tax</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.eras.map((e) => (
+                <TableRow key={e.key}>
+                  <TableCell className="max-w-64 font-medium">
+                    <div className="flex items-center gap-1.5">
+                      <span>{e.label}</span>
+                      {e.isCurrentEra && <Badge className="rounded-full bg-teal-100 text-[10px] text-teal-700 dark:bg-teal-500/15 dark:text-teal-400">current</Badge>}
+                    </div>
+                    {e.eraWindow && <p className="text-xs text-muted-foreground">window {e.eraWindow.from} → {e.eraWindow.to ?? 'open'}</p>}
+                  </TableCell>
+                  <TableCell className="text-center tabular-nums text-sm">{e.salesCount}</TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">{fmtMoney(e.taxableBase)}</TableCell>
+                  {compLabels.map((l) => {
+                    const c = e.componentAmounts.find((x) => x.label === l)
+                    return <TableCell key={l} className="text-right tabular-nums text-sm">{c ? fmtMoney(c.amount) : '—'}</TableCell>
+                  })}
+                  <TableCell className="text-right font-medium tabular-nums text-sm">{fmtMoney(e.tax)}</TableCell>
+                </TableRow>
+              ))}
+              {data.unattributable.salesCount > 0 && (
+                <TableRow className="bg-amber-50/60 dark:bg-amber-500/10">
+                  <TableCell className="font-medium text-amber-700 dark:text-amber-400">Unattributable legacy tax <span className="text-xs font-normal">(pre-era ledger rows — disclosed for reconciliation)</span></TableCell>
+                  <TableCell className="text-center tabular-nums text-sm">{data.unattributable.salesCount}</TableCell>
+                  <TableCell className="text-right tabular-nums text-sm text-muted-foreground">—</TableCell>
+                  {compLabels.map((l) => <TableCell key={l} className="text-right tabular-nums text-sm text-muted-foreground">—</TableCell>)}
+                  <TableCell className="text-right font-medium tabular-nums text-sm text-amber-700 dark:text-amber-400">{fmtMoney(data.unattributable.tax)}</TableCell>
+                </TableRow>
+              )}
+              <TableRow>
+                <TableCell className="font-semibold">Total output VAT</TableCell>
+                <TableCell />
+                <TableCell className="text-right font-semibold tabular-nums text-sm">{fmtMoney(data.totals.taxableBase)}</TableCell>
+                {compLabels.map((l) => {
+                  const total = data.eras.reduce((s, e) => s + (e.componentAmounts.find((x) => x.label === l)?.amount ?? 0), 0)
+                  return <TableCell key={l} className="text-right font-semibold tabular-nums text-sm">{fmtMoney(total)}</TableCell>
+                })}
+                <TableCell className="text-right font-semibold tabular-nums text-sm">{fmtMoney(data.totals.outputVat)}</TableCell>
+              </TableRow>
+              {data.eras.length === 0 && data.unattributable.salesCount === 0 && (
+                <TableRow><TableCell colSpan={4 + compLabels.length} className="py-8 text-center text-muted-foreground">No taxable sales this month.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle className="text-base">Filing reconciliation</CardTitle></CardHeader>
+          <CardContent>
+            {(() => {
+              const rec = data.reconciliation
+              const rows: Array<[string, string | number]> = [
+                ['Ledger tax (all completed sales in month)', fmtMoney(rec.ledgerTax)],
+                ['= Attributed to statutory structures', fmtMoney(rec.attributedTax)],
+                [`+ Unattributable legacy tax (${data.unattributable.salesCount} sales)`, fmtMoney(rec.unattributableTax)],
+                ['Difference (must be 0.00)', fmtMoney(rec.difference)],
+              ]
+              return (
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent"><TableHead>Check</TableHead><TableHead className="text-right">Amount</TableHead></TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rows.map(([k, v], i) => (
+                      <TableRow key={k}>
+                        <TableCell className={i === 3 ? 'font-medium' : ''}>{k}</TableCell>
+                        <TableCell className={`text-right tabular-nums text-sm ${i === 3 ? (balanced ? 'font-semibold text-emerald-600 dark:text-emerald-400' : 'font-semibold text-rose-600 dark:text-rose-400') : ''}`}>{v}</TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow>
+                      <TableCell>Status</TableCell>
+                      <TableCell className="text-right">
+                        <Badge className={balanced ? 'rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : 'rounded-full bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-400'}>
+                          {balanced ? 'Balanced — ready to file' : 'Mismatch — investigate before filing'}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              )
+            })()}
+            <p className="mt-3 text-xs text-muted-foreground">
+              Exempt / zero-rated sales (no taxable base): {data.exempt.salesCount} totalling {fmtMoney(data.exempt.gross)} — disclosed, outside output VAT.
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-base">Refunds (credit adjustments)</CardTitle></CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead>Metric</TableHead><TableHead className="text-right">Value</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                <TableRow><TableCell>Refunds processed this month</TableCell><TableCell className="text-right tabular-nums text-sm">{data.refunds.count}</TableCell></TableRow>
+                <TableRow><TableCell>Total refunded</TableCell><TableCell className="text-right tabular-nums text-sm">{fmtMoney(data.refunds.total)}</TableCell></TableRow>
+                <TableRow><TableCell>Estimated VAT component (at original sale rate)</TableCell><TableCell className="text-right tabular-nums text-sm">{fmtMoney(data.refunds.vatAdjustment)}</TableCell></TableRow>
+              </TableBody>
+            </Table>
+            <p className="mt-3 text-xs text-muted-foreground">
+              The refund model stores one blended amount, so the VAT share is estimated from the original sale&apos;s effective tax rate — issue formal GRA credit notes for exact figures.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Per-branch breakdown</CardTitle></CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>Branch</TableHead>
+                <TableHead className="text-center">Sales</TableHead>
+                <TableHead className="text-right">Taxable base</TableHead>
+                <TableHead className="text-right">Output tax</TableHead>
+                <TableHead className="hidden md:table-cell text-right">Exempt sales</TableHead>
+                <TableHead className="hidden md:table-cell text-right">Gross</TableHead>
+                <TableHead className="text-right">Refunds</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.branches.map((b) => (
+                <TableRow key={b.branchId}>
+                  <TableCell className="font-medium">{b.branchName} <span className="text-xs text-muted-foreground">({b.branchCode})</span></TableCell>
+                  <TableCell className="text-center tabular-nums text-sm">{b.salesCount}</TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">{fmtMoney(b.taxableBase)}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums text-sm">{fmtMoney(b.tax)}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums text-sm md:table-cell">{b.exemptGross > 0 ? fmtMoney(b.exemptGross) : '—'}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums text-sm md:table-cell">{fmtMoney(b.gross)}</TableCell>
+                  <TableCell className="text-right tabular-nums text-sm">{b.refunds > 0 ? fmtMoney(b.refunds) : '—'}</TableCell>
+                </TableRow>
+              ))}
+              {data.branches.length === 0 && (
+                <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">No sales this month.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
     </div>
