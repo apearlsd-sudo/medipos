@@ -734,3 +734,20 @@ Work Log:
 
 Stage Summary:
 - No feature was lost in code — the outage was deployment drift after the hosting reset: OOM-killed dev server + dead sync hub + a stale service-worker shell pointing at purged build chunks. Production standalone + hub are restored, every browser will self-heal its cache via medipos-v2, and the full 136-test regression is green. Standing guidance: always deploy via scripts/relaunch.sh (production build), never leave next-dev running in this 4 GB container.
+---
+Task ID: 62
+Agent: main
+Task: "Complete Sale dialog shows dollar symbol instead of the selected currency; the insurance payment method is gone" — two POS checkout regressions/omissions.
+
+Work Log:
+- BUG 1 (currency chips): the Complete Sale dialog's quick-cash chips hardcoded `$${v}` (line 1356) — amount-due/confirm/change already used the global currency config; only the chips ignored it. Fixed to `${currencySymbol()}${v}` (GH₵10/20/50/100 under the store's GHS/en-GH config); swept src/ for other currency literals — none found (remaining `$` hits are quoted server messages).
+- BUG 2 (insurance method): PAYMENT_METHODS lost `{insurance}` in the tier-1 checkout redesign (replaced by credit + a "Use insurance" checkbox that only appears when an insured customer is picked). 22 legacy sales still carry paymentMethod='insurance' and the Sales-page method filter/label could no longer express them. Restored:
+  - format.ts: Insurance re-added to PAYMENT_METHODS + LEGACY_METHOD_LABELS fallback so historical 'mobile_money' rows (16) also render human labels again.
+  - pos-terminal.tsx: grid cols-4→5; selecting Insurance opts the sale into insurer billing (useIns = checkbox || method==='insurance', checkbox forced checked+disabled while the method is active); till leg = patient's cash share (cash tendered block + insufficient-cash validation + paidAmount/change + offline slip all treat insurance cash-like; cash rounding follows the cash leg exactly as the server does); walk-in/insurer-less confirm is blocked with a dedicated toast; shield icon via the existing methodIcon fallback.
+  - Server needs NO change: paymentMethod='insurance' already coerces to the cash till leg (paidAmount capped at the patient's rounded due) while useInsurance books the claim — UI now sends the method as-is.
+- VERIFY: scripts/verify-insurance-method.sh 11/11 GREEN (idempotent, fixtures cancelled+restocked): coerced till leg, claim booked at exact coverage share, patient cash share booked (paid = total − insurer share ±5p rounding), legacy method=insurance filter returns 22 rows. Browser E2E (zero page errors): 5-method grid, GH₵ chips, walk-in guard holds (dialog stays open, no sale), Ama Mensah → checkbox forced "NHIS Ghana · 80% · NHIS-8802-3341", Amount Due = patient share with "insurer pays GH₵68.60" + rounding chip, Confirm books paid (API probe: roundedDue 17.10 = paid, insurance 68.60 — client preview matches server booking exactly).
+- NOTE: radix customer listbox options must be keyboard-selected (typeahead) — clicking options fights the modal trap overlay (known).
+- REGRESSION: tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 = 136/136 green. tsc src/ clean, eslint clean, BUILD_EXIT=0 → kill + relaunch (production :3000 + hub :3003, HUB_CHECK 200). backup-db.sh run.
+
+Stage Summary:
+- The till speaks the store's currency everywhere — quick-cash chips included — and Insurance is a first-class Complete Sale method again: pick it, the insurer is billed their coverage share as a claim, and the patient settles their rounded cash share at the till; historical insurance/mobile-money sales are filterable and labelled again. 136/136 regression green, deployed, DB backed up.

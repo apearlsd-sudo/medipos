@@ -19,7 +19,7 @@ import { SendReceiptDialog } from '@/components/pos/send-receipt-dialog'
 import { BarcodeScannerDialog } from '@/components/pos/barcode-scanner'
 import { StartShiftDialog } from '@/components/pos/shift-dialogs'
 import type { ShiftRecord } from '@/components/pos/shift-report'
-import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
+import { fmtMoney, PAYMENT_METHODS, currencySymbol } from '@/lib/format'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
 import { parseCashRoundingMode, roundCashFor } from '@/lib/pos-finance'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
@@ -458,7 +458,9 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     [customers, customerId],
   )
   const insurer = selectedCustomer?.insurer && selectedCustomer.insurer.active ? selectedCustomer.insurer : null
-  const useIns = useInsurance && !!insurer
+  // Insurance is a first-class payment method again: picking it opts the sale
+  // into insurer billing (the till leg is the patient's cash share).
+  const useIns = (useInsurance || paymentMethod === 'insurance') && !!insurer
   const insuranceEstimate = useMemo(() => {
     if (!useIns || !insurer) return 0
     const gross = subtotal
@@ -494,7 +496,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const usingSplitRows = splitMode && splitEligible && splitTenders.some((t) => Number(t.amount) > 0)
   const cashInPlay = usingSplitRows
     ? splitTenders.some((t) => t.method === 'cash' && Number(t.amount) > 0)
-    : paymentMethod === 'cash'
+    : paymentMethod === 'cash' || paymentMethod === 'insurance'
   const cashRounding = useMemo(() => roundCashFor(payable, cashRoundingMode, cashInPlay), [payable, cashRoundingMode, cashInPlay])
   const roundedPayable = cashRounding.roundedDue
   // Split-tender math (only cash rows may overpay — change returns on cash)
@@ -579,7 +581,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           discount: discountValue,
           customerId: customerId === 'walkin' ? null : customerId,
           paymentMethod,
-          ...(tendersPayload ? { tenders: tendersPayload, paidAmount: splitSum } : { paidAmount: paymentMethod === 'cash' ? tenderedNum : total }),
+          ...(tendersPayload ? { tenders: tendersPayload, paidAmount: splitSum } : { paidAmount: paymentMethod === 'cash' || paymentMethod === 'insurance' ? tenderedNum : total }),
           paymentProvider: !tendersPayload && paymentMethod === 'momo' ? momoProvider : undefined,
           paymentReference: !tendersPayload && paymentMethod === 'momo' ? (momoReference.trim() || undefined) : undefined,
           pointsRedeem: redemption.points || undefined,
@@ -599,8 +601,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           subtotal, discount: discountValue, tax: taxValue, total,
           taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
           roundingDelta: cashRounding.delta,
-          paidAmount: tendersPayload ? Math.min(splitSum, roundedPayable) : paymentMethod === 'cash' ? Math.min(tenderedNum, roundedPayable) : total,
-          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' ? Math.max(0, +(tenderedNum - roundedPayable).toFixed(2)) : 0,
+          paidAmount: tendersPayload ? Math.min(splitSum, roundedPayable) : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.min(tenderedNum, roundedPayable) : total,
+          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.max(0, +(tenderedNum - roundedPayable).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
           paymentStatus: 'pending',
           offlineQueued: true,
@@ -676,7 +678,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       if (rows.some((t) => t.reference.trim() && !/^[A-Za-z0-9.\-]{6,}$/.test(t.reference.trim()))) {
         toast({ title: 'Check the MoMo reference', description: 'Transaction IDs are 6+ letters/digits.', variant: 'destructive' }); return
       }
-    } else if (paymentMethod === 'cash' && tenderedNumTier1 < roundedPayable) {
+    } else if ((paymentMethod === 'cash' || paymentMethod === 'insurance') && tenderedNumTier1 < roundedPayable) {
       toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(roundedPayable)}.`, variant: 'destructive' })
       return
     }
@@ -692,6 +694,14 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         toast({ title: 'Credit limit exceeded', description: `${selectedCustomer.name} owes ${fmtMoney(selectedCustomer.balance ?? 0)} of ${fmtMoney(selectedCustomer.creditLimit ?? 0)} — this sale would reach ${fmtMoney(projected)}.`, variant: 'destructive' }); return
       }
     }
+    if (paymentMethod === 'insurance') {
+      if (!selectedCustomer) {
+        toast({ title: 'Customer required', description: 'Select the insured customer to bill their insurer.', variant: 'destructive' }); return
+      }
+      if (!insurer) {
+        toast({ title: 'No active insurer', description: `${selectedCustomer.name} has no active insurer — attach one on the customer profile or pick another payment method.`, variant: 'destructive' }); return
+      }
+    }
     if (paymentMethod === 'momo' && momoReference.trim() && !/^[A-Za-z0-9.\-]{6,}$/.test(momoReference.trim())) {
       toast({ title: 'Check the MoMo reference', description: 'Transaction IDs are 6+ letters/digits.', variant: 'destructive' }); return
     }
@@ -699,7 +709,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }
 
   const authorizeAndComplete = async (approval: { username: string; password: string }): Promise<boolean> => {
-    if (!(splitMode && splitEligible) && paymentMethod === 'cash' && tenderedNumTier1 < roundedPayable) {
+    if (!(splitMode && splitEligible) && (paymentMethod === 'cash' || paymentMethod === 'insurance') && tenderedNumTier1 < roundedPayable) {
       toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(roundedPayable)}.`, variant: 'destructive' })
       return false
     }
@@ -1158,7 +1168,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               )}
             </div>
 
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-5 gap-2">
               {PAYMENT_METHODS.map((pm) => (
                 <button
                   key={pm.value}
@@ -1196,7 +1206,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                     <span className="font-medium">Use insurance</span>
                     <span className="ml-1.5 text-xs text-muted-foreground">{insurer.name} · {insurer.coveragePercent}% on covered items{selectedCustomer?.insuranceNo ? ` · ${selectedCustomer.insuranceNo}` : ''}</span>
                   </span>
-                  <input type="checkbox" checked={useInsurance} onChange={(e) => setUseInsurance(e.target.checked)} className="h-4 w-4 accent-teal-600" />
+                  <input type="checkbox" checked={useIns} disabled={paymentMethod === 'insurance'} onChange={(e) => setUseInsurance(e.target.checked)} className="h-4 w-4 accent-teal-600 disabled:opacity-60" />
                 </label>
               )}
 
@@ -1336,7 +1346,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                 </div>
               )}
 
-              {paymentMethod === 'cash' && !splitMode && (
+              {(paymentMethod === 'cash' || paymentMethod === 'insurance') && !splitMode && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
@@ -1353,7 +1363,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                   <div className="flex gap-2">
                     {[roundedPayable, 10, 20, 50, 100].map((v, i) => (
                       <Button key={i} variant="outline" size="sm" className="flex-1 rounded-full text-xs tabular-nums" onClick={() => setTendered(String(i === 0 ? Math.ceil(v * 100) / 100 : v))}>
-                        {i === 0 ? 'Exact' : `$${v}`}
+                        {i === 0 ? 'Exact' : `${currencySymbol()}${v}`}
                       </Button>
                     ))}
                   </div>

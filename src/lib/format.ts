@@ -168,7 +168,14 @@ export const PAYMENT_METHODS = [
   { value: 'card', label: 'Card' },
   { value: 'momo', label: 'MoMo' },
   { value: 'credit', label: 'Credit' },
+  { value: 'insurance', label: 'Insurance' },
 ] as const
+
+// Payment methods that existed before the tier-1 checkout redesign and can
+// still appear on historical sales — kept resolvable for filters and labels.
+const LEGACY_METHOD_LABELS: Record<string, string> = {
+  mobile_money: 'Mobile Money',
+}
 
 export const MOMO_PROVIDERS = [
   { value: 'mtn', label: 'MTN MoMo' },
@@ -177,7 +184,7 @@ export const MOMO_PROVIDERS = [
 ] as const
 
 export const paymentMethodLabel = (m: string, provider?: string | null) => {
-  const base = PAYMENT_METHODS.find((p) => p.value === m)?.label ?? m
+  const base = PAYMENT_METHODS.find((p) => p.value === m)?.label ?? LEGACY_METHOD_LABELS[m] ?? m
   if (m === 'momo' && provider) {
     const p = MOMO_PROVIDERS.find((x) => x.value === provider)?.label ?? provider
     return `MoMo · ${p}`
