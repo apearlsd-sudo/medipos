@@ -28,6 +28,9 @@ interface Purchase {
   status: string
   itemCount: number
   lineCount: number
+  receivedUnits: number
+  totalUnits: number
+  supplierInvoiceNo: string | null
 }
 
 interface Supplier { id: string; name: string }
@@ -129,16 +132,42 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
     }
   }
 
-  const receivePO = async (p: Purchase) => {
-    const res = await fetch(`/api/purchases/${p.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'receive' }),
-    })
+  // B4 — goods receipt (GRN) dialog: receive per line, capped at outstanding
+  const [grnTarget, setGrnTarget] = useState<Purchase | null>(null)
+  const [grnLines, setGrnLines] = useState<Array<{ id: string; name: string; qty: number; receivedQty: number; receive: string }>>([])
+  const [grnInvoice, setGrnInvoice] = useState('')
+  const [grnBusy, setGrnBusy] = useState(false)
+
+  const openGRN = async (p: Purchase) => {
+    setGrnTarget(p)
+    setGrnInvoice(p.supplierInvoiceNo ?? '')
+    const res = await fetch(`/api/purchases/${p.id}`, { cache: 'no-store' })
     const json = await res.json()
-    if (!res.ok) { toast({ title: 'Receive failed', description: json.error, variant: 'destructive' }); return }
-    toast({ title: `#${p.referenceNo} received`, description: `${json.received} line(s) added to stock.` })
-    load()
+    const items = (json.purchase?.items ?? []) as Array<{ id: string; name: string; qty: number; receivedQty: number }>
+    setGrnLines(items.map((l) => ({ id: l.id, name: l.name, qty: l.qty, receivedQty: l.receivedQty, receive: String(Math.max(0, l.qty - l.receivedQty)) })))
+  }
+
+  const submitGRN = async () => {
+    if (!grnTarget) return
+    const items = grnLines
+      .map((l) => ({ purchaseItemId: l.id, qty: Math.trunc(Number(l.receive) || 0) }))
+      .filter((x) => x.qty > 0)
+    if (items.length === 0) { toast({ title: 'Nothing to receive', description: 'Enter a quantity on at least one line.', variant: 'destructive' }); return }
+    setGrnBusy(true)
+    try {
+      const res = await fetch(`/api/purchases/${grnTarget.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'receive', items, supplierInvoiceNo: grnInvoice.trim() || undefined }),
+      })
+      const json = await res.json()
+      if (!res.ok) { toast({ title: 'Receive failed', description: json.error, variant: 'destructive' }); return }
+      toast({ title: `#${grnTarget.referenceNo} goods received`, description: `${json.units} unit(s) added to stock${json.purchase?.status === 'partial_receipt' ? ' — PO is now partially received' : ' — PO fully received'}.` })
+      setGrnTarget(null)
+      load()
+    } finally {
+      setGrnBusy(false)
+    }
   }
 
   const load = useCallback(async () => {
@@ -313,14 +342,22 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{fmtDate(p.purchaseDate)}</TableCell>
-                      <TableCell className="hidden md:table-cell text-center text-sm">{p.lineCount} lines / {p.itemCount} units</TableCell>
+                      <TableCell className="hidden md:table-cell text-center text-sm">
+                        {p.lineCount} lines / {p.itemCount} units
+                        {p.receivedUnits > 0 && p.receivedUnits < p.totalUnits && (
+                          <span className="ml-1 text-xs text-violet-600 dark:text-violet-400 tabular-nums">({p.receivedUnits} received)</span>
+                        )}
+                        {p.receivedUnits >= p.totalUnits && p.totalUnits > 0 && (
+                          <span className="ml-1 text-xs text-emerald-600 dark:text-emerald-400">(fully received)</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(p.totalAmount)}</TableCell>
                       <TableCell className="text-right tabular-nums">{p.dueAmount > 0 ? <span className="text-red-500">{fmtMoney(p.dueAmount)}</span> : '—'}</TableCell>
                       <TableCell className="text-center"><StatusBadge status={p.status} /></TableCell>
                       <TableCell className="text-right">
-                        {p.status === 'pending_receipt' && (
-                          <Button variant="outline" size="sm" className="mr-1.5 h-8 rounded-full bg-teal-50 text-xs text-teal-700 dark:bg-teal-500/10 dark:text-teal-300" onClick={() => receivePO(p)}>
-                            <PackagePlus className="h-3.5 w-3.5" /> Receive stock
+                        {(p.status === 'pending_receipt' || p.status === 'partial_receipt') && (
+                          <Button variant="outline" size="sm" className="mr-1.5 h-8 rounded-full bg-teal-50 text-xs text-teal-700 dark:bg-teal-500/10 dark:text-teal-300" onClick={() => openGRN(p)}>
+                            <PackagePlus className="h-3.5 w-3.5" /> {p.status === 'partial_receipt' ? 'Receive balance' : 'Receive stock'}
                           </Button>
                         )}
                         {p.dueAmount > 0 && (
@@ -397,6 +434,52 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* B4 — goods received note (GRN) dialog */}
+      <Dialog open={!!grnTarget} onOpenChange={(o) => !o && setGrnTarget(null)}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Goods received — #{grnTarget?.referenceNo}</DialogTitle>
+            <DialogDescription>Enter what physically arrived. Quantities are capped at what is still outstanding; partial receipts stay open for the balance.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Supplier invoice number (optional)</Label>
+              <Input value={grnInvoice} onChange={(e) => setGrnInvoice(e.target.value)} placeholder="e.g. SI-99123" />
+            </div>
+            <div className="rounded-xl border">
+              {grnLines.map((l, i) => {
+                const outstanding = l.qty - l.receivedQty
+                return (
+                  <div key={l.id} className={`flex items-center gap-3 px-3 py-2.5 text-sm ${i > 0 ? 'border-t' : ''}`}>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium">{l.name}</p>
+                      <p className="text-xs text-muted-foreground tabular-nums">ordered {l.qty} · received {l.receivedQty} · outstanding {outstanding}</p>
+                    </div>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={outstanding}
+                      value={l.receive}
+                      disabled={outstanding <= 0}
+                      onChange={(e) => setGrnLines((prev) => prev.map((r, j) => (j === i ? { ...r, receive: e.target.value } : r)))}
+                      className="h-8 w-24 text-right tabular-nums"
+                      aria-label={`Receive quantity for ${l.name}`}
+                    />
+                  </div>
+                )
+              })}
+              {grnLines.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No lines on this PO.</p>}
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setGrnTarget(null)}>Cancel</Button>
+            <Button onClick={submitGRN} disabled={grnBusy} className="bg-teal-600 hover:bg-teal-700">
+              {grnBusy ? 'Receiving…' : 'Post goods receipt'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
