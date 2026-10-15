@@ -10,7 +10,10 @@
 //   • navigations       → network → cached shell → /offline.html
 // Bumping CACHE_VERSION on deploy evicts every stale cache.
 // ---------------------------------------------------------------------------
-const CACHE_VERSION = 'medipos-v1'
+// v2 — recovery deploy after the hosting reset: the previously cached shell
+// referenced hashed chunks that no longer exist on disk, which silently broke
+// feature views. Bumping the version forces every client to evict and re-cache.
+const CACHE_VERSION = 'medipos-v2'
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

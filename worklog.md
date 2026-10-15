@@ -718,3 +718,19 @@ Work Log:
 
 Stage Summary:
 - The owner gets a true one-glance snapshot — revenue with tender mix, net position after refunds/expenses, tax, top sellers, an operations watchlist and the live target scoreboard — viewable for today/week/month in Reports and pushable to every configured WhatsApp/SMS recipient with one click. Roadmap extras (cash rounding, sales targets, owner digest) are now all shipped; the A1–C4 audit program completed earlier remains fully green.
+---
+Task ID: 61
+Agent: main
+Task: "some features are removed from the last updates" — regression report investigation + full-stack recovery deploy.
+
+Work Log:
+- DIAGNOSIS: server-side nothing was actually removed — all 50 components, 22 nav items, 17 Reports tabs (incl. Sales Targets + Owner Digest), 42 API module groups (all 200), 75 permissions and all role grants (verified against pre-Task-59 DB backup — cashier/attendant identical), Task 53–60 source and schema all intact at HEAD.
+- ROOT CAUSE CHAIN: the hosting environment reset (Oct 15 16:31) killed the production deployment (.server.pid/.hub.pid stale) and a heavyweight `next dev` was started instead; dmesg shows the OOM killer reaped next-server (RSS 2.3 GB in the 4 GB container) — the dev server died mid-session during this investigation; the sync hub :3003 was never restarted; and the PWA service worker (medipos-v1, never bumped) served the stale cached app shell whose hashed /_next/static chunks no longer existed after .next was wiped — whole feature views silently failed client-side. Hence "features removed".
+- FIX 1 (client): public/sw.js CACHE_VERSION medipos-v1 → medipos-v2 with a comment — forces every browser to evict the stale shell + dead chunk references on next visit and re-cache fresh.
+- FIX 2 (server): clean .next → production build (BUILD_EXIT=0) → scripts/relaunch.sh → HTTP:200 LOGIN:200 HUB:200 (production standalone :3000 + sync hub :3003 restored; hub /hub/health ok).
+- FIX 3 (test): e2e-tier4 "sw versioned cache present" hardcoded medipos-v1 → now version-agnostic (medipos-v[0-9]+) so future SW bumps don't false-fail.
+- VERIFY (browser E2E, zero page/console errors): login screen + admin login, all 22 sidebar items, Dashboard widgets + shift chip + branch selector, Reports ALL 17 tabs including live Sales Targets (empty-state correct) and Owner Digest (live revenue/tender/watchlist/push preview), POS F1 keyboard-shortcut overlay, Settings tax components (NHIL 2.5/GETFund 2.5/VAT 15) + master switch + Cash Rounding (coinless till) card.
+- REGRESSION: tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 = 136/136 green. backup-db.sh run (retention applied).
+
+Stage Summary:
+- No feature was lost in code — the outage was deployment drift after the hosting reset: OOM-killed dev server + dead sync hub + a stale service-worker shell pointing at purged build chunks. Production standalone + hub are restored, every browser will self-heal its cache via medipos-v2, and the full 136-test regression is green. Standing guidance: always deploy via scripts/relaunch.sh (production build), never leave next-dev running in this 4 GB container.

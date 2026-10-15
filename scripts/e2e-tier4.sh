@@ -250,7 +250,7 @@ IC512=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/icon-maskable-512.png")
 check "maskable icon served" "$IC512" "200"
 OH=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/offline.html")
 check "offline page served" "$OH" "200"
-SWCACHE=$(curl -s "$BASE/sw.js" | grep -c "medipos-v1")
+SWCACHE=$(curl -s "$BASE/sw.js" | grep -cE "medipos-v[0-9]+")
 [ "$SWCACHE" -ge 1 ] && check "sw versioned cache present" OK OK || check "sw versioned cache present" MISSING OK
 
 # --- teardown ------------------------------------------------------------------
