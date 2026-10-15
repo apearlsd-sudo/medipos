@@ -107,6 +107,12 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
         })
       }
       await tx.sale.update({ where: { id }, data: { saleStatus: 'cancelled', paymentStatus: 'refunded' } })
+      // A cancelled sale can never be claimed — void its claim so insurer
+      // receivables don't carry phantom money. Never touches settled claims.
+      await tx.insuranceClaim.updateMany({
+        where: { saleId: id, status: { in: ['pending', 'submitted'] } },
+        data: { status: 'rejected', note: `Sale ${existing.invoiceNo} cancelled — claim voided` },
+      })
     })
 
     return NextResponse.json({ success: true })

@@ -15,7 +15,9 @@
 // feature views. Bumping the version forces every client to evict and re-cache.
 // v3 — insurance receipts name the billed insurer + coverage %, per-sale
 // coverage override at the till, insurer edit dialog in Settings.
-const CACHE_VERSION = 'medipos-v3'
+// v4 — insurance formulary visibility: product "Insured" badges + filter,
+// cart coverage badges, per-insurer "cover all products" switch.
+const CACHE_VERSION = 'medipos-v4'
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

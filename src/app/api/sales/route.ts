@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
       const coveragePct = Number.isFinite(coverageOverride) && body.coveragePercent !== undefined && body.coveragePercent !== null
         ? Math.min(100, Math.max(0, +coverageOverride.toFixed(2)))
         : customer.insurer.coveragePercent
-      insurance = splitInsurance(lines, discount, coveragePct, customer.insurer.name)
+      insurance = splitInsurance(lines, discount, coveragePct, customer.insurer.name, customer.insurer.coversAll === true)
     }
     const patientTotal = insurance ? insurance.patientTotal : total
 

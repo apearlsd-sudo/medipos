@@ -21,7 +21,7 @@ import { useUser } from '@/components/pos/user-context'
 import { fmtDate, fmtMoney, currencySymbol, UNITS } from '@/lib/format'
 import { LABEL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import { useStoreSettings } from '@/lib/store-settings'
-import { Barcode, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, Tag, Trash2, Upload, X } from 'lucide-react'
+import { Barcode, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, ShieldCheck, Tag, Trash2, Upload, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -81,6 +81,7 @@ export function Medicines() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [stockFilter, setStockFilter] = useState('all')
   const [expiryFilter, setExpiryFilter] = useState('all')
+  const [insuranceFilter, setInsuranceFilter] = useState('all')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Med | null>(null)
   const [form, setForm] = useState(emptyForm)
@@ -95,6 +96,7 @@ export function Medicines() {
     setLoading(true)
     try {
       const params = new URLSearchParams({ status: statusFilter, categoryId: categoryFilter, stockFilter, expiryFilter })
+      if (insuranceFilter !== 'all') params.set('insurance', insuranceFilter)
       if (search.trim()) params.set('search', search.trim())
       const [mRes, cRes, sRes] = await Promise.all([
         fetch(`/api/medicines?${params}`, { cache: 'no-store' }),
@@ -108,7 +110,7 @@ export function Medicines() {
     } finally {
       setLoading(false)
     }
-  }, [search, categoryFilter, statusFilter, stockFilter, expiryFilter])
+  }, [search, categoryFilter, statusFilter, stockFilter, expiryFilter, insuranceFilter])
 
   useEffect(() => {
     const t = setTimeout(load, 250)
@@ -120,7 +122,8 @@ export function Medicines() {
     const low = meds.filter((m) => m.stockQty > 0 && m.stockQty <= m.reorderLevel).length
     const out = meds.filter((m) => m.stockQty === 0).length
     const value = meds.reduce((s, m) => s + m.stockQty * m.costPrice, 0)
-    return { total, low, out, value }
+    const insured = meds.filter((m) => m.insuranceCovered).length
+    return { total, low, out, value, insured }
   }, [meds])
 
   const openCreate = () => {
@@ -180,8 +183,8 @@ export function Medicines() {
   }
 
   const exportCSV = () => {
-    const rows = [['SKU', 'Name', 'Generic', 'Brand', 'Category', 'Supplier', 'Unit', 'Batch', 'Expiry', 'Stock', 'Reorder', 'Cost', 'Price', 'Rx', 'Status']]
-    meds.forEach((m) => rows.push([m.sku, m.name, m.genericName ?? '', m.brand ?? '', m.category.name, m.supplier?.name ?? '', m.unit, m.batchNumber ?? '', m.expiryDate ? fmtDate(m.expiryDate) : '', String(m.stockQty), String(m.reorderLevel), String(m.costPrice), String(m.sellingPrice), m.prescriptionRequired ? 'Yes' : 'No', m.status]))
+    const rows = [['SKU', 'Name', 'Generic', 'Brand', 'Category', 'Supplier', 'Unit', 'Batch', 'Expiry', 'Stock', 'Reorder', 'Cost', 'Price', 'Rx', 'Insured', 'Status']]
+    meds.forEach((m) => rows.push([m.sku, m.name, m.genericName ?? '', m.brand ?? '', m.category.name, m.supplier?.name ?? '', m.unit, m.batchNumber ?? '', m.expiryDate ? fmtDate(m.expiryDate) : '', String(m.stockQty), String(m.reorderLevel), String(m.costPrice), String(m.sellingPrice), m.prescriptionRequired ? 'Yes' : 'No', m.insuranceCovered ? 'Yes' : 'No', m.status]))
     const csv = rows.map((r) => r.map((c) => `"${c.replace(/"/g, '""')}"`).join(',')).join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a')
@@ -234,6 +237,7 @@ export function Medicines() {
         <Badge variant="outline" className="rounded-full border-amber-200 bg-amber-50 px-3 py-1.5 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-400">{stats.low} low stock</Badge>
         <Badge variant="outline" className="rounded-full border-red-200 bg-red-50 px-3 py-1.5 text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">{stats.out} out of stock</Badge>
         <Badge variant="outline" className="rounded-full px-3 py-1.5 text-teal-700 dark:text-teal-400">Stock value {fmtMoney(stats.value)}</Badge>
+        <Badge variant="outline" className="rounded-full border-teal-200 bg-teal-50 px-3 py-1.5 text-teal-700 dark:border-teal-500/20 dark:bg-teal-500/10 dark:text-teal-400">{stats.insured} insurance covered</Badge>
       </div>
 
       <Card>
@@ -265,6 +269,14 @@ export function Medicines() {
               <SelectItem value="all">All Expiry</SelectItem>
               <SelectItem value="expiring">Expiring ≤90d</SelectItem>
               <SelectItem value="expired">Expired</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={insuranceFilter} onValueChange={setInsuranceFilter}>
+            <SelectTrigger className="w-40 rounded-full" aria-label="Insurance coverage filter"><SelectValue placeholder="Insurance" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Insurance</SelectItem>
+              <SelectItem value="covered">Insurance Covered</SelectItem>
+              <SelectItem value="not-covered">Not Covered</SelectItem>
             </SelectContent>
           </Select>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -305,6 +317,11 @@ export function Medicines() {
                             <p className="flex items-center gap-1.5 truncate font-medium">
                               {m.name}
                               {m.prescriptionRequired && <Badge variant="secondary" className="rounded-full bg-sky-100 px-1.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">Rx</Badge>}
+                              {m.insuranceCovered && (
+                                <Badge variant="secondary" className="rounded-full bg-teal-100 px-1.5 text-[10px] font-bold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
+                                  <ShieldCheck className="mr-0.5 h-2.5 w-2.5" />Insured
+                                </Badge>
+                              )}
                             </p>
                             <p className="truncate text-xs text-muted-foreground">{m.sku} · {m.genericName ?? '—'}</p>
                           </div>

@@ -155,12 +155,14 @@ export interface InsuranceSplit {
 
 /** Split a cart total into the insurer's share and the patient's share.
  *  Coverage applies to covered lines (after their line discounts), pro-rated
- *  for the sale-level discount so the numbers always add up. */
+ *  for the sale-level discount so the numbers always add up. A scheme with
+ *  coversAll (no formulary) claims EVERY line, ignoring the product flag. */
 export function splitInsurance(
   lines: Array<{ total: number; covered: boolean }>,
   saleDiscount: number,
   coveragePercent: number,
   insurerName: string | null,
+  coversAll = false,
 ): InsuranceSplit {
   const gross = lines.reduce((s, l) => s + l.total, 0)
   if (gross <= 0) return { insuranceAmount: 0, patientTotal: 0, insurerName, coveragePercent, coveredLines: 0 }
@@ -168,7 +170,7 @@ export function splitInsurance(
   let insuranceAmount = 0
   let coveredLines = 0
   for (const l of lines) {
-    if (!l.covered) continue
+    if (!l.covered && !coversAll) continue
     coveredLines++
     insuranceAmount += l.total * discountRatio * (coveragePercent / 100)
   }

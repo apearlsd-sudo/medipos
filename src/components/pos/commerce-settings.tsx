@@ -21,6 +21,7 @@ interface Insurer {
   shortCode: string | null
   phone: string | null
   coveragePercent: number
+  coversAll: boolean
   active: boolean
   note: string | null
 }
@@ -37,7 +38,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   // here is the SCHEME DEFAULT new sales inherit; per-sale overrides happen at
   // the till and are stamped on each claim.
   const [editing, setEditing] = useState<Insurer | null>(null)
-  const [editForm, setEditForm] = useState({ name: '', shortCode: '', phone: '', coveragePercent: '80', note: '' })
+  const [editForm, setEditForm] = useState({ name: '', shortCode: '', phone: '', coveragePercent: '80', coversAll: false, note: '' })
   const [editSaving, setEditSaving] = useState(false)
 
   const [loyaltyEnabled, setLoyaltyEnabled] = useState(true)
@@ -127,7 +128,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
 
   const openEdit = (i: Insurer) => {
     setEditing(i)
-    setEditForm({ name: i.name, shortCode: i.shortCode ?? '', phone: i.phone ?? '', coveragePercent: String(i.coveragePercent), note: i.note ?? '' })
+    setEditForm({ name: i.name, shortCode: i.shortCode ?? '', phone: i.phone ?? '', coveragePercent: String(i.coveragePercent), coversAll: i.coversAll, note: i.note ?? '' })
   }
 
   const saveEdit = async () => {
@@ -139,7 +140,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       const res = await fetch(`/api/insurers/${editing.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: editForm.name.trim(), shortCode: editForm.shortCode, phone: editForm.phone, coveragePercent: cov, note: editForm.note }),
+        body: JSON.stringify({ name: editForm.name.trim(), shortCode: editForm.shortCode, phone: editForm.phone, coveragePercent: cov, coversAll: editForm.coversAll, note: editForm.note }),
       })
       const json = await res.json()
       if (!res.ok) { toast({ title: 'Save failed', description: json.error, variant: 'destructive' }); return }
@@ -335,7 +336,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-4 w-4 text-teal-500" /> Insurers &amp; NHIS Schemes</CardTitle>
-          <CardDescription>Insurance companies accepted at the till. Coverage % applies to medicines flagged &ldquo;Insurance Covered&rdquo;.</CardDescription>
+          <CardDescription>Insurance companies accepted at the till. Coverage % applies to products flagged “Insurance Covered” — or to every product when the scheme has “Cover all products” on.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Table>
@@ -345,7 +346,10 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
             <TableBody>
               {insurers.map((i) => (
                 <TableRow key={i.id}>
-                  <TableCell className="font-medium">{i.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {i.name}
+                    {i.coversAll && <Badge variant="secondary" className="ml-1.5 rounded-full bg-teal-100 px-1.5 text-[10px] font-bold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">all items</Badge>}
+                  </TableCell>
                   <TableCell>{i.shortCode ?? '—'}</TableCell>
                   <TableCell>{i.phone ?? '—'}</TableCell>
                   <TableCell className="text-center tabular-nums">{i.coveragePercent}%</TableCell>
@@ -420,6 +424,13 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
             <div className="space-y-1.5">
               <Label>Note</Label>
               <Input value={editForm.note} onChange={(e) => setEditForm({ ...editForm, note: e.target.value })} placeholder="Scheme remarks" />
+            </div>
+            <div className="col-span-2 flex items-center justify-between rounded-lg border p-3">
+              <div className="pr-3">
+                <Label>Cover all products</Label>
+                <p className="text-xs text-muted-foreground">No formulary — every item in the cart is claimable. Off: only products tagged “Insurance Covered” (in Products) are billed to this insurer.</p>
+              </div>
+              <Switch checked={editForm.coversAll} onCheckedChange={(v) => setEditForm({ ...editForm, coversAll: v })} aria-label="Cover all products" />
             </div>
           </div>
           <DialogFooter>

@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get('status')
     const stockFilter = searchParams.get('stockFilter') // all | low | out | adequate
     const expiryFilter = searchParams.get('expiryFilter') // all | expiring | expired
+    const insurance = searchParams.get('insurance') // all | covered | not-covered
     const scope = resolveBranchScope(gate.user, searchParams)
 
     const where: Record<string, unknown> = {}
@@ -55,6 +56,8 @@ export async function GET(req: NextRequest) {
     if (stockFilter === 'adequate') filtered = filtered.filter((m) => m.stockQty > m.reorderLevel)
     if (expiryFilter === 'expiring') filtered = filtered.filter((m) => m.expiryDate && m.expiryDate.getTime() - now < 90 * 86400000 && m.expiryDate.getTime() > now)
     if (expiryFilter === 'expired') filtered = filtered.filter((m) => m.expiryDate && m.expiryDate.getTime() <= now)
+    if (insurance === 'covered') filtered = filtered.filter((m) => m.insuranceCovered)
+    if (insurance === 'not-covered') filtered = filtered.filter((m) => !m.insuranceCovered)
 
     return NextResponse.json({ medicines: filtered })
   } catch (e) {

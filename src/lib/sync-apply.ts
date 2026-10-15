@@ -537,6 +537,7 @@ async function applyInsurerUpsert(op: WireOp, p: Record<string, unknown>): Promi
     shortCode: str(p.shortCode) || null,
     phone: str(p.phone) || null,
     coveragePercent: num(p.coveragePercent, 80),
+    coversAll: p.coversAll === true,
     active: p.active !== false,
     note: str(p.note) || null,
   }

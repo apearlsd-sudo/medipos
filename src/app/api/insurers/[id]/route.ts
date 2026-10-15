@@ -20,11 +20,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         shortCode: b.shortCode !== undefined ? b.shortCode?.trim() || null : existing.shortCode,
         phone: b.phone !== undefined ? b.phone?.trim() || null : existing.phone,
         coveragePercent: b.coveragePercent !== undefined ? Math.min(100, Math.max(0, Number(b.coveragePercent))) : existing.coveragePercent,
+        coversAll: b.coversAll !== undefined ? !!b.coversAll : existing.coversAll,
         active: b.active !== undefined ? !!b.active : existing.active,
         note: b.note !== undefined ? b.note?.trim() || null : existing.note,
       },
     })
-    void recordSyncOp('insurer.updated', insurer.name, { id: insurer.id, name: insurer.name, shortCode: insurer.shortCode, phone: insurer.phone, coveragePercent: insurer.coveragePercent, active: insurer.active, note: insurer.note })
+    void recordSyncOp('insurer.updated', insurer.name, { id: insurer.id, name: insurer.name, shortCode: insurer.shortCode, phone: insurer.phone, coveragePercent: insurer.coveragePercent, coversAll: insurer.coversAll, active: insurer.active, note: insurer.note })
     return NextResponse.json({ insurer })
   } catch {
     return NextResponse.json({ error: 'Failed to update insurer' }, { status: 500 })

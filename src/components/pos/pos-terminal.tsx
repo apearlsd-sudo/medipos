@@ -80,7 +80,7 @@ interface CustomerOption {
   insurerId?: string | null
   insuranceNo?: string | null
   allergies?: string | null
-  insurer?: { id: string; name: string; coveragePercent: number; active: boolean } | null
+  insurer?: { id: string; name: string; coveragePercent: number; coversAll?: boolean; active: boolean } | null
 }
 
 interface ApprovedDiscountRequest {
@@ -475,13 +475,17 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }, [insurer, useIns, coverageInput])
   // Gross value of cart lines the scheme actually covers (drives the "nothing
   // covered" warning — an insurance sale over an uncovered cart books no claim
-  // and the patient pays in full).
+  // and the patient pays in full). Schemes with coversAll have no formulary:
+  // every cart line is claimable regardless of the product flag.
+  const coversEverything = insurer?.coversAll === true
+  const coveredIdSet = useMemo(() => new Set(meds.filter((m) => m.insuranceCovered).map((m) => m.id)), [meds])
   const coveredGross = useMemo(
-    () => cart.reduce((s, l) => {
-      const med = meds.find((m) => m.id === l.medicineId)
-      return med?.insuranceCovered ? s + l.unitPrice * l.qty : s
-    }, 0),
-    [cart, meds],
+    () => cart.reduce((s, l) => (coversEverything || coveredIdSet.has(l.medicineId) ? s + l.unitPrice * l.qty : s), 0),
+    [cart, coveredIdSet, coversEverything],
+  )
+  const coveredCount = useMemo(
+    () => (coversEverything ? cart.length : cart.filter((l) => coveredIdSet.has(l.medicineId)).length),
+    [cart, coveredIdSet, coversEverything],
   )
   const insuranceEstimate = useMemo(() => {
     if (!useIns || !insurer) return 0
@@ -1049,6 +1053,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                     <p className="truncate text-sm font-medium">{l.name}</p>
                     <p className="text-xs text-muted-foreground tabular-nums">{fmtMoney(l.unitPrice)} / {l.unit} × {l.qty} = <span className="font-semibold text-foreground">{fmtMoney(l.unitPrice * l.qty)}</span></p>
                     {l.prescriptionRequired && <Badge variant="secondary" className="mt-1 rounded-full bg-sky-100 text-[10px] text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">Rx item</Badge>}
+                    {coveredIdSet.has(l.medicineId) && (
+                      <Badge variant="secondary" className="mt-1 rounded-full bg-teal-100 text-[10px] font-medium text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
+                        <ShieldCheck className="mr-0.5 h-2.5 w-2.5" /> Insurance covered
+                      </Badge>
+                    )}
                     {swapSuggestions.get(l.medicineId) && (
                       <button
                         onClick={() => {
@@ -1230,7 +1239,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                   <label className="flex cursor-pointer items-center justify-between rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-2.5 text-sm dark:border-teal-500/30 dark:bg-teal-500/10">
                     <span>
                       <span className="font-medium">Use insurance</span>
-                      <span className="ml-1.5 text-xs text-muted-foreground">{insurer.name} · {coveragePct}% on covered items{selectedCustomer?.insuranceNo ? ` · ${selectedCustomer.insuranceNo}` : ''}</span>
+                      <span className="ml-1.5 text-xs text-muted-foreground">{insurer.name} · {coveragePct}% on {coversEverything ? 'all items' : 'covered items'}{selectedCustomer?.insuranceNo ? ` · ${selectedCustomer.insuranceNo}` : ''}</span>
                     </span>
                     <input type="checkbox" checked={useIns} disabled={paymentMethod === 'insurance'} onChange={(e) => setUseInsurance(e.target.checked)} className="h-4 w-4 accent-teal-600 disabled:opacity-60" />
                   </label>
@@ -1259,9 +1268,15 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                       <p className="text-xs tabular-nums text-teal-700 dark:text-teal-300">
                         Billed to {insurer.name} at {coveragePct}% · patient pays {fmtMoney(patientTotal)}
                       </p>
+                      {cart.length > 0 && (
+                        <p className="text-xs tabular-nums text-muted-foreground">
+                          {coveredCount} of {cart.length} item{cart.length === 1 ? '' : 's'} covered · insured value {fmtMoney(coveredGross)}
+                          {coversEverything ? ' (scheme covers all products)' : ' — only products tagged “Insurance Covered” in Products are claimable'}
+                        </p>
+                      )}
                       {coveredGross <= 0 && (
                         <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
-                          No insurance-covered items in the cart — the patient pays the full amount and no claim is booked.
+                          No insurance-covered items in the cart — the patient pays the full amount and no claim is booked. Tag products as “Insurance Covered” in Products, or enable “Cover all products” on the insurer in Settings.
                         </p>
                       )}
                     </div>

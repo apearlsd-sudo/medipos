@@ -196,6 +196,7 @@ model Insurer {
   shortCode       String?
   phone           String?
   coveragePercent Float    @default(80) // % of a covered item's price the insurer pays
+  coversAll       Boolean  @default(false) // true = no formulary: EVERY cart item is claimable (ignores the product flag)
   active          Boolean  @default(true)
   note            String?
   customers       Customer[]
