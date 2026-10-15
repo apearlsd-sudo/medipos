@@ -15,11 +15,81 @@ export interface LoyaltySettings {
   /** max share of the payable amount a single redemption may cover (%) */
   maxRedeemPct: number
   enabled: boolean
+  /** spend-tier campaign: members above a threshold earn multiplier× points */
+  tiersEnabled: boolean
+  tiers: LoyaltyTier[]
+  /** birthday campaign: flat bonus points on purchases inside the window */
+  birthdayEnabled: boolean
+  birthdayPoints: number
+  birthdayWindowDays: number
+}
+
+export interface LoyaltyTier {
+  name: string
+  /** lifetime patient-paid spend needed to reach the tier */
+  minSpend: number
+  /** points multiplier while in the tier (1 = base rate) */
+  multiplier: number
+}
+
+export const DEFAULT_LOYALTY_TIERS: LoyaltyTier[] = [
+  { name: 'Silver', minSpend: 0, multiplier: 1 },
+  { name: 'Gold', minSpend: 1000, multiplier: 1.5 },
+  { name: 'Platinum', minSpend: 5000, multiplier: 2 },
+]
+
+/** Parses the stored tiers JSON; falls back to the default ladder when absent/invalid. */
+export function parseLoyaltyTiers(raw: string | null | undefined): LoyaltyTier[] {
+  try {
+    if (!raw) return DEFAULT_LOYALTY_TIERS
+    const arr: unknown = JSON.parse(raw)
+    if (!Array.isArray(arr)) return DEFAULT_LOYALTY_TIERS
+    const cleaned = arr.slice(0, 6).map((t) => {
+      const row = t as Record<string, unknown>
+      return {
+        name: String(row?.name ?? '').trim().slice(0, 24) || 'Tier',
+        minSpend: Math.max(0, Number(row?.minSpend) || 0),
+        multiplier: Math.min(10, Math.max(0.1, Number(row?.multiplier) || 1)),
+      }
+    })
+    return cleaned.length ? cleaned : DEFAULT_LOYALTY_TIERS
+  } catch {
+    return DEFAULT_LOYALTY_TIERS
+  }
+}
+
+/** Highest tier whose threshold the lifetime spend has reached (tiers need not be sorted). */
+export function resolveTier(totalSpend: number, tiers: LoyaltyTier[]): LoyaltyTier | null {
+  if (!Number.isFinite(totalSpend) || totalSpend < 0) return null
+  const sorted = [...tiers].sort((a, b) => b.minSpend - a.minSpend)
+  return sorted.find((t) => totalSpend >= t.minSpend) ?? null
+}
+
+/** Whether `birthday`'s month/day falls within `windowDays` of `today` (year-agnostic, wrap-safe). */
+export function isBirthdayInWindow(birthday: Date | null | undefined, today: Date, windowDays: number): boolean {
+  if (!birthday || !(birthday instanceof Date) || Number.isNaN(birthday.getTime())) return false
+  const w = Math.max(0, Math.min(31, Math.trunc(windowDays || 0)))
+  // Project both month/days onto a non-leap year and measure ring distance (handles Dec↔Jan wrap).
+  const doy = (d: Date) => {
+    const start = Date.UTC(2001, 0, 1)
+    return Math.round((Date.UTC(2001, d.getUTCMonth(), d.getUTCDate()) - start) / 86_400_000)
+  }
+  const b = doy(birthday)
+  const t = doy(today)
+  const diff = Math.abs(t - b)
+  return Math.min(diff, 365 - diff) <= w
 }
 
 export async function loyaltySettings(): Promise<LoyaltySettings> {
   const rows = await db.storeSetting.findMany({
-    where: { key: { in: ['loyaltyEnabled', 'loyaltyEarnRate', 'loyaltyPointValue', 'loyaltyMaxRedeemPct'] } },
+    where: {
+      key: {
+        in: [
+          'loyaltyEnabled', 'loyaltyEarnRate', 'loyaltyPointValue', 'loyaltyMaxRedeemPct',
+          'loyaltyTiersEnabled', 'loyaltyTiers', 'loyaltyBirthdayEnabled', 'loyaltyBirthdayPoints', 'loyaltyBirthdayWindowDays',
+        ],
+      },
+    },
   })
   const map = new Map(rows.map((r) => [r.key, r.value]))
   return {
@@ -27,6 +97,11 @@ export async function loyaltySettings(): Promise<LoyaltySettings> {
     earnRate: Number(map.get('loyaltyEarnRate') ?? '0.1') || 0.1,
     pointValue: Number(map.get('loyaltyPointValue') ?? '0.05') || 0.05,
     maxRedeemPct: Math.min(100, Math.max(0, Number(map.get('loyaltyMaxRedeemPct') ?? '50'))),
+    tiersEnabled: (map.get('loyaltyTiersEnabled') ?? 'true') === 'true',
+    tiers: parseLoyaltyTiers(map.get('loyaltyTiers')),
+    birthdayEnabled: (map.get('loyaltyBirthdayEnabled') ?? 'true') === 'true',
+    birthdayPoints: Math.max(0, Math.trunc(Number(map.get('loyaltyBirthdayPoints') ?? '20')) || 0),
+    birthdayWindowDays: Math.max(0, Math.min(31, Math.trunc(Number(map.get('loyaltyBirthdayWindowDays') ?? '3')) || 0)),
   }
 }
 
@@ -44,6 +119,12 @@ export function customerWriteData(body: Record<string, unknown>) {
     phone: typeof body.phone === 'string' ? body.phone || null : undefined,
     address: typeof body.address === 'string' ? body.address || null : undefined,
     note: typeof body.note === 'string' ? body.note || null : undefined,
+    birthday:
+      body.birthday !== undefined
+        ? typeof body.birthday === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(body.birthday)
+          ? new Date(`${body.birthday}T00:00:00.000Z`)
+          : null
+        : undefined,
     creditLimit: body.creditLimit !== undefined ? Math.max(0, Number(body.creditLimit) || 0) : undefined,
     insurerId: body.insurerId !== undefined ? (typeof body.insurerId === 'string' && body.insurerId ? body.insurerId : null) : undefined,
     insuranceNo: body.insuranceNo !== undefined ? (typeof body.insuranceNo === 'string' && body.insuranceNo.trim() ? body.insuranceNo.trim() : null) : undefined,
@@ -112,8 +193,9 @@ export function resolveRedemption(
   return { points, value: +(points * s.pointValue).toFixed(2) }
 }
 
-/** Points earned for an amount actually paid by the patient. */
-export function earnFor(dueAmount: number, s: LoyaltySettings): number {
+/** Points earned for an amount actually paid by the patient, with tier multiplier and birthday bonus. */
+export function earnFor(dueAmount: number, s: LoyaltySettings, multiplier = 1, bonusPoints = 0): number {
   if (!s.enabled || dueAmount <= 0) return 0
-  return Math.floor(dueAmount * s.earnRate)
+  const base = Math.floor(dueAmount * s.earnRate * Math.max(0, multiplier))
+  return base + Math.max(0, Math.trunc(bonusPoints))
 }

@@ -168,13 +168,14 @@ model Medicine {
 }
 
 model Customer {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   name        String
   email       String?
   phone       String?
   address     String?
   note        String?
-  creditLimit Float    @default(0) // 0 = credit sales not allowed
+  birthday    DateTime? // month/day drives the loyalty birthday bonus
+  creditLimit Float     @default(0) // 0 = credit sales not allowed
   points      Int      @default(0) // loyalty points balance
   insurerId   String?
   insurer     Insurer? @relation(fields: [insurerId], references: [id])

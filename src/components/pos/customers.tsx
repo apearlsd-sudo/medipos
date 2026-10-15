@@ -31,6 +31,8 @@ interface Customer {
   insurerId: string | null
   insuranceNo: string | null
   allergies: string | null
+  birthday?: string | null
+  tier?: string | null
   insurer?: { id: string; name: string; coveragePercent: number; active: boolean } | null
   totalOrders: number
   totalSpent: number
@@ -56,7 +58,7 @@ interface LedgerEntry {
   createdAt: string
 }
 
-const empty = { name: '', email: '', phone: '', address: '', note: '', creditLimit: '0', insurerId: 'none', insuranceNo: '', allergies: '' }
+const empty = { name: '', email: '', phone: '', address: '', note: '', creditLimit: '0', insurerId: 'none', insuranceNo: '', allergies: '', birthday: '' }
 
 export function Customers() {
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -139,6 +141,7 @@ export function Customers() {
         ...form,
         creditLimit: Number(form.creditLimit) || 0,
         insurerId: form.insurerId === 'none' ? null : form.insurerId,
+        birthday: form.birthday || null,
       }
       const res = await fetch(editing ? `/api/customers/${editing.id}` : '/api/customers', {
         method: editing ? 'PUT' : 'POST',
@@ -219,7 +222,12 @@ export function Customers() {
                         <p className="text-xs text-muted-foreground">{c.email ?? ''}</p>
                       </TableCell>
                       <TableCell className="text-center font-medium tabular-nums">{c.totalOrders}</TableCell>
-                      <TableCell className="text-center"><Badge variant="outline" className="tabular-nums">{c.points ?? 0} pts</Badge></TableCell>
+                      <TableCell className="text-center">
+                        <div className="flex flex-col items-center gap-1">
+                          <Badge variant="outline" className="tabular-nums">{c.points ?? 0} pts</Badge>
+                          {c.tier && <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">{c.tier}</Badge>}
+                        </div>
+                      </TableCell>
                       <TableCell className="text-right">
                         {(c.balance ?? 0) > 0 ? (
                           <button onClick={() => openBook(c)} className="font-semibold tabular-nums text-amber-600 hover:underline dark:text-amber-400">{fmtMoney(c.balance)}</button>
@@ -236,7 +244,7 @@ export function Customers() {
                           <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => openBook(c)}><BookOpen className="h-4 w-4" /> Credit book</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => { setEditing(c); setForm({ name: c.name, email: c.email ?? '', phone: c.phone ?? '', address: c.address ?? '', note: c.note ?? '', creditLimit: String(c.creditLimit ?? 0), insurerId: c.insurerId ?? 'none', insuranceNo: c.insuranceNo ?? '', allergies: c.allergies ?? '' }); setDialogOpen(true) }}>
+                            <DropdownMenuItem onClick={() => { setEditing(c); setForm({ name: c.name, email: c.email ?? '', phone: c.phone ?? '', address: c.address ?? '', note: c.note ?? '', creditLimit: String(c.creditLimit ?? 0), insurerId: c.insurerId ?? 'none', insuranceNo: c.insuranceNo ?? '', allergies: c.allergies ?? '', birthday: c.birthday ? c.birthday.slice(0, 10) : '' }); setDialogOpen(true) }}>
                               <Pencil className="h-4 w-4" /> Edit
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => remove(c)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>
@@ -279,6 +287,11 @@ export function Customers() {
                 <Label>Insurance No.</Label>
                 <Input value={form.insuranceNo} onChange={(e) => setForm({ ...form, insuranceNo: e.target.value })} placeholder="NHIS / member no." />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Birthday</Label>
+              <Input type="date" value={form.birthday} onChange={(e) => setForm({ ...form, birthday: e.target.value })} />
+              <p className="text-xs text-muted-foreground">Used for the loyalty birthday bonus window</p>
             </div>
             <div className="space-y-1.5">
               <Label>Insurer</Label>

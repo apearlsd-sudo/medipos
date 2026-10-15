@@ -612,11 +612,13 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         shiftNo: json.sale?.shift?.shiftNo ?? null,
         approvedByName: json.sale?.approvedByName ?? null,
         branchName: json.sale?.branchRef?.name ?? null,
+        loyaltyTier: json.loyalty?.tier ?? null,
+        birthdayBonus: json.loyalty?.birthdayBonus ?? 0,
         customerCreditBalance: json.sale?.paymentMethod === 'credit' && selectedCustomer ? +( (selectedCustomer.balance ?? 0) + payable ).toFixed(2) : undefined,
       })
       if (json.claimNo) toast({ title: `Insurance claim ${json.claimNo} created`, description: `${fmtMoney(json.insurance?.insuranceAmount ?? 0)} billed to ${json.insurance?.insurerName ?? 'the insurer'}.` })
       if (json.loyalty && (json.loyalty.earned > 0 || json.loyalty.redeemed > 0)) {
-        toast({ title: 'Loyalty updated', description: `${json.loyalty.redeemed > 0 ? `Redeemed ${json.loyalty.redeemed} pts · ` : ''}Earned ${json.loyalty.earned} pts · balance ${json.loyalty.balance} pts.` })
+        toast({ title: json.loyalty.tier ? `Loyalty updated — ${json.loyalty.tier} member` : 'Loyalty updated', description: `${json.loyalty.redeemed > 0 ? `Redeemed ${json.loyalty.redeemed} pts · ` : ''}Earned ${json.loyalty.earned} pts${json.loyalty.birthdayBonus > 0 ? ' (incl. birthday bonus)' : ''} · balance ${json.loyalty.balance} pts.` })
       }
       setCart([])
       setOrderDiscount(0)

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requireUser, requirePermission } from '@/lib/auth'
 import { recordSyncOp } from '@/lib/sync'
-import { creditBalance, customerWriteData } from '@/lib/pos-finance'
+import { creditBalance, customerWriteData, loyaltySettings, resolveTier } from '@/lib/pos-finance'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -18,6 +18,17 @@ export async function GET(req: NextRequest) {
       include: { sales: { select: { total: true, createdAt: true } }, insurer: true },
       orderBy: { createdAt: 'desc' },
     })
+    // Loyalty tier per customer: lifetime patient-paid spend → configured tier ladder
+    const loyalty = await loyaltySettings()
+    const ids = customers.map((c) => c.id)
+    const spendRows = ids.length
+      ? await db.sale.groupBy({
+          by: ['customerId'],
+          where: { customerId: { in: ids }, paymentStatus: 'paid' },
+          _sum: { paidAmount: true },
+        })
+      : []
+    const spendMap = new Map(spendRows.map((r) => [r.customerId, +(r._sum.paidAmount ?? 0)]))
     const withStats = await Promise.all(
       customers.map(async (c) => ({
         ...c,
@@ -25,6 +36,8 @@ export async function GET(req: NextRequest) {
         totalSpent: +c.sales.reduce((s, x) => s + x.total, 0).toFixed(2),
         lastPurchase: c.sales.length > 0 ? c.sales.map((s) => s.createdAt).sort((a, b) => b.getTime() - a.getTime())[0] : null,
         balance: await creditBalance(c.id),
+        qualifyingSpend: loyalty.tiersEnabled ? +(spendMap.get(c.id) ?? 0).toFixed(2) : undefined,
+        tier: loyalty.tiersEnabled ? resolveTier(spendMap.get(c.id) ?? 0, loyalty.tiers)?.name ?? null : null,
         sales: undefined,
       })),
     )

@@ -25,6 +25,8 @@ export interface ReceiptSale {
   pointsEarned?: number
   pointsRedeemed?: number
   pointsValue?: number
+  loyaltyTier?: string | null
+  birthdayBonus?: number
   insuranceAmount?: number
   customerCreditBalance?: number | null
   offlineQueued?: boolean
@@ -219,7 +221,12 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
       )}
       {!!sale.pointsEarned && sale.pointsEarned > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-          <span>Points earned</span><span>+{sale.pointsEarned}</span>
+          <span>Points earned{sale.loyaltyTier ? ` (${sale.loyaltyTier})` : ''}</span><span>+{sale.pointsEarned}</span>
+        </div>
+      )}
+      {!!sale.birthdayBonus && sale.birthdayBonus > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+          <span>Birthday bonus</span><span>+{sale.birthdayBonus}</span>
         </div>
       )}
       {sale.changeAmount > 0 && (

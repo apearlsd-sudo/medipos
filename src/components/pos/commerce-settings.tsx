@@ -37,6 +37,19 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   const [maxRedeemPct, setMaxRedeemPct] = useState('50')
   const [loyaltySaving, setLoyaltySaving] = useState(false)
 
+  // C1 — spend tiers + birthday campaign
+  interface TierRow { name: string; minSpend: string; multiplier: string }
+  const DEFAULT_TIER_ROWS: TierRow[] = [
+    { name: 'Silver', minSpend: '0', multiplier: '1' },
+    { name: 'Gold', minSpend: '1000', multiplier: '1.5' },
+    { name: 'Platinum', minSpend: '5000', multiplier: '2' },
+  ]
+  const [tiersEnabled, setTiersEnabled] = useState(true)
+  const [tiers, setTiers] = useState<TierRow[]>(DEFAULT_TIER_ROWS)
+  const [birthdayEnabled, setBirthdayEnabled] = useState(true)
+  const [birthdayPoints, setBirthdayPoints] = useState('20')
+  const [birthdayWindowDays, setBirthdayWindowDays] = useState('3')
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -52,6 +65,16 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       setEarnRate(s.loyaltyEarnRate ?? '0.1')
       setPointValue(s.loyaltyPointValue ?? '0.05')
       setMaxRedeemPct(s.loyaltyMaxRedeemPct ?? '50')
+      setTiersEnabled(s.loyaltyTiersEnabled !== 'false')
+      setBirthdayEnabled(s.loyaltyBirthdayEnabled !== 'false')
+      setBirthdayPoints(s.loyaltyBirthdayPoints ?? '20')
+      setBirthdayWindowDays(s.loyaltyBirthdayWindowDays ?? '3')
+      try {
+        const parsed = s.loyaltyTiers ? JSON.parse(s.loyaltyTiers) : null
+        if (Array.isArray(parsed) && parsed.length) {
+          setTiers(parsed.slice(0, 6).map((t) => ({ name: String(t?.name ?? ''), minSpend: String(t?.minSpend ?? 0), multiplier: String(t?.multiplier ?? 1) })))
+        } else setTiers(DEFAULT_TIER_ROWS)
+      } catch { setTiers(DEFAULT_TIER_ROWS) }
     } finally {
       setLoading(false)
     }
@@ -97,6 +120,10 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   }
 
   const saveLoyalty = async () => {
+    const cleanedTiers = tiers
+      .map((t) => ({ name: t.name.trim().slice(0, 24) || 'Tier', minSpend: Math.max(0, Number(t.minSpend) || 0), multiplier: Math.min(10, Math.max(0.1, Number(t.multiplier) || 1)) }))
+      .slice(0, 6)
+    if (!cleanedTiers.length) { toast({ title: 'Add at least one tier', variant: 'destructive' }); return }
     setLoyaltySaving(true)
     try {
       const res = await fetch('/api/settings', {
@@ -107,6 +134,11 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
           loyaltyEarnRate: String(Number(earnRate) || 0.1),
           loyaltyPointValue: String(Number(pointValue) || 0.05),
           loyaltyMaxRedeemPct: String(Number(maxRedeemPct) || 50),
+          loyaltyTiersEnabled: String(tiersEnabled),
+          loyaltyTiers: JSON.stringify(cleanedTiers),
+          loyaltyBirthdayEnabled: String(birthdayEnabled),
+          loyaltyBirthdayPoints: String(Math.max(0, Math.trunc(Number(birthdayPoints) || 0))),
+          loyaltyBirthdayWindowDays: String(Math.max(0, Math.min(31, Math.trunc(Number(birthdayWindowDays) || 0)))),
         }),
       })
       if (!res.ok) { toast({ title: 'Save failed', variant: 'destructive' }); return }
@@ -151,6 +183,60 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
               <p className="text-xs text-muted-foreground">Guards against full-point payouts</p>
             </div>
           </div>
+
+          {/* C1 — spend tiers */}
+          <div className="space-y-3 rounded-xl border p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Spend tiers (multiplier campaign)</Label>
+                <p className="text-xs text-muted-foreground">Customers who reach a lifetime-spend threshold earn that tier&rsquo;s multiplier on every new purchase.</p>
+              </div>
+              <Switch checked={tiersEnabled} disabled={!canEdit} onCheckedChange={setTiersEnabled} />
+            </div>
+            {tiersEnabled && (
+              <>
+                <div className="space-y-2">
+                  {tiers.map((t, idx) => (
+                    <div key={idx} className="grid grid-cols-[1fr_110px_90px_36px] items-center gap-2">
+                      <Input disabled={!canEdit} value={t.name} onChange={(e) => setTiers(tiers.map((x, i) => (i === idx ? { ...x, name: e.target.value } : x)))} placeholder="Tier name" aria-label="Tier name" />
+                      <Input disabled={!canEdit} type="number" min={0} step="1" value={t.minSpend} onChange={(e) => setTiers(tiers.map((x, i) => (i === idx ? { ...x, minSpend: e.target.value } : x)))} placeholder="From spend" aria-label="Tier threshold" className="tabular-nums" />
+                      <Input disabled={!canEdit} type="number" min={0.1} max={10} step="0.1" value={t.multiplier} onChange={(e) => setTiers(tiers.map((x, i) => (i === idx ? { ...x, multiplier: e.target.value } : x)))} aria-label="Tier multiplier" className="tabular-nums" />
+                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" disabled={!canEdit || tiers.length <= 1} onClick={() => setTiers(tiers.filter((_, i) => i !== idx))} aria-label="Remove tier"><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between">
+                  <Button variant="outline" size="sm" className="rounded-full" disabled={!canEdit || tiers.length >= 6} onClick={() => setTiers([...tiers, { name: '', minSpend: '0', multiplier: '1' }])}><Plus className="h-4 w-4" /> Add tier</Button>
+                  <p className="text-xs text-muted-foreground">Threshold = lifetime amount the customer actually paid.</p>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* C1 — birthday campaign */}
+          <div className="space-y-3 rounded-xl border p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Birthday bonus</Label>
+                <p className="text-xs text-muted-foreground">Extra flat points when a customer with a birthday on file shops within the window around their day.</p>
+              </div>
+              <Switch checked={birthdayEnabled} disabled={!canEdit} onCheckedChange={setBirthdayEnabled} />
+            </div>
+            {birthdayEnabled && (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Bonus points</Label>
+                  <Input disabled={!canEdit} type="number" min={0} step="1" value={birthdayPoints} onChange={(e) => setBirthdayPoints(e.target.value)} className="tabular-nums" />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Window (days before/after)</Label>
+                  <Input disabled={!canEdit} type="number" min={0} max={31} step="1" value={birthdayWindowDays} onChange={(e) => setBirthdayWindowDays(e.target.value)} className="tabular-nums" />
+                  <p className="text-xs text-muted-foreground">0 = exactly on the day</p>
+                </div>
+              </div>
+            )}
+          </div>
+
           <Button onClick={saveLoyalty} disabled={!canEdit || loyaltySaving} className="rounded-full bg-teal-600 hover:bg-teal-700">
             {loyaltySaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Loyalty Rules
           </Button>

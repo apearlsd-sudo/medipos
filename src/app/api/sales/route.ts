@@ -7,7 +7,7 @@ import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
 import { recordSyncOp } from '@/lib/sync'
 import { planPackSale } from '@/lib/packs'
-import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider } from '@/lib/pos-finance'
+import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider, resolveTier, isBirthdayInWindow } from '@/lib/pos-finance'
 import { sumComponentPcts } from '@/lib/tax-components'
 
 export async function GET(req: NextRequest) {
@@ -351,9 +351,25 @@ export async function POST(req: NextRequest) {
       orderBy: { startedAt: 'desc' },
     })
 
-    // Loyalty earn: on what the patient actually pays now (not on credit)
+    // Loyalty earn: on what the patient actually pays now (not on credit).
+    // Tier multiplier uses lifetime patient-paid spend (prior purchases); the
+    // birthday campaign adds a flat bonus inside the configured window.
     const earnsPoints = paymentStatus === 'paid' && due > 0
-    const pointsEarned = earnsPoints && customer ? earnFor(due, loyalty) : 0
+    let tier: ReturnType<typeof resolveTier> = null
+    let birthdayBonus = 0
+    if (earnsPoints && customer && loyalty.enabled) {
+      if (loyalty.tiersEnabled) {
+        const paidAgg = await db.sale.aggregate({
+          where: { customerId: customer.id, paymentStatus: 'paid' },
+          _sum: { paidAmount: true },
+        })
+        tier = resolveTier(+(paidAgg._sum.paidAmount ?? 0), loyalty.tiers)
+      }
+      if (loyalty.birthdayEnabled && isBirthdayInWindow(customer.birthday, new Date(), loyalty.birthdayWindowDays)) {
+        birthdayBonus = loyalty.birthdayPoints
+      }
+    }
+    const pointsEarned = earnsPoints && customer ? earnFor(due, loyalty, tier?.multiplier ?? 1, birthdayBonus) : 0
 
     const sale = await db.$transaction(async (tx) => {
       const created = await tx.sale.create({
@@ -429,8 +445,12 @@ export async function POST(req: NextRequest) {
           })
         }
         if (pointsEarned > 0) {
+          const earnNote =
+            `Earned on ${invoiceNo}` +
+            (tier && tier.multiplier !== 1 ? ` — ${tier.name} ×${tier.multiplier}` : '') +
+            (birthdayBonus > 0 ? ` — incl. ${birthdayBonus} birthday bonus` : '')
           await tx.loyaltyLog.create({
-            data: { customerId: customer.id, branchId: saleBranchId, saleId: created.id, type: 'earn', points: pointsEarned, note: `Earned on ${invoiceNo}` },
+            data: { customerId: customer.id, branchId: saleBranchId, saleId: created.id, type: 'earn', points: pointsEarned, note: earnNote },
           })
         }
         await tx.customer.update({
@@ -528,7 +548,7 @@ export async function POST(req: NextRequest) {
         sale: sale.created,
         claimNo: sale.claimNo,
         insurance: insurance ?? undefined,
-        loyalty: customer ? { earned: pointsEarned, redeemed: redemption.points, value: redemption.value, balance: customer.points + pointsEarned - redemption.points } : undefined,
+        loyalty: customer ? { earned: pointsEarned, redeemed: redemption.points, value: redemption.value, balance: customer.points + pointsEarned - redemption.points, tier: tier?.name ?? null, birthdayBonus } : undefined,
         due,
       },
       { status: 201 },
