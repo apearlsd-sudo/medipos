@@ -33,6 +33,8 @@ export interface ReceiptSale {
   insuranceAmount?: number
   /** Insurer billed on this sale — shown with the claim row when present. */
   insurerName?: string | null
+  /** Coverage % actually applied to the claim (stamped on the claim at booking). */
+  insuranceCoveragePct?: number | null
   customerCreditBalance?: number | null
   offlineQueued?: boolean
   cashierName?: string
@@ -226,9 +228,16 @@ export function ThermalReceipt({ sale, settings, variant = 'sale', originInvoice
         )
       })()}
       {!!sale.insuranceAmount && sale.insuranceAmount > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-          <span>Insurance claim{sale.insurerName ? ` (${sale.insurerName})` : ''}</span><span>-{fmtMoney(sale.insuranceAmount)}</span>
-        </div>
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+            <span>Insurance claim{sale.insurerName ? ` (${sale.insurerName}${typeof sale.insuranceCoveragePct === 'number' ? ` · ${sale.insuranceCoveragePct}%` : ''})` : ''}</span><span>-{fmtMoney(sale.insuranceAmount)}</span>
+          </div>
+          {typeof sale.insuranceCoveragePct === 'number' && (
+            <div style={{ fontSize: '9px', color: '#333' }}>
+              Billed at {sale.insuranceCoveragePct}% coverage{sale.paymentMethod === 'insurance' ? ' — balance paid by patient' : ''}
+            </div>
+          )}
+        </>
       )}
       {!!sale.pointsValue && sale.pointsValue > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>

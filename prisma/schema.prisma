@@ -248,6 +248,9 @@ model InsuranceClaim {
   insurer     Insurer   @relation(fields: [insurerId], references: [id])
   branchId    String?
   claimAmount Float     @default(0)
+  // Coverage % actually billed at booking time (may differ from the insurer's
+  // current default after a settings edit) — receipts quote this figure.
+  coveragePercent Float?
   status      String    @default("pending") // pending | submitted | paid | rejected
   submittedAt DateTime?
   paidAt      DateTime?

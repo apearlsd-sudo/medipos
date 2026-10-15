@@ -13,7 +13,9 @@
 // v2 — recovery deploy after the hosting reset: the previously cached shell
 // referenced hashed chunks that no longer exist on disk, which silently broke
 // feature views. Bumping the version forces every client to evict and re-cache.
-const CACHE_VERSION = 'medipos-v2'
+// v3 — insurance receipts name the billed insurer + coverage %, per-sale
+// coverage override at the till, insurer edit dialog in Settings.
+const CACHE_VERSION = 'medipos-v3'
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

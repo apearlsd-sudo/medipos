@@ -29,8 +29,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     })
     if (!sale) return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
     // the claim names the insurer actually billed (may differ from the
-    // customer's CURRENT insurer after a profile edit)
-    const claim = await db.insuranceClaim.findFirst({ where: { saleId: id }, select: { insurer: { select: { name: true } } } })
+    // customer's CURRENT insurer after a profile edit) + the coverage % applied
+    const claim = await db.insuranceClaim.findFirst({ where: { saleId: id }, select: { insurer: { select: { name: true } }, coveragePercent: true } })
 
     // Branch scope: staff only send receipts for their own branch's sales
     const scope = resolveBranchScope(gate.user, new URL(req.url).searchParams)
@@ -73,6 +73,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       pointsValue: sale.pointsValue,
       insuranceAmount: sale.insuranceAmount,
       insurerName: claim?.insurer?.name ?? null,
+      insuranceCoveragePct: claim?.coveragePercent ?? null,
       cashierName: sale.cashierName,
       customerName: sale.customer?.name ?? null,
       shiftNo: sale.shift?.shiftNo ?? null,

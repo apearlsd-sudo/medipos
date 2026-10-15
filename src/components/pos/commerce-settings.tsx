@@ -3,6 +3,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -10,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fmtMoney } from '@/lib/format'
 import { loadStoreSettings } from '@/lib/store-settings'
-import { Coins, HandCoins, Loader2, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react'
+import { Coins, HandCoins, Loader2, Pencil, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -32,6 +33,12 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState(emptyInsurer)
   const [saving, setSaving] = useState(false)
+  // Edit an existing insurer (name/code/phone/coverage/note) — the coverage %
+  // here is the SCHEME DEFAULT new sales inherit; per-sale overrides happen at
+  // the till and are stamped on each claim.
+  const [editing, setEditing] = useState<Insurer | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', shortCode: '', phone: '', coveragePercent: '80', note: '' })
+  const [editSaving, setEditSaving] = useState(false)
 
   const [loyaltyEnabled, setLoyaltyEnabled] = useState(true)
   const [earnRate, setEarnRate] = useState('0.1')
@@ -116,6 +123,32 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       body: JSON.stringify({ active: !i.active }),
     })
     if (res.ok) { toast({ title: i.active ? 'Insurer deactivated' : 'Insurer activated' }); load() }
+  }
+
+  const openEdit = (i: Insurer) => {
+    setEditing(i)
+    setEditForm({ name: i.name, shortCode: i.shortCode ?? '', phone: i.phone ?? '', coveragePercent: String(i.coveragePercent), note: i.note ?? '' })
+  }
+
+  const saveEdit = async () => {
+    if (!editing) return
+    if (!editForm.name.trim()) { toast({ title: 'Insurer name is required', variant: 'destructive' }); return }
+    const cov = Math.min(100, Math.max(0, Number(editForm.coveragePercent) || 0))
+    setEditSaving(true)
+    try {
+      const res = await fetch(`/api/insurers/${editing.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: editForm.name.trim(), shortCode: editForm.shortCode, phone: editForm.phone, coveragePercent: cov, note: editForm.note }),
+      })
+      const json = await res.json()
+      if (!res.ok) { toast({ title: 'Save failed', description: json.error, variant: 'destructive' }); return }
+      toast({ title: 'Insurer updated', description: `${json.insurer.name} now covers ${json.insurer.coveragePercent}% by default.` })
+      setEditing(null)
+      load()
+    } finally {
+      setEditSaving(false)
+    }
   }
 
   const removeInsurer = async (i: Insurer) => {
@@ -321,6 +354,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
+                      <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canEdit} onClick={() => openEdit(i)} aria-label={`Edit insurer ${i.name}`}><Pencil className="h-3.5 w-3.5" /></Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canEdit} onClick={() => toggleInsurer(i)} aria-label="Toggle insurer">{i.active ? '⏸' : '▶'}</Button>
                       <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" disabled={!canEdit} onClick={() => removeInsurer(i)} aria-label="Delete insurer"><Trash2 className="h-3.5 w-3.5" /></Button>
                     </div>
@@ -355,6 +389,47 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Edit insurer — coverage % default + contact details */}
+      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><ShieldCheck className="h-5 w-5 text-teal-600" /> Edit insurer</DialogTitle>
+            <DialogDescription>
+              The coverage % is the scheme default new sales inherit. Per-sale overrides at the till are stamped on each claim.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2 space-y-1.5">
+              <Label>Name *</Label>
+              <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} placeholder="NHIS" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Code</Label>
+              <Input value={editForm.shortCode} onChange={(e) => setEditForm({ ...editForm, shortCode: e.target.value })} placeholder="NHIS" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Phone</Label>
+              <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} placeholder="Claims desk" />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Coverage %</Label>
+              <Input type="number" min={0} max={100} step="1" value={editForm.coveragePercent} onChange={(e) => setEditForm({ ...editForm, coveragePercent: e.target.value })} className="tabular-nums" />
+              <p className="text-xs text-muted-foreground">0–100 · share of covered items the insurer pays</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note</Label>
+              <Input value={editForm.note} onChange={(e) => setEditForm({ ...editForm, note: e.target.value })} placeholder="Scheme remarks" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-full" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button onClick={saveEdit} disabled={editSaving} className="rounded-full bg-teal-600 hover:bg-teal-700">
+              {editSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

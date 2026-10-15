@@ -32,6 +32,8 @@ export interface TextReceiptSale {
   insuranceAmount?: number
   /** Insurer billed — shown with the claim line when present. */
   insurerName?: string | null
+  /** Coverage % actually applied to the claim (stamped on the claim at booking). */
+  insuranceCoveragePct?: number | null
   cashierName?: string
   customerName?: string | null
   shiftNo?: string | null
@@ -78,7 +80,7 @@ export function renderTextReceipt(sale: TextReceiptSale, settings: StoreSettings
     lines.push(`Cash rounding: ${sale.roundingDelta > 0 ? '+' : '-'}${fmtMoney(Math.abs(sale.roundingDelta))}`)
     lines.push(`*Amount due (cash): ${fmtMoney(due)}*`)
   }
-  if (sale.insuranceAmount && sale.insuranceAmount > 0) lines.push(`Insurance claim${sale.insurerName ? ` (${sale.insurerName})` : ''}: -${fmtMoney(sale.insuranceAmount)}`)
+  if (sale.insuranceAmount && sale.insuranceAmount > 0) lines.push(`Insurance claim${sale.insurerName ? ` (${sale.insurerName}${typeof sale.insuranceCoveragePct === 'number' ? ` · ${sale.insuranceCoveragePct}%` : ''})` : ''}: -${fmtMoney(sale.insuranceAmount)}${typeof sale.insuranceCoveragePct === 'number' ? `\nBilled at ${sale.insuranceCoveragePct}% coverage${sale.paymentMethod === 'insurance' ? ' — balance paid by patient' : ''}` : ''}`)
   if (sale.pointsValue && sale.pointsValue > 0) lines.push(`Points redeemed (${sale.pointsRedeemed}): -${fmtMoney(sale.pointsValue)}`)
 
   if (sale.tenders && sale.tenders.length > 1) {

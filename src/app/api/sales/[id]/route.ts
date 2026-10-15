@@ -21,11 +21,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: { customer: { include: { insurer: true } }, items: { include: { medicine: { include: { category: true } } } }, shift: { select: { userId: true } } },
     })
     if (!sale) return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
+    // The CLAIM is the authoritative record of who WAS billed + the coverage %
+    // actually applied (the customer's insurer link may have changed since the
+    // sale) — reprints quote it ahead of the customer's current insurer.
+    const claim = await db.insuranceClaim.findFirst({
+      where: { saleId: id },
+      select: { coveragePercent: true, insurer: { select: { name: true } } },
+    })
     if (!isViewer) {
       const own = sale.cashierName === gate.user.name || sale.shift?.userId === gate.user.id
       if (!own) return NextResponse.json({ error: 'Access denied — you can only view your own invoices.' }, { status: 403 })
     }
-    return NextResponse.json({ sale })
+    return NextResponse.json({ sale: { ...sale, claim } })
   } catch (e) {
     console.error('Sale GET error', e)
     return NextResponse.json({ error: 'Failed to fetch sale' }, { status: 500 })

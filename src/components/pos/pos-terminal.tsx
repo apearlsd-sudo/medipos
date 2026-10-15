@@ -159,6 +159,10 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const [momoReference, setMomoReference] = useState('')
   const [pointsInput, setPointsInput] = useState('')
   const [useInsurance, setUseInsurance] = useState(false)
+  // Per-sale coverage override ('' = the insurer's default). The insurer's
+  // default stays authoritative until the till edits it — schemes run special
+  // tiers (e.g. 50% for non-generic lines) the flat default can't express.
+  const [coverageInput, setCoverageInput] = useState('')
 
   // Discount approval workflow state
   const [approvalOpen, setApprovalOpen] = useState(false)
@@ -461,17 +465,31 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   // Insurance is a first-class payment method again: picking it opts the sale
   // into insurer billing (the till leg is the patient's cash share).
   const useIns = (useInsurance || paymentMethod === 'insurance') && !!insurer
+  // Effective coverage % for THIS sale: the editable override when valid,
+  // otherwise the insurer's default.
+  const coveragePct = useMemo(() => {
+    const def = insurer?.coveragePercent ?? 0
+    if (!useIns) return def
+    const n = Number(coverageInput)
+    return coverageInput.trim() !== '' && Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : def
+  }, [insurer, useIns, coverageInput])
+  // Gross value of cart lines the scheme actually covers (drives the "nothing
+  // covered" warning — an insurance sale over an uncovered cart books no claim
+  // and the patient pays in full).
+  const coveredGross = useMemo(
+    () => cart.reduce((s, l) => {
+      const med = meds.find((m) => m.id === l.medicineId)
+      return med?.insuranceCovered ? s + l.unitPrice * l.qty : s
+    }, 0),
+    [cart, meds],
+  )
   const insuranceEstimate = useMemo(() => {
     if (!useIns || !insurer) return 0
     const gross = subtotal
     if (gross <= 0) return 0
     const discountRatio = gross > 0 ? Math.max(0, (gross - discountValue) / gross) : 1
-    const covered = cart.reduce((s, l) => {
-      const med = meds.find((m) => m.id === l.medicineId)
-      return med?.insuranceCovered ? s + l.unitPrice * l.qty : s
-    }, 0)
-    return +(covered * discountRatio * (insurer.coveragePercent / 100)).toFixed(2)
-  }, [useIns, insurer, subtotal, discountValue, cart, meds])
+    return +(coveredGross * discountRatio * (coveragePct / 100)).toFixed(2)
+  }, [useIns, insurer, subtotal, discountValue, coveredGross, coveragePct])
   const patientTotal = useMemo(() => Math.max(0, +(total - insuranceEstimate).toFixed(2)), [total, insuranceEstimate])
   const pointsSettings = useMemo(() => ({ pointValue: Number(storeSettings?.loyaltyPointValue ?? 0.05) || 0.05, maxPct: Number(storeSettings?.loyaltyMaxRedeemPct ?? 50) || 50, enabled: storeSettings?.loyaltyEnabled !== 'false' }), [storeSettings])
   const redemption = useMemo(() => {
@@ -586,6 +604,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           paymentReference: !tendersPayload && paymentMethod === 'momo' ? (momoReference.trim() || undefined) : undefined,
           pointsRedeem: redemption.points || undefined,
           useInsurance: useIns || undefined,
+          ...(useIns ? { coveragePercent: coveragePct } : {}),
           taxRate: taxRatePct,
           note: note || null,
           ...(extra?.approval ? { approval: extra.approval } : {}),
@@ -602,6 +621,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
           roundingDelta: cashRounding.delta,
           insuranceAmount: insuranceEstimate > 0 ? insuranceEstimate : undefined,
+          insurerName: insurer?.name ?? null,
+          insuranceCoveragePct: insuranceEstimate > 0 ? coveragePct : null,
           paidAmount: tendersPayload ? Math.min(splitSum, roundedPayable) : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.min(tenderedNum, roundedPayable) : total,
           changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.max(0, +(tenderedNum - roundedPayable).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
@@ -613,7 +634,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           items: cart.map((l) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, total: +(l.unitPrice * l.qty).toFixed(2) })),
         })
         toast({ title: 'Saved on this device', description: 'You are offline — the sale will sync automatically when the server is back.' })
-        setCart([]); setOrderDiscount(0); setTendered(''); setNote(''); setMomoReference(''); setPointsInput(''); setUseInsurance(false)
+        setCart([]); setOrderDiscount(0); setTendered(''); setNote(''); setMomoReference(''); setPointsInput(''); setUseInsurance(false); setCoverageInput('')
         setCustomerId('walkin'); setDiscountRequestId(null); setCheckoutOpen(false)
         return true
       }
@@ -629,6 +650,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         ...json.sale,
         tenders: parseTenders(json.sale?.tenders),
         insurerName: json.insurance?.insurerName ?? null,
+        insuranceCoveragePct: json.insurance?.coveragePercent ?? null,
         customerName: json.sale?.customer?.name ?? null,
         customerPhone: json.sale?.customer?.phone ?? null,
         customerEmail: json.sale?.customer?.email ?? null,
@@ -650,6 +672,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       setMomoReference('')
       setPointsInput('')
       setUseInsurance(false)
+      setCoverageInput('')
       setCustomerId('walkin')
       setDiscountRequestId(null)
       setCheckoutOpen(false)
@@ -1186,7 +1209,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             <div className="space-y-3">
               <div className="space-y-1.5">
                 <Label>Customer</Label>
-                <Select value={customerId} onValueChange={(v) => { setCustomerId(v); setPointsInput(''); setUseInsurance(false) }}>
+                <Select value={customerId} onValueChange={(v) => { setCustomerId(v); setPointsInput(''); setUseInsurance(false); setCoverageInput('') }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="walkin">Walk-in Customer</SelectItem>
@@ -1203,13 +1226,47 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               </div>
 
               {insurer && (
-                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-2.5 text-sm dark:border-teal-500/30 dark:bg-teal-500/10">
-                  <span>
-                    <span className="font-medium">Use insurance</span>
-                    <span className="ml-1.5 text-xs text-muted-foreground">{insurer.name} · {insurer.coveragePercent}% on covered items{selectedCustomer?.insuranceNo ? ` · ${selectedCustomer.insuranceNo}` : ''}</span>
-                  </span>
-                  <input type="checkbox" checked={useIns} disabled={paymentMethod === 'insurance'} onChange={(e) => setUseInsurance(e.target.checked)} className="h-4 w-4 accent-teal-600 disabled:opacity-60" />
-                </label>
+                <div className="space-y-2">
+                  <label className="flex cursor-pointer items-center justify-between rounded-xl border border-teal-200 bg-teal-50/60 px-3 py-2.5 text-sm dark:border-teal-500/30 dark:bg-teal-500/10">
+                    <span>
+                      <span className="font-medium">Use insurance</span>
+                      <span className="ml-1.5 text-xs text-muted-foreground">{insurer.name} · {coveragePct}% on covered items{selectedCustomer?.insuranceNo ? ` · ${selectedCustomer.insuranceNo}` : ''}</span>
+                    </span>
+                    <input type="checkbox" checked={useIns} disabled={paymentMethod === 'insurance'} onChange={(e) => setUseInsurance(e.target.checked)} className="h-4 w-4 accent-teal-600 disabled:opacity-60" />
+                  </label>
+                  {useIns && (
+                    <div className="space-y-1.5 rounded-xl border border-teal-200 px-3 py-2.5 dark:border-teal-500/30">
+                      <div className="flex items-end justify-between gap-3">
+                        <div className="min-w-0">
+                          <Label htmlFor="coverage-input">Insurance coverage %</Label>
+                          <p className="text-xs text-muted-foreground">Default {insurer.coveragePercent}% from {insurer.name} — override for this sale only.</p>
+                        </div>
+                        <div className="relative w-24 shrink-0">
+                          <Input
+                            id="coverage-input"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step="1"
+                            value={coverageInput}
+                            onChange={(e) => setCoverageInput(e.target.value)}
+                            placeholder={String(insurer.coveragePercent)}
+                            className="tabular-nums pr-7"
+                          />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">%</span>
+                        </div>
+                      </div>
+                      <p className="text-xs tabular-nums text-teal-700 dark:text-teal-300">
+                        Billed to {insurer.name} at {coveragePct}% · patient pays {fmtMoney(patientTotal)}
+                      </p>
+                      {coveredGross <= 0 && (
+                        <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                          No insurance-covered items in the cart — the patient pays the full amount and no claim is booked.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
 
               {(selectedCustomer?.points ?? 0) > 0 && pointsSettings.enabled && (

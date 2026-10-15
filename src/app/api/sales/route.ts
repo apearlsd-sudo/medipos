@@ -197,11 +197,18 @@ export async function POST(req: NextRequest) {
 
     // Insurance co-pay split (customer must carry an active insurer). Choosing
     // the Insurance method implies the claim — same contract the POS UI enforces
-    // by locking the "Use insurance" checkbox on.
+    // by locking the "Use insurance" checkbox on. The till may override the
+    // insurer's default coverage per sale (body.coveragePercent, 0–100) — e.g.
+    // a special scheme tier — and the CLAIM stores the figure actually billed
+    // so receipts/reprints keep quoting it even if the default changes later.
     let insurance: ReturnType<typeof splitInsurance> | null = null
     const useInsurance = body.useInsurance === true || paymentMethod === 'insurance'
     if (useInsurance && customer?.insurer && customer.insurer.active) {
-      insurance = splitInsurance(lines, discount, customer.insurer.coveragePercent, customer.insurer.name)
+      const coverageOverride = Number(body.coveragePercent)
+      const coveragePct = Number.isFinite(coverageOverride) && body.coveragePercent !== undefined && body.coveragePercent !== null
+        ? Math.min(100, Math.max(0, +coverageOverride.toFixed(2)))
+        : customer.insurer.coveragePercent
+      insurance = splitInsurance(lines, discount, coveragePct, customer.insurer.name)
     }
     const patientTotal = insurance ? insurance.patientTotal : total
 
@@ -512,6 +519,7 @@ export async function POST(req: NextRequest) {
             insurerId: customer.insurerId!,
             branchId: saleBranchId,
             claimAmount: insurance.insuranceAmount,
+            coveragePercent: insurance.coveragePercent,
             status: 'pending',
           },
         })

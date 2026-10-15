@@ -64,6 +64,10 @@ interface SaleDetail extends SaleRow {
   insuranceAmount?: number | null
   /** Insurer billed (resolved from the customer's active insurer). */
   insurerName?: string | null
+  /** Coverage % stamped on the claim at booking (receipt reprint quotes it). */
+  insuranceCoveragePct?: number | null
+  /** The sale's insurance claim — authoritative for who was billed + at what %. */
+  claim?: { coveragePercent: number | null; insurer: { name: string } } | null
   /** Raw tenders JSON string on the row (split-tender sales) — parsed before printing. */
   tenders?: string | null
   pointsEarned?: number | null
@@ -142,7 +146,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const openDetail = async (id: string) => {
     const res = await fetch(`/api/sales/${id}`, { cache: 'no-store' })
     const json = await res.json()
-    if (json.sale) setDetail({ ...json.sale, customer: json.sale.customer?.name ?? 'Walk-in Customer', customerPhone: json.sale.customer?.phone ?? null, customerEmail: json.sale.customer?.email ?? null, insurerName: json.sale.customer?.insurer?.name ?? null })
+    if (json.sale) setDetail({ ...json.sale, customer: json.sale.customer?.name ?? 'Walk-in Customer', customerPhone: json.sale.customer?.phone ?? null, customerEmail: json.sale.customer?.email ?? null, insurerName: json.sale.claim?.insurer?.name ?? json.sale.customer?.insurer?.name ?? null, insuranceCoveragePct: json.sale.claim?.coveragePercent ?? null })
   }
 
   const loadReturned = useCallback(async (saleId: string) => {
@@ -764,6 +768,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                     tenders: parseTendersJson(printSale.tenders ?? null),
                     insuranceAmount: printSale.insuranceAmount ?? 0,
                     insurerName: printSale.insurerName ?? null,
+                    insuranceCoveragePct: printSale.insuranceCoveragePct ?? null,
                     pointsEarned: printSale.pointsEarned ?? 0,
                     pointsRedeemed: printSale.pointsRedeemed ?? 0,
                     pointsValue: printSale.pointsValue ?? 0,

@@ -769,3 +769,23 @@ Work Log:
 
 Stage Summary:
 - The receipt dialog shows the whole slip without inner scrolling, and Insurance is now booked, printed, filterable and re-printable as its own payment method: the till leg stays exact-cash (rounded patient share + claim to the insurer), receipts name the insurer, and every path (checkout slip, Sales reprint, e-receipt) carries the claim. 136/136 regression green, deployed, DB backed up.
+
+---
+Task ID: 63
+Agent: main
+Task: "checkout receipt should indicate type of insurance company as well. Also, insurance coverage % should be editable" — insurance receipts + editable coverage (closes the receipt/insurance bug cluster from the summary).
+
+Work Log:
+- RECON (browser E2E, admin): Task 62's fixes already landed — checkout receipt names the insurer ("Insurance claim (NHIS Ghana)"), "Paid (Insurance)" row present, reprint via Sales page works, receipt dialog renders cleanly (screenshot-verified, zero page errors). Gaps found: coverage % nowhere visible, coverage not editable anywhere (Settings had add/toggle/delete only — no edit), reprint resolved the insurer from the customer's CURRENT link (wrong after a profile edit), offline slip lacked the insurer, and an insurance sale over a cart with zero covered items books silently full-patient (INV-2026-0578 case).
+- SCHEMA: InsuranceClaim.coveragePercent Float? — the % actually billed at booking (survives later default edits) — db push, no data loss + prisma generate.
+- SALES API: body.coveragePercent override (clamped 0–100) feeds splitInsurance; claim stamped with the resolved %; response insurance.coveragePercent returned. Out-of-range clamps; 0 ⇒ no claim (nothing to bill); ignored on non-insurance sales.
+- DETAIL API /api/sales/[id]: now returns claim {coveragePercent, insurer.name} (separate query — Sale↔claim has no Prisma relation, loose saleId) so reprints quote who WAS billed + at what %.
+- RECEIPTS: ThermalReceipt + text e-receipt twin print "Insurance claim (Acacia Health · 50%)" + a "Billed at 50% coverage — balance paid by patient" subline (insuranceCoveragePct plumbed through send-receipt API, POS checkout response, Sales reprint, offline slip — slip also gained insurerName).
+- POS CHECKOUT: editable "Insurance coverage %" input under the Use-insurance label (placeholder = insurer default, per-sale override, live recompute of patient share + Confirm button + "Billed to X at N% · patient pays Y"); "No insurance-covered items in the cart" amber warning when coveredGross = 0; override resets on customer change/after sale; body sends coveragePercent only when insurance is in play.
+- SETTINGS: Insurers card gained an Edit (pencil) dialog — name/code/phone/coverage %/note via existing PUT /api/insurers/[id] (API already supported it); toast names the new default; per-row aria-labels.
+- VERIFY: scripts/verify-coverage-api.sh 13/13 GREEN (idempotent, fixtures cancelled + stock restored): override 50 math + claim stamp, default 90 fallback, 250→100 clamp, 0 ⇒ no claim, cash sale ignores coverage, detail API claim fields, stock/ledger baseline restored. Browser E2E (zero page errors): coverage panel appears with default 90 placeholder, override 50 recomputes Confirm GH₵0.50→GH₵2.30 live, receipt shows "Insurance claim (Acacia Health · 50%)" + "Billed at 50% coverage" + "Paid (Insurance)", DB claim CLM-2026-0046 carries coveragePercent 50; Settings edit 90→85→save→table refresh→restore 90 all work. (Test-harness lesson: SW v3 activation reloads wipe in-memory carts — re-add items after deploy; health-poll re-renders re-index agent-browser refs — click via DOM eval.)
+- REGRESSION: tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 = 136/136 green. tsc src/ clean, eslint clean on all 8 touched files, BUILD_EXIT=0 → SW medipos-v2→v3 bump + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200).
+- backup-db.sh run.
+
+Stage Summary:
+- Insurance receipts now name the company AND the coverage % actually billed (paper + e-receipt + reprint, sourced from the claim so later profile edits can't rewrite history); the till can override coverage per sale with a live patient-share preview; insurers are fully editable in Settings; and an uncovered-cart insurance sale warns before booking. Known pre-existing gap noted for the roadmap: insurance claims created on a branch sale don't replicate through sync (claims sync only on status updates).
