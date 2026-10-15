@@ -751,3 +751,21 @@ Work Log:
 
 Stage Summary:
 - The till speaks the store's currency everywhere — quick-cash chips included — and Insurance is a first-class Complete Sale method again: pick it, the insurer is billed their coverage share as a claim, and the patient settles their rounded cash share at the till; historical insurance/mobile-money sales are filterable and labelled again. 136/136 regression green, deployed, DB backed up.
+
+---
+Task ID: 63
+Agent: main
+Task: "Receipt dialog not rendering well; paying with insurance does not show on the receipt" — two receipt-layer defects after the Task-62 insurance restore.
+
+Work Log:
+- DIAGNOSIS (browser E2E + DB probe): (1) the Payment Successful receipt dialog rendered the 80mm slip inside a 287px-tall max-h-[50vh] preview in a max-w-sm dialog — the slip was clipped mid-row and the money block (rounding/claim/paid/change/barcode) sat below the fold, reading as "not rendering well"; (2) the server whitelist `['cash','card','momo','credit']` (sales route, a tier-1-era gap) silently REWROTE paymentMethod 'insurance' → 'cash' at booking (DB proof: INV-2026-0560 booked as cash while a claim existed) — receipts printed "Paid (Cash)", the insurance filter couldn't match new sales; (3) the Sales-page thermal reprint dropped insuranceAmount/tenders/points/provider fields entirely, so reprints never showed the claim.
+- SERVER (api/sales/route.ts): 'insurance' added to the payment-method whitelist — it is now a FIRST-CLASS stored method while the till leg keeps exact cash semantics (rounded patient share, change, insufficient-cash status path); cashInvolved includes insurance so cash rounding follows the patient leg (Task-58 parity); method='insurance' implies the claim (useInsurance coerced true — mirrors the UI's locked checkbox); new 400 guard rejects insurance sales without an insured customer + active insurer (mirrors the UI guard). Sync payload carries the real method; applier already passes it through.
+- RECEIPT DIALOG (pos-terminal.tsx): sm:max-w-sm → sm:max-w-md and preview max-h-[50vh] → max-h-[70vh] — the full slip now fits on screen (micro-scroll only for the barcode on short receipts); offline provisional slip now carries insuranceAmount so queued insurance sales show the claim + patient share.
+- SALES REPRINT (sales.tsx + api/sales/[id]): reprint passes insuranceAmount, insurerName, parsed tenders (split sales), points earned/redeemed/value, paymentProvider/Reference/Status; detail API includes customer.insurer for the insurer name; reprint dialog widened/raised to match. parseTendersJson helper (tolerates junk).
+- INSURER NAMED ON RECEIPTS: ThermalReceipt + text e-receipt twin print "Insurance claim (NHIS Ghana) -GH₵103.23" — checkout receipt resolves json.insurance.insurerName, the send-receipt API resolves the insurer from the sale's actual claim (survives later insurer edits on the customer profile).
+- VERIFY: scripts/verify-insurance-method.sh updated for the new contract + 2 new asserts (insurance-without-insured-customer → 400; method implies claim without useInsurance) with probe-sale cleanup — 13/13 GREEN. Browser E2E (zero page errors): insurance sale INV-2026-0564 booked as method=Insurance; receipt dialog shows the ENTIRE slip with Insurance claim (NHIS Ghana) + Paid (Insurance) + rounding + change on the first screen (82px micro-scroll to barcode); Sales list row reads "Insurance"; reprint shows the full claim block; loyalty earned on the rounded patient share.
+- REGRESSION: tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 = 136/136 green. tsc src/ clean, eslint clean, BUILD_EXIT=0 → kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200).
+- backup-db.sh run.
+
+Stage Summary:
+- The receipt dialog shows the whole slip without inner scrolling, and Insurance is now booked, printed, filterable and re-printable as its own payment method: the till leg stays exact-cash (rounded patient share + claim to the insurer), receipts name the insurer, and every path (checkout slip, Sales reprint, e-receipt) carries the claim. 136/136 regression green, deployed, DB backed up.
