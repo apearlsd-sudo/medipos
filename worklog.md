@@ -702,3 +702,19 @@ Work Log:
 
 Stage Summary:
 - Managers can set daily/weekly/monthly revenue goals for staff or branches, and everyone with Reports access sees live progress bars (attribution identical to the Staff Performance report), with pause/edit/delete and an audit trail. Next: Task 60 — owner digest.
+
+---
+Task ID: 60
+Agent: main
+Task: Roadmap extra 3/3 — Owner digest: one-glance business snapshot (Reports tab) with push-to-owner delivery.
+
+Work Log:
+- LIB src/lib/owner-digest.ts: digestWindow (today / Mon–Sun week / calendar month, server-local like day-close), buildOwnerDigest(range, {branchId, storeName}) → single snapshot: sales rollup (count/gross/discounts/tax/total/avg + net cash-rounding + per-tender split counted from split-tender rows, net patient share on single tender), refunds (count/total/by method), expenses, purchases, netPosition (total − refunds − expenses), top-5 products by revenue, ops watchlist (low stock via stockQty≤reorderLevel field-reference, expiring ≤30d, MoMo pending count+value, credit outstanding = charges+adjustments − payments), and the Task-59 target scoreboard (active targets whose period matches the range, progress over the SAME window); renderDigestText → compact push-friendly text.
+- API /api/reports/owner-digest: GET (reports:view, branch-scoped) returns {digest, canSend}; POST (notifications:manage — the message-send gate) pushes the digest text to EVERY enabled alert channel with recipients (WhatsApp/SMS; e-mail has no stored recipient list and is reported as needing one), per-channel results, outbox rows with relatedKey owner_digest:{range}:{window}:{channel}; nothing-configured → structured 502 with guidance.
+- UI: Reports → "Owner Digest" tab (Newspaper icon): Today/This week/This month switcher, 4 stat cards (Revenue · Net position · Tax collected · Purchases), By tender table (+ cash-rounding row), Top sellers, Operations watchlist tiles, Target scoreboard with colored %, Push preview <pre> mirroring the server text, "Send to owner"/"Send now" buttons gated client-side by notifications:manage with a permission hint when absent; result toast lists per-channel outcomes.
+- VERIFY: scripts/verify-owner-digest-api.sh — 15/15 GREEN (idempotent): auth gates (401/403 cashier, canSend true admin / false pharmacist), shape + net-position/avg internal consistency, range labels differ, branch filter (→ Osu Branch), DELTA test (booked sale: count+1, revenue+total, daily target pct live), POST 403 without manage, POST structured 502 when no channels configured, fixture sale cancelled + stock + target cleaned. scripts/verify-owner-digest-ui.py — 17/17 GREEN: all cards, preview text, send button + toast feedback, range switcher, pharmacist view-only (no send buttons, hint shown), zero page errors.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → ss-PID kill + relaunch → HTTP:200 LOGIN:200 HUB:200. Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- The owner gets a true one-glance snapshot — revenue with tender mix, net position after refunds/expenses, tax, top sellers, an operations watchlist and the live target scoreboard — viewable for today/week/month in Reports and pushable to every configured WhatsApp/SMS recipient with one click. Roadmap extras (cash rounding, sales targets, owner digest) are now all shipped; the A1–C4 audit program completed earlier remains fully green.

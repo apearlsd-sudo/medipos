@@ -11,11 +11,12 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { PageHeader, StatusBadge } from '@/components/pos/shared'
+import { useUser } from '@/components/pos/user-context'
 import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Percent, PiggyBank, Plus, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
@@ -46,7 +47,7 @@ interface ReportData {
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting' | 'vat' | 'targets'
+type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting' | 'vat' | 'targets' | 'digest'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
@@ -65,6 +66,7 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'accounting', label: 'Accounting Pack', icon: FileSpreadsheet },
   { key: 'vat', label: 'VAT Filing', icon: ReceiptText },
   { key: 'targets', label: 'Sales Targets', icon: Target },
+  { key: 'digest', label: 'Owner Digest', icon: Newspaper },
 ]
 
 // Day-close section cache (for CSV export) — module-level, refreshed by the section.
@@ -392,6 +394,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
       {tab === 'accounting' && <AccountingSection />}
       {tab === 'vat' && <VatFilingSection />}
       {tab === 'targets' && <TargetsSection />}
+      {tab === 'digest' && <OwnerDigestSection />}
 
       {/* ---------------- Overview ---------------- */}
       {tab === 'overview' && (
@@ -2183,4 +2186,242 @@ function TargetsSection() {
       </Dialog>
     </div>
   )
+}
+
+// ---------------- Roadmap: owner digest ----------------
+interface DigestData {
+  range: 'today' | 'week' | 'month'
+  label: string
+  generatedAt: string
+  branchLabel: string
+  storeName: string
+  sales: { count: number; gross: number; discounts: number; tax: number; total: number; avg: number; rounding: number; byTender: Record<string, { count: number; amount: number }> }
+  refunds: { count: number; total: number; byMethod: Record<string, number> }
+  expenses: { count: number; total: number }
+  purchases: { count: number; total: number }
+  netPosition: number
+  topProducts: Array<{ name: string; qty: number; revenue: number }>
+  ops: { lowStock: number; expiringSoon: number; momoPending: { count: number; total: number }; creditOutstanding: number }
+  targets: Array<{ subject: string; period: string; amount: number; revenue: number; pct: number; active: boolean }>
+}
+
+function OwnerDigestSection() {
+  const { can } = useUser()
+  const [range, setRange] = useState<'today' | 'week' | 'month'>('today')
+  const [data, setData] = useState<DigestData | null>(null)
+  const [text, setText] = useState('')
+  const [canSend, setCanSend] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
+
+  const load = useCallback((r: 'today' | 'week' | 'month') => {
+    setLoading(true)
+    fetch(`/api/reports/owner-digest?range=${r}`, { cache: 'no-store' })
+      .then((res) => res.json())
+      .then((j) => {
+        if (j && !j.error) {
+          setData(j.digest)
+          setText(j.digest ? previewText(j.digest) : '')
+          setCanSend(!!j.canSend)
+        }
+      })
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { load(range) }, [range, load])
+
+  const send = async () => {
+    setSending(true)
+    try {
+      const res = await fetch('/api/reports/owner-digest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ range }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { toast({ title: 'Send failed', description: json.error, variant: 'destructive' }); return }
+      const parts = (json.sends ?? []).map((s: { channel: string; sent: number; skipped?: string }) => `${s.channel}: ${s.skipped ?? `${s.sent} sent`}`).join(' · ')
+      toast({ title: 'Digest on its way', description: parts })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-64 rounded-full" />
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <div className="grid gap-4 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-48 rounded-xl" />)}</div>
+      </div>
+    )
+  }
+
+  const stat = (label: string, value: string, sub: string, tone?: string) => (
+    <Card className="p-5">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-2xl font-bold tracking-tight tabular-nums ${tone ?? ''}`}>{value}</p>
+      <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>
+    </Card>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Tabs value={range} onValueChange={(v) => setRange(v as typeof range)}>
+          <TabsList className="flex flex-wrap gap-1">
+            <TabsTrigger value="today" className="rounded-full px-3.5 text-xs">Today</TabsTrigger>
+            <TabsTrigger value="week" className="rounded-full px-3.5 text-xs">This week</TabsTrigger>
+            <TabsTrigger value="month" className="rounded-full px-3.5 text-xs">This month</TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <span className="text-xs text-muted-foreground">{data.label} · {data.branchLabel} · generated {new Date(data.generatedAt).toLocaleTimeString()}</span>
+        {canSend && (
+          <Button onClick={send} disabled={sending} className="ml-auto rounded-full bg-teal-600 hover:bg-teal-700">
+            <Send className="h-4 w-4" /> {sending ? 'Sending…' : 'Send to owner'}
+          </Button>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {stat('Revenue', fmtMoney(data.sales.total), `${data.sales.count} order(s) · avg ${fmtMoney(data.sales.avg)}`, 'text-teal-600 dark:text-teal-400')}
+        {stat('Net position', fmtMoney(data.netPosition), `after ${fmtMoney(data.refunds.total)} refunds + ${fmtMoney(data.expenses.total)} expenses`, data.netPosition >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}
+        {stat('Tax collected', fmtMoney(data.sales.tax), `discounts given ${fmtMoney(data.sales.discounts)}`)}
+        {stat('Purchases', fmtMoney(data.purchases.total), `${data.purchases.count} purchase(s) in window`)}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <div className="border-b p-3 text-sm font-medium">By tender</div>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Tender</TableHead><TableHead className="text-center">Count</TableHead><TableHead className="text-right">Amount</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {Object.entries(data.sales.byTender).sort((a, b) => b[1].amount - a[1].amount).map(([k, v]) => (
+                <TableRow key={k}>
+                  <TableCell className="capitalize">{k === 'momo' ? 'Mobile Money' : k}</TableCell>
+                  <TableCell className="text-center tabular-nums">{v.count}</TableCell>
+                  <TableCell className="text-right font-medium tabular-nums">{fmtMoney(v.amount)}</TableCell>
+                </TableRow>
+              ))}
+              {data.sales.rounding !== 0 && (
+                <TableRow>
+                  <TableCell className="italic text-muted-foreground">Cash rounding (net)</TableCell>
+                  <TableCell />
+                  <TableCell className="text-right tabular-nums">{data.sales.rounding > 0 ? '+' : ''}{fmtMoney(data.sales.rounding)}</TableCell>
+                </TableRow>
+              )}
+              {Object.keys(data.sales.byTender).length === 0 && (
+                <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">No sales in this window.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+
+        <Card>
+          <div className="border-b p-3 text-sm font-medium">Top sellers</div>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Product</TableHead><TableHead className="text-center">Units</TableHead><TableHead className="text-right">Revenue</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.topProducts.map((p) => (
+                <TableRow key={p.name}>
+                  <TableCell className="font-medium">{p.name}</TableCell>
+                  <TableCell className="text-center tabular-nums">{p.qty}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtMoney(p.revenue)}</TableCell>
+                </TableRow>
+              ))}
+              {data.topProducts.length === 0 && (
+                <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">No sales in this window.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+
+        <Card>
+          <div className="border-b p-3 text-sm font-medium">Operations watchlist</div>
+          <CardContent className="grid grid-cols-2 gap-3 p-4">
+            <div className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">Low stock items</p>
+              <p className={`text-xl font-bold tabular-nums ${data.ops.lowStock > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>{data.ops.lowStock}</p>
+            </div>
+            <div className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">Expiring ≤ 30 days</p>
+              <p className={`text-xl font-bold tabular-nums ${data.ops.expiringSoon > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>{data.ops.expiringSoon}</p>
+            </div>
+            <div className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">MoMo pending verification</p>
+              <p className="text-xl font-bold tabular-nums">{data.ops.momoPending.count} <span className="text-sm font-normal text-muted-foreground">({fmtMoney(data.ops.momoPending.total)})</span></p>
+            </div>
+            <div className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">Credit outstanding</p>
+              <p className="text-xl font-bold tabular-nums">{fmtMoney(data.ops.creditOutstanding)}</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <div className="border-b p-3 text-sm font-medium">Target scoreboard</div>
+          <Table>
+            <TableHeader>
+              <TableRow><TableHead>Subject</TableHead><TableHead>Period</TableHead><TableHead className="text-right">Progress</TableHead></TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.targets.map((t) => (
+                <TableRow key={`${t.subject}-${t.period}`}>
+                  <TableCell className="font-medium">{t.subject}</TableCell>
+                  <TableCell className="capitalize text-muted-foreground">{t.period}</TableCell>
+                  <TableCell className="text-right">
+                    <span className={`font-semibold tabular-nums ${t.pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : t.pct >= 70 ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>{t.pct}%</span>
+                    <span className="text-xs text-muted-foreground"> of {fmtMoney(t.amount)}</span>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {data.targets.length === 0 && (
+                <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">No active targets for this window.</TableCell></TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </Card>
+      </div>
+
+      <Card>
+        <div className="flex items-center justify-between border-b p-3">
+          <span className="text-sm font-medium">Push preview (what the owner receives)</span>
+          {canSend && <Button variant="outline" size="sm" className="rounded-full text-xs" onClick={send} disabled={sending}><Send className="h-3.5 w-3.5" /> Send now</Button>}
+        </div>
+        <CardContent className="p-4">
+          <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-muted/60 p-3 text-xs leading-relaxed">{text}</pre>
+          {!canSend && <p className="mt-2 text-xs text-muted-foreground">Sending requires the Notifications &amp; Alerts · Manage permission.</p>}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+/** Mirrors renderDigestText (server) closely enough for a live preview. */
+function previewText(d: DigestData): string {
+  const money = (n: number) => fmtMoney(n)
+  const L: string[] = []
+  L.push(`*OWNER DIGEST — ${d.storeName}*`)
+  L.push(`${d.label} · ${d.branchLabel}`)
+  L.push(`Revenue: ${money(d.sales.total)} (${d.sales.count} order(s) · avg ${money(d.sales.avg)})`)
+  const tenders = Object.entries(d.sales.byTender).sort((a, b) => b[1].amount - a[1].amount)
+    .map(([k, v]) => `${k === 'momo' ? 'MoMo' : k[0].toUpperCase() + k.slice(1)} ${money(v.amount)}`).join(' · ')
+  if (tenders) L.push(`By tender: ${tenders}`)
+  L.push(`Tax: ${money(d.sales.tax)} · Discounts: ${money(d.sales.discounts)}${d.sales.rounding !== 0 ? ` · Cash rounding: ${d.sales.rounding > 0 ? '+' : ''}${money(d.sales.rounding)}` : ''}`)
+  L.push(`Refunds: ${d.refunds.count} (${money(d.refunds.total)}) · Expenses: ${d.expenses.count} (${money(d.expenses.total)}) · Net: ${money(d.netPosition)}`)
+  if (d.topProducts.length > 0) L.push(`Top sellers: ${d.topProducts.map((p, i) => `${i + 1}. ${p.name} (${p.qty})`).join(' · ')}`)
+  const watch: string[] = []
+  if (d.ops.lowStock > 0) watch.push(`${d.ops.lowStock} low stock`)
+  if (d.ops.expiringSoon > 0) watch.push(`${d.ops.expiringSoon} expiring ≤30d`)
+  if (d.ops.momoPending.count > 0) watch.push(`${d.ops.momoPending.count} MoMo pending (${money(d.ops.momoPending.total)})`)
+  if (d.ops.creditOutstanding > 0) watch.push(`credit out ${money(d.ops.creditOutstanding)}`)
+  if (watch.length > 0) L.push(`Watchlist: ${watch.join(' · ')}`)
+  if (d.targets.length > 0) L.push(`Targets: ${d.targets.map((t) => `${t.subject} ${t.pct}%`).join(' · ')}`)
+  L.push(`Purchases: ${d.purchases.count} (${money(d.purchases.total)})`)
+  L.push('— sent by MediPOS Pro')
+  return L.join('\n')
 }
