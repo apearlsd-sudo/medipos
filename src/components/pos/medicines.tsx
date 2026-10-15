@@ -68,7 +68,7 @@ const LABEL_SIZES = {
 
 type LabelSize = keyof typeof LABEL_SIZES
 
-export function Medicines() {
+export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCategoryId?: string | null; onCategoryConsumed?: () => void }) {
   const { user, can } = useUser()
   const storeSettings = useStoreSettings()
   const canManage = can('medicines', 'create') || can('medicines', 'edit')
@@ -116,6 +116,16 @@ export function Medicines() {
     const t = setTimeout(load, 250)
     return () => clearTimeout(t)
   }, [load])
+
+  // Deep-link from the Categories page: seed the category filter once on mount
+  // (the view remounts per navigation), then hand the seed back so ordinary
+  // sidebar navigation starts unfiltered.
+  useEffect(() => {
+    if (initialCategoryId) {
+      setCategoryFilter(initialCategoryId)
+      onCategoryConsumed?.()
+    }
+  }, [])
 
   const stats = useMemo(() => {
     const total = meds.length

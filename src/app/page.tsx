@@ -78,6 +78,7 @@ export default function Home() {
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [posKey, setPosKey] = useState(0)
   const [branchKey, setBranchKey] = useState(0) // bumped when the super admin switches branch
+  const [categorySeed, setCategorySeed] = useState<string | null>(null) // category → medicines deep-link
   const userRef = useRef<AuthUser | null>(null)
   useEffect(() => {
     userRef.current = user
@@ -264,8 +265,8 @@ export default function Home() {
             {activeView === 'dashboard' && <Dashboard onNavigate={navigate} />}
             {activeView === 'pos' && <POSTerminal key={posKey} onSalesRecorded={loadAlerts} storeSettings={settings} />}
             {activeView === 'shifts' && <Shifts storeSettings={settings} />}
-            {activeView === 'medicines' && <Medicines />}
-            {activeView === 'categories' && <Categories onGotoMedicines={() => navigate('medicines')} />}
+            {activeView === 'medicines' && <Medicines initialCategoryId={categorySeed} onCategoryConsumed={() => setCategorySeed(null)} />}
+            {activeView === 'categories' && <Categories onGotoMedicines={(categoryId) => { setCategorySeed(categoryId); navigate('medicines') }} />}
             {activeView === 'inventory' && <Inventory onGotoPurchases={() => navigate('purchases')} />}
             {activeView === 'stock-take' && <StockTake storeSettings={settings} />}
             {activeView === 'transfers' && <Transfers />}

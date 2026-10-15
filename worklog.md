@@ -809,3 +809,20 @@ Work Log:
 
 Stage Summary:
 - The formulary is finally visible: cashiers can see WHICH items a scheme covers (badges in Products, cart and checkout), and the shop decides per insurer whether coverage means "tagged products only" (NHIS-style) or "everything" (coversAll switch). Cancelled sales no longer leave phantom pending claims. 136/136 regression green, deployed on SW v4, DB backed up.
+
+---
+Task ID: 65
+Agent: main
+Task: "Every item is classified as medicine in the category... it should be possible to give those non-medicine items different category names. Also, when a category (e.g. Analgesics) is selected on the category page, it shows all medications in inventory instead of just that category's items."
+
+Work Log:
+- DIAGNOSIS: (1) the Categories page's per-card link called onGotoMedicines() with NO category — it navigated to the Products view with the filter reset to "All Categories", so every card showed the whole inventory; the API filter (medicines?categoryId=) was always fine. (2) The category layer was hard-coded medicine-flavored: Pill icon on every card, "N medicines" copy, dialog said "Group medicines by therapeutic class or type" — even though Category itself is generic (name + description) and the API accepts any name, so non-medicine categories were already creatable but the UI read as medicine-only.
+- DEEP-LINK FIX: page.tsx holds a one-shot categorySeed — Categories cards call onGotoMedicines(categoryId) → seed set + navigate; Medicines accepts initialCategoryId + onCategoryConsumed, seeds its category filter on mount (runs before the debounced first fetch, so the first load is already filtered) and hands the seed back so later sidebar entries start unfiltered. Cards are now fully clickable (dropdown actions stopPropagation); link copy "N items →".
+- NEUTRAL CATEGORY LAYER: Tags icon replaces the Pill on every card, "N items" copy, dialog description "Group products by type — medicines, drinks, toiletries, baby care and more", placeholder "e.g. Analgesics, Baby Care, Food & Drinks".
+- RETAIL CATEGORIES SEEDED (idempotent API script, the exact items the user named): Food & Drinks, Baby Care (diapers/wipes/formula), Toiletries & Personal Care (toothpaste/brushes/soap/shampoo) — descriptions included; rename/delete anytime.
+- VERIFY: scripts/verify-categories.sh 9/9 GREEN (idempotent): 3 retail categories present ("exists" on re-run), counts included, categoryId filter returns ONLY that category with count == category count, unfiltered strictly larger. Browser E2E (zero page errors, SW bumped medipos-v4→v5): Analgesics card click → Products with filter "Analgesics" and exactly 15 rows; Baby Care card (0 items) → filtered empty state; Dashboard → Medicines mounts unfiltered (All Categories, 75 rows) proving the seed is one-shot; nav-to-current-view is a no-op by design.
+- REGRESSION: tsc src/ clean, eslint clean (had to drop an unused eslint-disable after the exhaustive-deps rule didn't fire), BUILD_EXIT=0 → kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 — one post-deploy ws-sync timing flake on first pass, 29/29 clean on re-run).
+- backup-db.sh run.
+
+Stage Summary:
+- The category layer finally speaks retail as well as pharmacy: non-medicine categories are first-class (three seeded, any name creatable), every card is a working deep-link into a pre-filtered Products list (the Analgesics-shows-everything bug is dead), and the copy/icons no longer claim everything is a medicine. 136/136 regression green, deployed on SW v5, DB backed up.

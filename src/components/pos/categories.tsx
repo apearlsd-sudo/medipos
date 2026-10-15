@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader } from '@/components/pos/shared'
-import { MoreHorizontal, Pencil, Pill, Plus, Trash2 } from 'lucide-react'
+import { MoreHorizontal, Pencil, Plus, Tags, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -19,7 +19,7 @@ interface Category {
   _count: { medicines: number }
 }
 
-export function Categories({ onGotoMedicines }: { onGotoMedicines?: () => void }) {
+export function Categories({ onGotoMedicines }: { onGotoMedicines?: (categoryId: string) => void }) {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -87,17 +87,29 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: () => void }
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {categories.map((c) => (
-            <Card key={c.id} className="group relative transition hover:border-teal-300 hover:shadow-md dark:hover:border-teal-700">
+            <Card
+              key={c.id}
+              className="group relative cursor-pointer transition hover:border-teal-300 hover:shadow-md dark:hover:border-teal-700"
+              onClick={() => onGotoMedicines?.(c.id)}
+            >
               <CardHeader className="pb-2">
                 <div className="flex items-start justify-between">
                   <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400">
-                    <Pill className="h-5 w-5" />
+                    <Tags className="h-5 w-5" />
                   </span>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 transition group-hover:opacity-100" aria-label="Actions"><MoreHorizontal className="h-4 w-4" /></Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 opacity-0 transition group-hover:opacity-100"
+                        aria-label="Actions"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MoreHorizontal className="h-4 w-4" />
+                      </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
+                    <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenuItem onClick={() => { setEditing(c); setForm({ name: c.name, description: c.description ?? '' }); setDialogOpen(true) }}>
                         <Pencil className="h-4 w-4" /> Edit
                       </DropdownMenuItem>
@@ -109,8 +121,8 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: () => void }
               </CardHeader>
               <CardContent>
                 <p className="line-clamp-2 min-h-8 text-xs text-muted-foreground">{c.description ?? 'No description'}</p>
-                <button onClick={onGotoMedicines} className="mt-3 text-sm font-semibold text-teal-600 hover:underline dark:text-teal-400">
-                  {c._count.medicines} medicine{c._count.medicines === 1 ? '' : 's'} →
+                <button className="mt-3 text-sm font-semibold text-teal-600 hover:underline dark:text-teal-400">
+                  {c._count.medicines} item{c._count.medicines === 1 ? '' : 's'} →
                 </button>
               </CardContent>
             </Card>
@@ -122,10 +134,10 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: () => void }
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit Category' : 'Add Category'}</DialogTitle>
-            <DialogDescription>Group medicines by therapeutic class or type.</DialogDescription>
+            <DialogDescription>Group products by type — medicines, drinks, toiletries, baby care and more.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="space-y-1.5"><Label>Category Name *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Analgesics" /></div>
+            <div className="space-y-1.5"><Label>Category Name *</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Analgesics, Baby Care, Food & Drinks" /></div>
             <div className="space-y-1.5"><Label>Description</Label><Textarea rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>

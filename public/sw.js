@@ -17,7 +17,9 @@
 // coverage override at the till, insurer edit dialog in Settings.
 // v4 — insurance formulary visibility: product "Insured" badges + filter,
 // cart coverage badges, per-insurer "cover all products" switch.
-const CACHE_VERSION = 'medipos-v4'
+// v5 — categories for non-medicine products (retail categories + neutral copy),
+// category card → products deep-link that actually filters.
+const CACHE_VERSION = 'medipos-v5'
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',
