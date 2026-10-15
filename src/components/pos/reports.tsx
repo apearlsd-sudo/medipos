@@ -3,6 +3,7 @@
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -12,7 +13,7 @@ import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarClock, DollarSign, Download, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
@@ -43,10 +44,11 @@ interface ReportData {
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses'
+type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
+  { key: 'dayclose', label: 'Day Close (Z)', icon: CalendarCheck },
   { key: 'branches', label: 'Branch Comparison', icon: Building2 },
   { key: 'products', label: 'Product Performance', icon: ShoppingCart },
   { key: 'staff', label: 'Staff Performance', icon: Users },
@@ -59,6 +61,9 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'analytics', label: 'Analytics Pack', icon: BarChart3 },
   { key: 'expenses', label: 'Expenses & Net', icon: Wallet },
 ]
+
+// Day-close section cache (for CSV export) — module-level, refreshed by the section.
+let dayCloseCache: DayCloseData | null = null
 
 export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
   const [data, setData] = useState<ReportData | null>(null)
@@ -85,6 +90,27 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
   const currentTable = (): { title: string; head: string[]; body: (string | number)[][] } => {
     if (!data) return { title: 'Report', head: [], body: [] }
     switch (tab) {
+      case 'dayclose': {
+        const dc = dayCloseCache
+        if (!dc) return { title: 'Day Close', head: [], body: [] }
+        const rows: (string | number)[][] = [
+          [`Day-close report — ${dc.date} — ${dc.branchLabel}`],
+          [],
+          ['Sales', dc.sales.count, dc.sales.gross, dc.sales.discounts, dc.sales.tax, dc.sales.net],
+          [],
+          ['Tender', 'Count', 'Amount'],
+          ...Object.entries(dc.sales.byTender).map(([k, v]) => [k, v.count, v.amount]),
+          [],
+          ['Refunds', dc.refunds.count, dc.refunds.total],
+          ...Object.entries(dc.refunds.byMethod).map(([k, v]) => [`refund via ${k}`, '', v]),
+          [],
+          ['Expenses', dc.expenses.count, dc.expenses.total],
+          [],
+          ['Shift', 'Cashier', 'Status', 'Opening', 'Cash sales', 'Payouts', 'Drops', 'Expected', 'Counted', 'Variance'],
+          ...dc.shifts.map((sh) => [sh.shiftNo, sh.userName, sh.status, sh.openingCash, sh.cashSales, sh.payouts, sh.drops, sh.expectedCash, sh.countedCash ?? '', sh.variance ?? '']),
+        ]
+        return { title: `Day Close ${dc.date}`, head: [], body: rows }
+      }
       case 'branches':
         return {
           title: 'Branch Comparison',
@@ -275,6 +301,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
       {tab === 'credit' && <CreditSection />}
 
       {/* ---------------- Tier 3: analytics pack ---------------- */}
+      {tab === 'dayclose' && <DayCloseSection />}
       {tab === 'analytics' && <AnalyticsSection days={days} onData={setAnalyticsCache} />}
 
       {/* ---------------- Tier 3: expenses & net position ---------------- */}
@@ -1216,6 +1243,173 @@ function ExpensesSection({ days, onData, grossProfit }: { days: string; onData: 
           </CardContent>
         </Card>
       </div>
+    </div>
+  )
+}
+
+
+// ---------------------------------------------------------------------------
+// B1 — Day Close (Z-report): one calendar day, all ledgers rolled up
+// ---------------------------------------------------------------------------
+interface DayCloseData {
+  date: string
+  branchLabel: string
+  generatedAt: string
+  sales: { count: number; gross: number; discounts: number; tax: number; net: number; byTender: Record<string, { count: number; amount: number }>; insuranceBilled: number; pointsRedeemedValue: number }
+  refunds: { count: number; total: number; byMethod: Record<string, number> }
+  expenses: { count: number; total: number }
+  cash: { expectedNet: number; expectedInDrawers: number }
+  momoPending: Array<{ invoiceNo: string; total: number; provider: string | null }>
+  shifts: Array<{ id: string; shiftNo: string; userName: string; status: string; startedAt: string; endedAt: string | null; salesCount: number; openingCash: number; cashSales: number; additions: number; payouts: number; drops: number; expectedCash: number; countedCash: number | null; variance: number | null }>
+}
+
+function DayCloseSection() {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [data, setData] = useState<DayCloseData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    const run = () => {
+      setLoading(true)
+      fetch(`/api/day-close?date=${date}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j) => { if (alive && j && !j.error) { setData(j); dayCloseCache = j } })
+        .finally(() => { if (alive) setLoading(false) })
+    }
+    const t = setTimeout(run, 0)
+    return () => { alive = false; clearTimeout(t) }
+  }, [date])
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-52 rounded-full" />
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
+    )
+  }
+
+  const openShifts = data.shifts.filter((sh) => sh.status === 'open')
+  const closedShifts = data.shifts.filter((sh) => sh.status === 'closed')
+  const totalVariance = closedShifts.reduce((s, sh) => s + (sh.variance ?? 0), 0)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44 rounded-full" aria-label="Day-close date" />
+        <span className="text-xs text-muted-foreground">{data.branchLabel} · generated {new Date(data.generatedAt).toLocaleTimeString()}</span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Net sales</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-teal-600 dark:text-teal-400">{fmtMoney(data.sales.net)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{data.sales.count} transactions · tax {fmtMoney(data.sales.tax)} · discounts {fmtMoney(data.sales.discounts)}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Refunds</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight text-red-600 dark:text-red-400">{fmtMoney(data.refunds.total)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{data.refunds.count} return(s){data.sales.insuranceBilled > 0 ? ` · insurance billed ${fmtMoney(data.sales.insuranceBilled)}` : ''}</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Expenses</p>
+          <p className="mt-1 text-2xl font-bold tracking-tight">{fmtMoney(data.expenses.total)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{data.expenses.count} petty-cash entry(ies)</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Shift variance</p>
+          <p className={`mt-1 text-2xl font-bold tracking-tight ${Math.abs(totalVariance) > 0.01 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{fmtMoney(totalVariance)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{closedShifts.length} closed · {openShifts.length} still open</p>
+        </Card>
+      </div>
+
+      <Card>
+        <div className="border-b p-3 text-sm font-medium">Tender breakdown</div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Tender</TableHead>
+              <TableHead className="text-center">Count</TableHead>
+              <TableHead className="text-right">Amount</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {Object.entries(data.sales.byTender).map(([k, v]) => (
+              <TableRow key={k}>
+                <TableCell className="capitalize">{k === 'momo' ? 'Mobile Money' : k}</TableCell>
+                <TableCell className="text-center tabular-nums">{v.count}</TableCell>
+                <TableCell className="text-right font-medium tabular-nums">{fmtMoney(v.amount)}</TableCell>
+              </TableRow>
+            ))}
+            {Object.keys(data.sales.byTender).length === 0 && (
+              <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">No sales this day.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <Card>
+        <div className="border-b p-3 text-sm font-medium">Shift reconciliation</div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Shift</TableHead>
+              <TableHead>Cashier</TableHead>
+              <TableHead className="hidden md:table-cell text-center">Sales</TableHead>
+              <TableHead className="text-right">Opening</TableHead>
+              <TableHead className="hidden lg:table-cell text-right">Cash sales</TableHead>
+              <TableHead className="hidden lg:table-cell text-right">Payouts</TableHead>
+              <TableHead className="text-right">Expected</TableHead>
+              <TableHead className="text-right">Counted</TableHead>
+              <TableHead className="text-right">Variance</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.shifts.map((sh) => (
+              <TableRow key={sh.id ?? sh.shiftNo}>
+                <TableCell className="font-medium">{sh.shiftNo}{sh.status === 'open' && <Badge variant="secondary" className="ml-1.5 rounded-full bg-sky-100 text-[10px] text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">open</Badge>}</TableCell>
+                <TableCell className="text-sm">{sh.userName}</TableCell>
+                <TableCell className="hidden md:table-cell text-center tabular-nums text-sm">{sh.salesCount}</TableCell>
+                <TableCell className="text-right tabular-nums text-sm">{fmtMoney(sh.openingCash)}</TableCell>
+                <TableCell className="hidden lg:table-cell text-right tabular-nums text-sm">{fmtMoney(sh.cashSales)}</TableCell>
+                <TableCell className="hidden lg:table-cell text-right tabular-nums text-sm">{fmtMoney(sh.payouts)}</TableCell>
+                <TableCell className="text-right tabular-nums text-sm">{fmtMoney(sh.expectedCash)}</TableCell>
+                <TableCell className="text-right tabular-nums text-sm">{sh.countedCash != null ? fmtMoney(sh.countedCash) : '—'}</TableCell>
+                <TableCell className={`text-right tabular-nums text-sm font-medium ${(sh.variance ?? 0) === 0 ? '' : 'text-amber-600 dark:text-amber-400'}`}>{sh.variance != null ? fmtMoney(sh.variance) : '—'}</TableCell>
+              </TableRow>
+            ))}
+            {data.shifts.length === 0 && (
+              <TableRow><TableCell colSpan={9} className="py-8 text-center text-muted-foreground">No shifts touched this day.</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      {data.momoPending.length > 0 && (
+        <Card className="border-amber-300 bg-amber-50/60 dark:border-amber-500/30 dark:bg-amber-500/10">
+          <div className="border-b p-3 text-sm font-medium text-amber-700 dark:text-amber-400">MoMo payments awaiting verification ({data.momoPending.length})</div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Invoice</TableHead>
+                <TableHead>Provider</TableHead>
+                <TableHead className="text-right">Amount</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.momoPending.map((m) => (
+                <TableRow key={m.invoiceNo}>
+                  <TableCell className="font-medium">{m.invoiceNo}</TableCell>
+                  <TableCell className="text-sm capitalize">{m.provider ?? 'momo'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtMoney(m.total)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
     </div>
   )
 }
