@@ -344,16 +344,19 @@ model PurchaseItem {
 }
 
 model Prescription {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  patientName String
-  doctorName  String?
-  phone       String?
-  itemsText   String?
-  notes       String?
-  status      String   @default("pending")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  code               String    @unique
+  patientName        String
+  doctorName         String?
+  phone              String?
+  itemsText          String?
+  notes              String?
+  status             String    @default("pending")
+  refillIntervalDays Int? // null = no refill schedule; N = repeat every N days
+  refillCount        Int       @default(0)
+  lastRefillAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 }
 
 model InventoryLog {

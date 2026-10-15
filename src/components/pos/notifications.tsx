@@ -54,9 +54,12 @@ interface SettingsShape {
   notifyExpiringEnabled: string
   notifyExpiringDays: string
   notifyDailySummaryEnabled: string
+  notifyRefillEnabled: string
+  notifyRefillDays: string
   notifyScheduleEnabled: string
   notifyScheduleHour: string
   notifyScheduleLastRun?: string
+  notifyTplRefill: string
   notifyTplLowStock: string
   notifyTplExpiring: string
   notifyTplDaily: string
@@ -64,6 +67,7 @@ interface SettingsShape {
 }
 
 const TEMPLATE_DEFAULTS: Record<string, string> = {
+  notifyTplRefill: '[MediPOS] REFILL REMINDER — {{store}}: Hi {{patient}}, your prescription ({{code}}: {{item}}) is due for a refill. Visit us or reply to arrange it.',
   notifyTplLowStock: '[MediPOS] LOW STOCK — {{store}}: {{count}} item(s) at/below reorder point. Top: {{items}}. Please reorder.',
   notifyTplExpiring: '[MediPOS] EXPIRY ALERT — {{store}}: {{count}} item(s) expire within {{days}} days. Top: {{items}}. Plan write-offs/returns.',
   notifyTplDaily: '[MediPOS] DAILY SUMMARY — {{store}} {{date}}: {{orders}} order(s), revenue {{revenue}}. Top seller: {{topItem}}.',
@@ -71,6 +75,7 @@ const TEMPLATE_DEFAULTS: Record<string, string> = {
 }
 
 const TEMPLATE_LABELS: Array<{ key: keyof SettingsShape; label: string; hint: string }> = [
+  { key: 'notifyTplRefill', label: 'Refill reminder', hint: 'vars: {{store}} {{patient}} {{code}} {{item}}' },
   { key: 'notifyTplLowStock', label: 'Low stock alert', hint: 'vars: {{store}} {{branch}} {{count}} {{items}}' },
   { key: 'notifyTplExpiring', label: 'Expiry alert', hint: 'vars: {{store}} {{days}} {{count}} {{items}}' },
   { key: 'notifyTplDaily', label: 'Daily summary', hint: 'vars: {{store}} {{date}} {{orders}} {{revenue}} {{topItem}}' },
@@ -433,6 +438,16 @@ export function Notifications() {
             <div className="flex items-center justify-between rounded-xl border p-3">
               <div><Label>Daily sales summary</Label><p className="text-xs text-muted-foreground">Orders + revenue snapshot once per day (sent by the stock check)</p></div>
               <Switch checked={settings.notifyDailySummaryEnabled === 'true'} disabled={!canManage} onCheckedChange={(v) => set('notifyDailySummaryEnabled', String(v))} />
+
+            <div className="flex items-center justify-between rounded-xl border p-3">
+              <div><Label>Refill reminders</Label><p className="text-xs text-muted-foreground">Text the patient when their prescription refill falls due</p></div>
+              <Switch checked={settings.notifyRefillEnabled === 'true'} disabled={!canManage} onCheckedChange={(v) => set('notifyRefillEnabled', String(v))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Refill reminder window (days)</Label>
+              <Input disabled={!canManage} type="number" value={settings.notifyRefillDays} onChange={(e) => set('notifyRefillDays', e.target.value)} />
+              <p className="text-xs text-muted-foreground">Send the reminder this many days before the refill date (default 3).</p>
+            </div>
             </div>
           </CardContent>
         </Card>

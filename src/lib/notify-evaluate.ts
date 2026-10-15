@@ -192,5 +192,50 @@ export async function evaluateAlertRules(): Promise<EvaluateResult> {
     }
   }
 
+  // Rule 4 — A4 medication refill reminders (per patient, to their own number)
+  if (settings.refillEnabled) {
+    const windowMs = settings.refillDays * 86_400_000
+    const rxs = await db.prescription.findMany({
+      where: {
+        status: { in: ['verified', 'dispensed'] },
+        refillIntervalDays: { not: null },
+        phone: { not: null },
+      },
+    })
+    const due = rxs.filter((rx) => {
+      const anchor = (rx.lastRefillAt ?? rx.createdAt).getTime()
+      const interval = (rx.refillIntervalDays ?? 0) * 86_400_000
+      const nextDue = anchor + interval
+      return nextDue - now.getTime() <= windowMs // due within the window (or overdue)
+    })
+    let ruleQueued = 0
+    for (const rx of due) {
+      const anchor = (rx.lastRefillAt ?? rx.createdAt)
+      const nextDue = new Date(anchor.getTime() + (rx.refillIntervalDays ?? 0) * 86_400_000)
+      const relatedKey = `refill:${rx.id}:${nextDue.toISOString().slice(0, 10)}`
+      if (await isOnCooldown(relatedKey, 24)) continue // one reminder per due date per day
+      const body = renderTemplate(settings.templates.refill, {
+        store: storeName,
+        patient: rx.patientName,
+        code: rx.code,
+        item: (rx.itemsText ?? '').slice(0, 60) || 'prescription',
+      })
+      for (const ch of channels) {
+        const rows = await queueAndDeliver({
+          channel: ch,
+          recipients: [rx.phone!],
+          template: 'refill',
+          body,
+          relatedType: 'prescription',
+          relatedKey,
+          meta: { prescriptionId: rx.id, code: rx.code, patient: rx.patientName },
+        })
+        ruleQueued += rows.length
+      }
+    }
+    queued += ruleQueued
+    rules.push({ rule: 'refill_reminders', items: due.length, queued: ruleQueued, cooldown: false })
+  }
+
   return { ok: true, queued, rules, evaluatedAt: now.toISOString() }
 }

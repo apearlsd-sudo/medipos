@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
 import { fmtDate } from '@/lib/format'
-import { CheckCircle2, FileHeart, MoreHorizontal, Pencil, Plus, Search, Trash2, XCircle } from 'lucide-react'
+import { CheckCircle2, FileHeart, MoreHorizontal, Pencil, Plus, RefreshCcw, Search, Trash2, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -26,10 +26,13 @@ interface Prescription {
   itemsText: string | null
   notes: string | null
   status: string
+  refillIntervalDays: number | null
+  refillCount: number
+  lastRefillAt: string | null
   createdAt: string
 }
 
-const empty = { patientName: '', doctorName: '', phone: '', itemsText: '', notes: '' }
+const empty = { patientName: '', doctorName: '', phone: '', itemsText: '', notes: '', refillIntervalDays: '' }
 
 export function Prescriptions() {
   const [rxs, setRxs] = useState<Prescription[]>([])
@@ -75,6 +78,24 @@ export function Prescriptions() {
       load()
     } finally {
       setSaving(false)
+    }
+  }
+
+  const nextRefillDue = (rx: Prescription): Date | null => {
+    if (rx.refillIntervalDays == null) return null
+    const anchor = new Date(rx.lastRefillAt ?? rx.createdAt).getTime()
+    return new Date(anchor + rx.refillIntervalDays * 86400000)
+  }
+
+  const markRefilled = async (rx: Prescription) => {
+    const res = await fetch(`/api/prescriptions/${rx.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'refill' }),
+    })
+    if (res.ok) {
+      toast({ title: 'Refill recorded', description: `${rx.code} — next reminder resets from today.` })
+      load()
     }
   }
 
@@ -162,6 +183,16 @@ export function Prescriptions() {
                           <div>
                             <p className="text-sm font-medium">{rx.patientName}</p>
                             <p className="text-xs text-muted-foreground">{rx.phone ?? ''}</p>
+                            {rx.refillIntervalDays != null && (() => {
+                              const due = nextRefillDue(rx)
+                              if (!due) return null
+                              const days = Math.ceil((due.getTime() - Date.now()) / 86400000)
+                              return (
+                                <p className={`text-[11px] ${days <= 0 ? 'font-medium text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                                  {days <= 0 ? `Refill due (${Math.abs(days)}d overdue)` : `Refill in ${days}d`} · {rx.refillCount} refilled
+                                </p>
+                              )
+                            })()}
                           </div>
                         </div>
                       </TableCell>
@@ -186,10 +217,15 @@ export function Prescriptions() {
                               <CheckCircle2 className="h-3.5 w-3.5" /> Dispense
                             </Button>
                           )}
+                          {rx.refillIntervalDays != null && ['verified', 'dispensed'].includes(rx.status) && (
+                            <Button variant="outline" size="sm" className="h-7 rounded-full px-2.5 text-xs text-sky-600 hover:text-sky-700" onClick={() => markRefilled(rx)} title="Record a refill today — resets the reminder cycle">
+                              <RefreshCcw className="h-3.5 w-3.5" /> Refilled
+                            </Button>
+                          )}
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7" aria-label="More actions"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => { setEditing(rx); setForm({ patientName: rx.patientName, doctorName: rx.doctorName ?? '', phone: rx.phone ?? '', itemsText: rx.itemsText ?? '', notes: rx.notes ?? '' }); setDialogOpen(true) }}>
+                              <DropdownMenuItem onClick={() => { setEditing(rx); setForm({ patientName: rx.patientName, doctorName: rx.doctorName ?? '', phone: rx.phone ?? '', itemsText: rx.itemsText ?? '', notes: rx.notes ?? '', refillIntervalDays: rx.refillIntervalDays != null ? String(rx.refillIntervalDays) : '' }); setDialogOpen(true) }}>
                                 <Pencil className="h-4 w-4" /> Edit
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => remove(rx)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>
@@ -223,6 +259,17 @@ export function Prescriptions() {
             <div className="space-y-1.5"><Label>Prescribing Doctor</Label><Input value={form.doctorName} onChange={(e) => setForm({ ...form, doctorName: e.target.value })} placeholder="e.g. Dr. K. Frimpong" /></div>
             <div className="space-y-1.5"><Label>Medications & Dosage</Label><Textarea rows={3} value={form.itemsText} onChange={(e) => setForm({ ...form, itemsText: e.target.value })} placeholder="e.g. Amoxicillin 500mg x21 (1 tds)" /></div>
             <div className="space-y-1.5"><Label>Notes</Label><Textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></div>
+            <div className="space-y-1.5">
+              <Label>Refill Interval (days)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={form.refillIntervalDays}
+                onChange={(e) => setForm({ ...form, refillIntervalDays: e.target.value })}
+                placeholder="e.g. 30 — leave empty for no refill reminders"
+              />
+              <p className="text-xs text-muted-foreground">When set, the reminder engine texts the patient {form.phone ? 'this number' : '(needs a phone number)'} when the next refill falls due.</p>
+            </div>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
               <Button onClick={save} disabled={saving} className="bg-teal-600 hover:bg-teal-700">{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create Prescription'}</Button>

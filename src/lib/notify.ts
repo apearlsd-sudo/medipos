@@ -24,6 +24,9 @@ export const NOTIFY_SETTING_KEYS = [
   'notifySmsRecipients',
   'notifyEmailEnabled',
   'notifyEmailWebhookUrl',
+  'notifyRefillEnabled',
+  'notifyRefillDays',
+  'notifyTplRefill',
   'notifyLowStockEnabled',
   'notifyLowStockCooldownH',
   'notifyExpiringEnabled',
@@ -50,12 +53,14 @@ export interface NotifySettings {
   smsRecipients: string[]
   emailEnabled: boolean
   emailWebhookUrl: string
+  refillEnabled: boolean
+  refillDays: number
   lowStockEnabled: boolean
   lowStockCooldownH: number
   expiringEnabled: boolean
   expiringDays: number
   dailySummaryEnabled: boolean
-  templates: { lowStock: string; expiring: string; daily: string; test: string }
+  templates: { lowStock: string; expiring: string; daily: string; test: string; refill: string }
 }
 
 export const NOTIFY_TEMPLATE_DEFAULTS = {
@@ -66,6 +71,7 @@ export const NOTIFY_TEMPLATE_DEFAULTS = {
   daily:
     '[MediPOS] DAILY SUMMARY — {{store}} {{date}}: {{orders}} order(s), revenue {{revenue}}. Top seller: {{topItem}}.',
   test: '[MediPOS] Test message — WhatsApp/SMS alerting is configured correctly for {{store}}.',
+  refill: '[MediPOS] REFILL REMINDER — {{store}}: Hi {{patient}}, your prescription ({{code}}: {{item}}) is due for a refill. Visit us or reply to arrange it.',
 }
 
 function parseList(v: string | undefined): string[] {
@@ -99,6 +105,8 @@ export async function loadNotifySettings(): Promise<{ settings: NotifySettings; 
     smsRecipients: parseList(raw.notifySmsRecipients),
     emailEnabled: raw.notifyEmailEnabled === 'true',
     emailWebhookUrl: raw.notifyEmailWebhookUrl ?? '',
+    refillEnabled: raw.notifyRefillEnabled === 'true',
+    refillDays: Math.max(1, Number(raw.notifyRefillDays ?? 3) || 3),
     lowStockEnabled: raw.notifyLowStockEnabled === 'true',
     lowStockCooldownH: Math.max(1, Number(raw.notifyLowStockCooldownH ?? 24) || 24),
     expiringEnabled: raw.notifyExpiringEnabled === 'true',
@@ -109,6 +117,7 @@ export async function loadNotifySettings(): Promise<{ settings: NotifySettings; 
       expiring: raw.notifyTplExpiring || NOTIFY_TEMPLATE_DEFAULTS.expiring,
       daily: raw.notifyTplDaily || NOTIFY_TEMPLATE_DEFAULTS.daily,
       test: raw.notifyTplTest || NOTIFY_TEMPLATE_DEFAULTS.test,
+      refill: raw.notifyTplRefill || NOTIFY_TEMPLATE_DEFAULTS.refill,
     },
   }
   return { settings, raw }

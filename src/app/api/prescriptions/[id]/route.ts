@@ -8,6 +8,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params
     const body = await req.json()
+
+    // A4 — "mark refilled": bump the refill cycle anchor (does not change status)
+    if (body.action === 'refill') {
+      const prescription = await db.prescription.update({
+        where: { id },
+        data: { refillCount: { increment: 1 }, lastRefillAt: new Date() },
+      })
+      return NextResponse.json({ prescription })
+    }
+
     const prescription = await db.prescription.update({
       where: { id },
       data: {
@@ -17,6 +27,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         itemsText: body.itemsText,
         notes: body.notes,
         status: body.status,
+        refillIntervalDays:
+          body.refillIntervalDays === null || body.refillIntervalDays === ''
+            ? null
+            : body.refillIntervalDays !== undefined
+              ? Math.max(1, Math.trunc(Number(body.refillIntervalDays) || 0)) || null
+              : undefined,
       },
     })
     return NextResponse.json({ prescription })
