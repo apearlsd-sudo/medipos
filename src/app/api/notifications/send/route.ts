@@ -23,7 +23,9 @@ export async function POST(req: NextRequest) {
       ? bodyIn.recipient.split(',').map((s) => s.trim()).filter(Boolean)
       : channel === 'whatsapp'
         ? settings.whatsappRecipients
-        : [] // sms/email test sends take an explicit recipient
+        : channel === 'sms'
+          ? settings.smsRecipients
+          : [] // email test sends take an explicit recipient (none are configured)
     if (recipients.length === 0) {
       return NextResponse.json({ error: 'No recipient given and none configured for this channel' }, { status: 400 })
     }
