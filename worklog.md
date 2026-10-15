@@ -873,3 +873,18 @@ Work Log:
 
 Stage Summary:
 - The topbar is chrome-only again: identity, shift, branch, and quick actions — product search lives exactly where products live (POS product panel + Products page). Dead quickSearch plumbing removed from both layers. 136/136 regression green, deployed on SW v8, DB backed up.
+
+---
+Task ID: 69
+Agent: main
+Task: "report page menu items should be categorized and redesigned with dropdown menu" — the 17 flat report tabs in a wrapping strip became a categorized dropdown.
+
+Work Log:
+- DESIGN: 17 reports grouped into 4 intuitive buckets the way the shop thinks about them — Sales & Revenue (Overview, Analytics Pack, Payments & MoMo, Insurance Claims, Credit Aging, Sales Targets), Inventory & Purchasing (Product Performance, Inventory Valuation, Expiry Report, Purchases), Finance & Compliance (Expenses & Net, Accounting Pack, VAT Filing), Operations & Team (Day Close (Z), Branch Comparison, Staff Performance, Owner Digest).
+- UI (reports.tsx): the 17-chip TabsList strip is replaced by a single DropdownMenu — teal pill trigger showing the ACTIVE report's icon + name + chevron; content (w-80, max-h-[75vh] scroll) lists group headers (uppercase label + one-line caption like "money in — performance, payments, credit"), each item with its icon and a Check on the active report, separators between groups; a muted inline caption beside the trigger names the current group + caption (hidden on small screens). tab/setTab mechanics untouched — purely a menu swap; CSV/PDF export + period + scope controls stay in the PageHeader. Tabs import retained (Targets/OwnerDigest sections still use Tabs internally).
+- VERIFY (browser E2E, SW medipos-v8→v9, zero page errors): dropdown opens with all 4 group labels + 17 items in correct groups; picking VAT Filing switches tab, trigger reads "VAT Filing", caption "Finance & Compliance · money out — expenses, accounting, VAT", section renders; cross-group switch to Payments & MoMo renders Payment Methods, caption flips to "Sales & Revenue ·…", menu auto-closes. Screenshot confirms the categorized menu (groups, captions, active check).
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v8→v9 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 — first pass hit the known ws-sync timing flake, 29/29 clean on re-run).
+- backup-db.sh run.
+
+Stage Summary:
+- The Reports page menu is now a categorized dropdown: four labeled groups with captions instead of 17 cramped chips, the active report always named on the trigger, and every report two keystrokes away. 136/136 regression green, deployed on SW v9, DB backed up.

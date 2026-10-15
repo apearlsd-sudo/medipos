@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { PageHeader, StatusBadge } from '@/components/pos/shared'
@@ -16,7 +17,7 @@ import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, Check, ChevronDown, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
@@ -67,6 +68,14 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'vat', label: 'VAT Filing', icon: ReceiptText },
   { key: 'targets', label: 'Sales Targets', icon: Target },
   { key: 'digest', label: 'Owner Digest', icon: Newspaper },
+]
+
+// Categorized report menu — the 17 reports grouped the way the shop thinks about them.
+const GROUPS: Array<{ label: string; caption: string; tabs: ReportTab[] }> = [
+  { label: 'Sales & Revenue', caption: 'money in — performance, payments, credit', tabs: ['overview', 'analytics', 'payments', 'claims', 'credit', 'targets'] },
+  { label: 'Inventory & Purchasing', caption: 'goods — products, stock, expiry, purchases', tabs: ['products', 'stock', 'expiry', 'purchases'] },
+  { label: 'Finance & Compliance', caption: 'money out — expenses, accounting, VAT', tabs: ['expenses', 'accounting', 'vat'] },
+  { label: 'Operations & Team', caption: 'the shop — day close, branches, staff', tabs: ['dayclose', 'branches', 'staff', 'digest'] },
 ]
 
 // Day-close section cache (for CSV export) — module-level, refreshed by the section.
@@ -321,6 +330,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
   }
 
   const tabMeta = TABS.find((t) => t.key === tab)!
+  const activeGroup = GROUPS.find((g) => g.tabs.includes(tab))
 
   return (
     <div className="space-y-4">
@@ -346,16 +356,48 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         }
       />
 
-      {/* Report tabs */}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as ReportTab)}>
-        <TabsList className="flex h-auto flex-wrap gap-1">
-          {TABS.map((t) => (
-            <TabsTrigger key={t.key} value={t.key} className="gap-1.5 rounded-full px-3.5 text-xs">
-              <t.icon className="h-3.5 w-3.5" /> {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      </Tabs>
+      {/* Report menu — categorized dropdown (17 reports in 4 groups) */}
+      <div className="flex flex-wrap items-center gap-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              className="rounded-full bg-teal-600/5 px-4 font-semibold text-teal-700 hover:bg-teal-600/10 dark:text-teal-300"
+              aria-label="Choose report"
+            >
+              <tabMeta.icon className="h-4 w-4" />
+              {tabMeta.label}
+              <ChevronDown className="h-4 w-4 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="max-h-[75vh] w-80 overflow-y-auto">
+            {GROUPS.map((g, gi) => (
+              <DropdownMenuGroup key={g.label}>
+                <DropdownMenuLabel className="px-2 py-2">
+                  <span className="text-xs font-bold uppercase tracking-wide text-foreground/70">{g.label}</span>
+                  <span className="block text-[11px] font-normal text-muted-foreground">{g.caption}</span>
+                </DropdownMenuLabel>
+                {g.tabs.map((k) => {
+                  const meta = TABS.find((t) => t.key === k)!
+                  return (
+                    <DropdownMenuItem key={k} onSelect={() => setTab(k)} className="gap-2.5">
+                      <meta.icon className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />
+                      <span className="flex-1">{meta.label}</span>
+                      {tab === k && <Check className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />}
+                    </DropdownMenuItem>
+                  )
+                })}
+                {gi < GROUPS.length - 1 && <DropdownMenuSeparator />}
+              </DropdownMenuGroup>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {activeGroup && (
+          <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex">
+            {activeGroup.label} · {activeGroup.caption}
+          </span>
+        )}
+      </div>
 
       {/* Summary cards (always visible for context) */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
