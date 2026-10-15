@@ -10,7 +10,8 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, PageHeader, TableSkeleton } from '@/components/pos/shared'
-import { MoreHorizontal, Pencil, Plus, Search, Trash2, Truck } from 'lucide-react'
+import { fmtMoney } from '@/lib/format'
+import { Download, Gauge, MoreHorizontal, Pencil, Plus, Search, Trash2, Truck } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -24,6 +25,23 @@ interface Supplier {
   _count: { medicines: number; purchases: number }
 }
 
+interface Scorecard {
+  supplierId: string
+  name: string
+  orders: number
+  orderedQty: number
+  receivedQty: number
+  fillRate: number | null
+  avgLeadDays: number | null
+  minLeadDays: number | null
+  maxLeadDays: number | null
+  leadSamples: number
+  spend: number
+  returnsCount: number
+  returnsValue: number
+  lastOrderAt: string | null
+}
+
 const empty = { name: '', contactPerson: '', email: '', phone: '', address: '' }
 
 export function Suppliers() {
@@ -34,6 +52,42 @@ export function Suppliers() {
   const [editing, setEditing] = useState<Supplier | null>(null)
   const [form, setForm] = useState(empty)
   const [saving, setSaving] = useState(false)
+
+  // C3 — supplier scorecards
+  const [scorecards, setScorecards] = useState<Scorecard[]>([])
+  const [scoreDays, setScoreDays] = useState(180)
+  const [scoreLoading, setScoreLoading] = useState(true)
+
+  const loadScorecards = useCallback(async (days: number) => {
+    setScoreLoading(true)
+    try {
+      const res = await fetch(`/api/suppliers/scorecard?days=${days}`, { cache: 'no-store' })
+      const json = await res.json()
+      setScorecards(json.scorecards ?? [])
+    } finally {
+      setScoreLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadScorecards(scoreDays) }, [loadScorecards, scoreDays])
+
+  const exportScorecardsCsv = () => {
+    const rows = [
+      ['Supplier', 'Orders', 'Ordered qty', 'Received qty', 'Fill rate %', 'Avg lead days', 'Fastest', 'Slowest', 'Spend', 'Returns', 'Returns value', 'Last order'],
+      ...scorecards.map((s) => [
+        s.name, s.orders, s.orderedQty, s.receivedQty, s.fillRate ?? '',
+        s.avgLeadDays ?? '', s.minLeadDays ?? '', s.maxLeadDays ?? '',
+        s.spend.toFixed(2), s.returnsCount, s.returnsValue.toFixed(2), s.lastOrderAt ? s.lastOrderAt.slice(0, 10) : '',
+      ]),
+    ]
+    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `supplier-scorecards-${scoreDays}d.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -150,6 +204,79 @@ export function Suppliers() {
                   ))}
                   {suppliers.length === 0 && (
                     <TableRow><TableCell colSpan={6} className="py-16 text-center text-muted-foreground"><Truck className="mx-auto mb-2 h-8 w-8 opacity-40" />No suppliers found.</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          </ScrollArea>
+        )}
+      </Card>
+
+      {/* C3 — supplier scorecards */}
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
+          <div className="flex items-center gap-2">
+            <Gauge className="h-4 w-4 text-teal-600" />
+            <div>
+              <p className="text-sm font-semibold leading-tight">Supplier Scorecards</p>
+              <p className="text-xs text-muted-foreground">Fill rate, lead times and spend over the last {scoreDays} days — click a metric header for its meaning.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-full border p-0.5">
+              {[90, 180, 365].map((d) => (
+                <button key={d} onClick={() => setScoreDays(d)} className={`rounded-full px-3 py-1 text-xs font-medium ${scoreDays === d ? 'bg-teal-600 text-white' : 'text-muted-foreground hover:text-foreground'}`}>{d}d</button>
+              ))}
+            </div>
+            <Button variant="outline" size="sm" className="rounded-full" onClick={exportScorecardsCsv} disabled={scoreLoading || scorecards.length === 0}>
+              <Download className="h-4 w-4" /> CSV
+            </Button>
+          </div>
+        </div>
+        {scoreLoading ? (
+          <TableSkeleton cols={6} />
+        ) : (
+          <ScrollArea className="w-full">
+            <div className="min-w-[860px]">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Supplier</TableHead>
+                    <TableHead className="text-center" title="Purchase orders placed in the window">Orders</TableHead>
+                    <TableHead className="text-center" title="Received ÷ ordered quantity">Fill rate</TableHead>
+                    <TableHead className="text-center" title="Order → goods-received average, from GRN timestamps">Avg lead (days)</TableHead>
+                    <TableHead className="text-center" title="Fastest → slowest observed lead time">Range</TableHead>
+                    <TableHead className="text-right" title="Total value of purchase orders">Spend</TableHead>
+                    <TableHead className="text-center" title="Completed supplier returns in the window">Returns</TableHead>
+                    <TableHead className="text-right">Last order</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {scorecards.map((s) => (
+                    <TableRow key={s.supplierId}>
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-3.5 w-3.5" /></span>
+                          <p className="font-medium">{s.name}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-center tabular-nums">{s.orders || '—'}</TableCell>
+                      <TableCell className="text-center tabular-nums">
+                        {s.fillRate === null ? <span className="text-muted-foreground">—</span> : (
+                          <span className={`font-medium ${s.fillRate >= 95 ? 'text-emerald-600 dark:text-emerald-400' : s.fillRate >= 70 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>{s.fillRate}%</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-center tabular-nums">{s.avgLeadDays ?? <span className="text-muted-foreground">no GRNs</span>}</TableCell>
+                      <TableCell className="text-center tabular-nums text-xs text-muted-foreground">{s.minLeadDays != null ? `${s.minLeadDays}–${s.maxLeadDays}` : '—'}</TableCell>
+                      <TableCell className="text-right tabular-nums">{s.spend > 0 ? fmtMoney(s.spend) : '—'}</TableCell>
+                      <TableCell className="text-center tabular-nums">
+                        {s.returnsCount > 0 ? <span className="font-medium text-amber-600 dark:text-amber-400">{s.returnsCount} · {fmtMoney(s.returnsValue)}</span> : '—'}
+                      </TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">{s.lastOrderAt ? s.lastOrderAt.slice(0, 10) : '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                  {scorecards.length === 0 && (
+                    <TableRow><TableCell colSpan={8} className="py-10 text-center text-muted-foreground">No suppliers yet.</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
