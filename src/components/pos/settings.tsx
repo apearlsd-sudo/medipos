@@ -22,7 +22,7 @@ import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
-import { BadgeCheck, Download, Loader2, MonitorDown, Moon, Percent, Printer, Save, ShieldCheck, Store, Sun, Wallet } from 'lucide-react'
+import { BadgeCheck, Download, Loader2, MonitorDown, Moon, Percent, Printer, Save, ShieldCheck, Store, Sun, TriangleAlert, Wallet } from 'lucide-react'
 
 interface StoreSettings {
   storeName: string
@@ -79,6 +79,7 @@ const DEFAULTS: StoreSettings = {
 export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) {
   const [settings, setSettings] = useState<StoreSettings>(DEFAULTS)
   const [loaded, setLoaded] = useState(false)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [saving, setSaving] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
   const { user, can } = useUser()
@@ -87,8 +88,12 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
 
   useEffect(() => {
     fetch('/api/settings', { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((j) => setSettings({ ...DEFAULTS, ...j.settings }))
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json()
+      })
+      .then((j) => setSettings({ ...DEFAULTS, ...(j?.settings ?? {}) }))
+      .catch(() => setLoadFailed(true))
       .finally(() => setLoaded(true))
   }, [])
 
@@ -97,6 +102,12 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
   const save = async () => {
     if (!canEditSettings) {
       toast({ title: 'Permission denied', description: 'Only administrators can change store settings.', variant: 'destructive' })
+      return
+    }
+    if (loadFailed) {
+      // The form is showing DEFAULTS, not the store's real configuration —
+      // saving now would silently reset tax mode, currency and receipt text.
+      toast({ title: 'Settings not loaded', description: 'The store settings could not be read from the server. Reload the page before saving.', variant: 'destructive' })
       return
     }
     setSaving(true)
@@ -127,10 +138,17 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
         breadcrumb="Settings"
         actions={
           canEditSettings ? (
-            <Button onClick={save} disabled={saving} className="rounded-full bg-teal-600 hover:bg-teal-700">
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-              {saving ? 'Saving…' : 'Save Changes'}
-            </Button>
+            <>
+              {loadFailed && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 dark:bg-red-500/10 dark:text-red-400">
+                  <TriangleAlert className="h-3.5 w-3.5" /> Couldn&apos;t load settings — reload before saving
+                </span>
+              )}
+              <Button onClick={save} disabled={saving || !loaded || loadFailed} className="rounded-full bg-teal-600 hover:bg-teal-700">
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {saving ? 'Saving…' : 'Save Changes'}
+              </Button>
+            </>
           ) : (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1.5 text-xs text-muted-foreground">
               <BadgeCheck className="h-3.5 w-3.5" /> View only — admin access required
