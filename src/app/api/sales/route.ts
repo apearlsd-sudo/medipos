@@ -127,6 +127,11 @@ export async function POST(req: NextRequest) {
     for (const item of items) {
       const med = medMap.get(item.medicineId)
       if (!med) return NextResponse.json({ error: `Medicine not found: ${item.medicineId}` }, { status: 404 })
+      // A5 — expired stock can never cross the till; short-dated stock is
+      // allowed but the POS warns the cashier before checkout.
+      if (med.expiryDate && med.expiryDate.getTime() <= Date.now()) {
+        return NextResponse.json({ error: `Expired stock cannot be sold — "${med.name}" expired on ${med.expiryDate.toISOString().slice(0, 10)}. Quarantine or write it off instead.` }, { status: 409 })
+      }
       const work = workingStock.get(item.medicineId)!
       const packSale = item.saleUnit === 'inner' && (med.innerQty ?? 1) > 1
       const saleUnit: 'pack' | 'inner' = packSale ? 'inner' : 'pack'

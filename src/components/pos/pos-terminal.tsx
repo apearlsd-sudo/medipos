@@ -50,6 +50,7 @@ interface Medicine {
   innerUnit?: string | null
   innerQty?: number
   looseUnits?: number
+  expiryDate?: string | null
 }
 
 interface Category { id: string; name: string }
@@ -107,6 +108,14 @@ interface SplitTender {
   amount: string
   provider: string
   reference: string
+}
+
+/** Days until a medicine expires (negative = already expired). */
+function daysToExpiry(m: { expiryDate?: string | null }): number | null {
+  if (!m.expiryDate) return null
+  const t = new Date(m.expiryDate).getTime()
+  if (Number.isNaN(t)) return null
+  return Math.ceil((t - Date.now()) / 86400000)
 }
 
 /** Parses the sale API's tenders JSON string into a typed array (null-safe). */
@@ -330,7 +339,15 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return list
   }, [meds, activeCat, search])
 
+  // A5 — short-dated stock window (days). 0 disables the FEFO warnings.
+  const fefoWarnDays = Math.max(0, Math.trunc(Number(storeSettings?.fefoWarnDays ?? 90) || 0))
+
   const addToCart = useCallback((m: Medicine, qty = 1, unit: 'pack' | 'inner' = 'pack') => {
+    const dte = daysToExpiry(m)
+    if (dte !== null && dte <= 0) {
+      toast({ title: 'Expired stock', description: `${m.name} expired on ${m.expiryDate!.slice(0, 10)} and cannot be sold. Quarantine or write it off.`, variant: 'destructive' })
+      return
+    }
     const innerQty = Math.max(1, m.innerQty ?? 1)
     const saleUnit: 'pack' | 'inner' = unit === 'inner' && innerQty > 1 ? 'inner' : 'pack'
     const availInner = m.stockQty * innerQty + (m.looseUnits ?? 0)
@@ -367,7 +384,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         { medicineId: m.id, name: m.name, sku: m.sku, unit: saleUnit === 'inner' ? (m.innerUnit ?? 'Tablet') : m.unit, unitPrice, qty, stockQty: cap, prescriptionRequired: m.prescriptionRequired, saleUnit, innerQty },
       ]
     })
-  }, [])
+    // FEFO notice: short-dated stock sells, but the cashier must see it
+    if (fefoWarnDays > 0 && dte !== null && dte <= fefoWarnDays) {
+      toast({ title: 'Short-dated stock', description: `${m.name} expires in ${dte} day(s) (${m.expiryDate!.slice(0, 10)}) — sell shortest-dated batches first.`, variant: 'destructive' })
+    }
+  }, [fefoWarnDays])
 
   // Barcode scanner behavior: Enter in search adds exact match or first result
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -778,9 +799,22 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                     <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400">
                       <Pill className="h-4.5 w-4.5" />
                     </span>
-                    {m.prescriptionRequired && (
-                      <Badge className="rounded-full bg-sky-100 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400" variant="secondary">Rx</Badge>
-                    )}
+                    <span className="flex items-center gap-1">
+                      {m.prescriptionRequired && (
+                        <Badge className="rounded-full bg-sky-100 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400" variant="secondary">Rx</Badge>
+                      )}
+                      {(() => {
+                        const dte = daysToExpiry(m)
+                        if (dte === null) return null
+                        if (dte <= 0) {
+                          return <Badge className="rounded-full bg-red-100 text-[10px] font-bold text-red-700 dark:bg-red-500/15 dark:text-red-400" variant="secondary" title={`Expired ${m.expiryDate!.slice(0, 10)}`}>EXPIRED</Badge>
+                        }
+                        if (fefoWarnDays > 0 && dte <= fefoWarnDays) {
+                          return <Badge className="rounded-full bg-amber-100 text-[10px] font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-400" variant="secondary" title={`Expires in ${dte} day(s)`}>{dte}d</Badge>
+                        }
+                        return null
+                      })()}
+                    </span>
                   </div>
                   <p className="mt-2.5 line-clamp-2 min-h-9 text-sm font-semibold leading-snug">{m.name}</p>
                   <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{m.genericName ?? m.brand ?? m.sku}</p>

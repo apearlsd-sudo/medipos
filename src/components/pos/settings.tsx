@@ -41,6 +41,7 @@ interface StoreSettings {
   taxComponent3Pct: string
   lowStockThreshold: string
   expiryAlertDays: string
+  fefoWarnDays: string
   receiptHeader: string
   receiptFooter: string
   receiptShowBarcode: string
@@ -67,6 +68,7 @@ const DEFAULTS: StoreSettings = {
   taxComponent3Pct: '',
   lowStockThreshold: '20',
   expiryAlertDays: '90',
+  fefoWarnDays: '90',
   receiptHeader: 'Thank you for choosing MediPOS Pharmacy — get well soon!',
   receiptFooter: 'Returns accepted within 14 days with this receipt.',
   receiptShowBarcode: 'true',
@@ -216,6 +218,11 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               </div>
               <div className="space-y-1.5"><Label>Low Stock Threshold</Label><Input disabled={!canEditSettings} type="number" value={settings.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} /></div>
               <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input disabled={!canEditSettings} type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
+              <div className="space-y-1.5">
+                <Label>Short-Dated Stock Warning (days)</Label>
+                <Input disabled={!canEditSettings} type="number" value={settings.fefoWarnDays} onChange={(e) => set('fefoWarnDays', e.target.value)} />
+                <p className="text-xs text-muted-foreground">POS marks items whose expiry falls within this window and warns cashiers when they add one (0 = off). Expired stock is always blocked at the till.</p>
+              </div>
               <div className="col-span-2 flex items-center justify-between gap-3 rounded-lg border p-3">
                 <div>
                   <Label>Charge tax on sales</Label>
