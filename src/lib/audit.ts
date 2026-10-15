@@ -30,6 +30,8 @@ export type AuditAction =
   | 'sale.held'
   | 'sale.resumed'
   | 'sale.hold_discarded'
+  // customer returns & refunds
+  | 'return.created'
   // tier 3 — finance & quotations
   | 'expense.voided'
   | 'quotation.sent'
@@ -46,7 +48,7 @@ export type AuditAction =
   | 'system.cleaned'
   | 'system.backup'
 
-export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer'
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'sale_return' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer'
 
 export interface AuditPriceChange {
   medicine: string
@@ -86,6 +88,11 @@ export interface AuditChanges {
   // inventory import / catalog copy
   imported?: number
   catalog?: { created: number; existing: number; priceUpdated: number }
+  // customer returns & refunds
+  returnNo?: string
+  refundAmount?: number
+  refundMethod?: string
+  itemCount?: number
 }
 
 export async function logAudit(opts: {

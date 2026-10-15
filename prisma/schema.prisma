@@ -280,6 +280,7 @@ model Sale {
   paymentProvider   String? // momo provider: mtn | telecel | airteltigo
   paymentReference  String? // momo / insurance txn reference
   tenders           String? // JSON split-tender list: [{method, amount, provider?, reference?}] — null = single tender
+  returns           SaleReturn[]
   paymentStatus     String     @default("paid")
   pointsEarned      Int        @default(0) // loyalty points awarded for this sale
   pointsRedeemed    Int        @default(0) // loyalty points spent on this sale
@@ -739,4 +740,51 @@ model HeldSale {
   createdAt    DateTime @default(now())
 
   @@index([branchId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Customer returns & refunds (RMA): take goods back, restock, refund.
+// ---------------------------------------------------------------------------
+model SaleReturn {
+  id             String   @id @default(cuid())
+  returnNo       String   @unique // RMA-2026-0001
+  saleId         String
+  sale           Sale     @relation(fields: [saleId], references: [id])
+  saleInvoice    String
+  branchId       String?
+  userId         String // staff who processed the return
+  userName       String
+  customerId     String?
+  reason         String   @default("other") // damaged | expired | wrong_item | changed_mind | other
+  refundMethod   String   @default("cash") // cash | momo | card | store_credit
+  refundProvider String? // momo provider for momo refunds
+  refundReference String? // momo/card txn reference
+  refundAmount   Float    @default(0)
+  restockedCount Int      @default(0) // packs returned to shelf
+  note           String?
+  approvedById   String? // second approver when the processor lacks returns:approve
+  approvedByName String?
+  items          SaleReturnItem[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([saleId])
+  @@index([branchId, createdAt])
+}
+
+model SaleReturnItem {
+  id         String     @id @default(cuid())
+  returnId   String
+  return     SaleReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  saleItemId String?
+  medicineId String?
+  name       String
+  sku        String?
+  qty        Int
+  unitPrice  Float
+  total      Float // proportional line amount refunded (incl. share of discount/tax)
+  saleUnit   String     @default("pack")
+  restocked  Boolean    @default(false)
+
+  @@index([returnId])
 }
