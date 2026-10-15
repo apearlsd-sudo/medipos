@@ -272,6 +272,7 @@ model Sale {
   subtotal          Float      @default(0)
   discount          Float      @default(0)
   tax               Float      @default(0)
+  taxBase           Float?     // taxable base the tax was computed on (null = tax-free sale)
   total             Float      @default(0)
   paidAmount        Float      @default(0)
   changeAmount      Float      @default(0)

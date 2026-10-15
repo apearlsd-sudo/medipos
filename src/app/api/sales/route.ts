@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requirePermission, verifyPassword, can, type SessionUser } from '@/lib/auth'
+import { requireUser, requirePermission, verifyPassword, can, type SessionUser } from '@/lib/auth'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
 import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
@@ -8,9 +8,10 @@ import { logAudit } from '@/lib/audit'
 import { recordSyncOp } from '@/lib/sync'
 import { planPackSale } from '@/lib/packs'
 import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider } from '@/lib/pos-finance'
+import { sumComponentPcts } from '@/lib/tax-components'
 
 export async function GET(req: NextRequest) {
-  const gate = await requirePermission(req, 'sales', 'view')
+  const gate = await requireUser(req)
   if (gate.response) return gate.response
   try {
     const { searchParams } = new URL(req.url)
@@ -19,11 +20,34 @@ export async function GET(req: NextRequest) {
     const method = searchParams.get('method')
     const scope = resolveBranchScope(gate.user, searchParams)
 
+    // Permission-aware scoping (Task 50): sales:view sees every sale, any day.
+    // A user granted only sales:view_own is FORCED server-side to their own
+    // sales for today (Accra = UTC+0, so the UTC day is the filing day) —
+    // whatever filters they send can only shrink that slice, never widen it.
+    const isViewer = can(gate.user, 'sales', 'view')
+    if (!isViewer && !can(gate.user, 'sales', 'view_own')) {
+      return NextResponse.json({ error: 'Access denied — requires Sales & Invoices permission.' }, { status: 403 })
+    }
+
     const where: Record<string, unknown> = {}
     if (scope.branchId) where.branchId = scope.branchId
-    if (search) {
-      where.OR = [{ invoiceNo: { contains: search } }, { customer: { is: { name: { contains: search } } } }, { cashierName: { contains: search } }]
+
+    const and: Record<string, unknown>[] = []
+    if (!isViewer) {
+      and.push({
+        OR: [
+          { cashierName: gate.user.name },
+          { shift: { userId: gate.user.id } },
+        ],
+      })
+      const start = new Date()
+      start.setUTCHours(0, 0, 0, 0)
+      and.push({ createdAt: { gte: start, lt: new Date(start.getTime() + 86_400_000) } })
     }
+    if (search) {
+      and.push({ OR: [{ invoiceNo: { contains: search } }, { customer: { is: { name: { contains: search } } } }, { cashierName: { contains: search } }] })
+    }
+    if (and.length) where.AND = and
     if (status && status !== 'all') where.paymentStatus = status
     if (method && method !== 'all') where.paymentMethod = method
 
@@ -122,8 +146,18 @@ export async function POST(req: NextRequest) {
     const subtotal = +lines.reduce((s, l) => s + l.total, 0).toFixed(2)
     const discount = +Number(body.discount ?? 0).toFixed(2)
     const pctOfSubtotal = subtotal > 0 ? (discount / subtotal) * 100 : 0
-    const taxRate = Number(body.taxRate ?? 2.5)
-    const tax = +(((subtotal - discount) * taxRate) / 100).toFixed(2)
+    // Tax is SERVER-AUTHORITATIVE: the store-wide master switch (taxEnabled,
+    // Settings → Sales & Inventory Rules) decides whether the till charges tax
+    // at all, and the charged rate is ALWAYS the sum of the statutory
+    // components configured in Settings — a stale or hand-rolled client rate
+    // can never diverge from what the components add up to. Switch off ⇒ the
+    // whole sale books tax-free (exempt supplies), taxBase null.
+    const _settingsMap: Record<string, string> = {}
+    for (const r of await db.storeSetting.findMany()) _settingsMap[r.key] = r.value
+    const chargeTax = _settingsMap.taxEnabled !== 'false'
+    const storeTaxRate = chargeTax ? sumComponentPcts(_settingsMap) : 0
+    const tax = chargeTax ? +(((subtotal - discount) * storeTaxRate) / 100).toFixed(2) : 0
+    const taxBase = chargeTax && tax > 0 ? +(subtotal - discount).toFixed(2) : null
     const total = +(subtotal - discount + tax).toFixed(2)
 
     // --- Tier 1: customer-dependent paths ---------------------------------
@@ -193,12 +227,8 @@ export async function POST(req: NextRequest) {
     }
 
     // --- Large-discount approval gate -------------------------------------
-    const settingRows = await db.storeSetting.findMany({
-      where: { key: { in: ['discountApprovalEnabled', 'discountApprovalPct', 'discountApprovalAmount'] } },
-    })
-    const settingsMap: Record<string, string> = {}
-    for (const r of settingRows) settingsMap[r.key] = r.value
-    const policy = discountPolicyFromSettings(settingsMap)
+    // (store settings already loaded above for the tax computation)
+    const policy = discountPolicyFromSettings(_settingsMap)
 
     let approvedById: string | null = null
     let approvedByName: string | null = null
@@ -270,6 +300,7 @@ export async function POST(req: NextRequest) {
           approvedByName,
           discountRequestId,
           subtotal, discount, tax, total,
+          taxBase,
           paidAmount,
           changeAmount,
           paymentMethod,
@@ -281,7 +312,7 @@ export async function POST(req: NextRequest) {
           pointsValue: redemption.value,
           insuranceAmount: insurance?.insuranceAmount ?? 0,
           saleStatus: 'completed',
-          cashierName: body.cashierName || gate.user.name || 'Staff',
+          cashierName: gate.user.name || 'Staff',
           note: body.note || null,
           clientRef,
           items: { create: lines.map(({ covered: _covered, packs: _p, looseAfter: _lo, innerTotal: _it, ...l }) => l) },
@@ -374,6 +405,7 @@ export async function POST(req: NextRequest) {
       customerId: customer?.id ?? null,
       branchId: saleBranchId,
       subtotal, discount, tax, total,
+      taxBase,
       paidAmount, changeAmount,
       paymentMethod, paymentProvider, paymentReference, paymentStatus,
       pointsEarned, pointsRedeemed: redemption.points, pointsValue: redemption.value,

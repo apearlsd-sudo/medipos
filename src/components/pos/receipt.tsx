@@ -3,6 +3,7 @@
 import { BarcodeSVG } from '@/components/pos/barcode'
 import { fmtMoney, paymentMethodLabel } from '@/lib/format'
 import type { StoreSettingsMap } from '@/lib/store-settings'
+import { saleStructureFor, taxComponents } from '@/lib/tax-components'
 
 export interface ReceiptSale {
   invoiceNo: string
@@ -10,6 +11,7 @@ export interface ReceiptSale {
   subtotal: number
   discount: number
   tax: number
+  taxBase?: number | null
   total: number
   paidAmount: number
   changeAmount: number
@@ -127,6 +129,41 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
         <span>Tax</span><span>{fmtMoney(sale.tax)}</span>
       </div>
+      {(() => {
+        // Tax components print whenever the sale carries tax: each statutory
+        // piece is itemised under the Tax heading.
+        const comps = taxComponents(settings)
+        if (!(sale.tax > 0) || comps.length === 0) return null
+        // Preferred attribution: the sale's tax matches a structure we know —
+        // the CURRENT one, or a statutory era (reprints after a seasonal rate
+        // switch must show the breakdown the buyer actually paid under that
+        // era's structure). Amounts come off the stored taxable base.
+        const struct = saleStructureFor(sale, comps)
+        if (struct) {
+          return struct.map((c) => (
+            <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#333', paddingLeft: '6px' }}>
+              <span>{c.label} ({c.pct}%)</span><span>{fmtMoney(+((sale.taxBase! * c.pct) / 100).toFixed(2))}</span>
+            </div>
+          ))
+        }
+        // Fallback: the tax can't be tied to a structure (legacy rows without a
+        // stored taxable base). Split the tax ACTUALLY charged across the
+        // current components by rate weight so the itemised lines still sum to
+        // the printed Tax — never invent a total.
+        const sum = +comps.reduce((s, c) => s + c.pct, 0).toFixed(2)
+        if (sum <= 0) return null
+        let allocated = 0
+        return comps.map((c, i) => {
+          const isLast = i === comps.length - 1
+          const amount = isLast ? +(sale.tax - allocated).toFixed(2) : +((sale.tax * c.pct) / sum).toFixed(2)
+          allocated = +(allocated + amount).toFixed(2)
+          return (
+            <div key={c.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px', color: '#333', paddingLeft: '6px' }}>
+              <span>{c.label} ({c.pct}%)</span><span>{fmtMoney(amount)}</span>
+            </div>
+          )
+        })
+      })()}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 700, margin: '4px 0' }}>
         <span>TOTAL</span><span>{fmtMoney(sale.total)}</span>
       </div>

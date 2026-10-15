@@ -11,6 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AvatarInitials, PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
 import { ThermalReceipt } from '@/components/pos/receipt'
+import { useUser } from '@/components/pos/user-context'
 import { fmtDateTime, fmtMoney, paymentMethodLabel, PAYMENT_METHODS } from '@/lib/format'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
@@ -39,10 +40,17 @@ interface SaleDetail extends SaleRow {
   customerId: string | null
   changeAmount: number
   note: string | null
+  taxBase?: number | null
   items: Array<{ id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number }>
 }
 
 export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () => void; storeSettings?: StoreSettingsMap | null }) {
+  const { can } = useUser()
+  // Task 50: users granted only sales:view_own land here in restricted mode —
+  // the server already forces their list to their own sales for today; the UI
+  // just says so and hides what they could never use anyway.
+  const canViewAll = can('sales', 'view')
+  const canCancel = can('sales', 'delete')
   const [sales, setSales] = useState<SaleRow[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
@@ -96,6 +104,13 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   return (
     <div className="space-y-4">
       <PageHeader title="Sales & Invoices" breadcrumb="Sales" />
+
+      {!canViewAll && (
+        <div className="flex items-center gap-2 rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-medium text-teal-800 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+          <ReceiptText className="h-4 w-4 shrink-0" />
+          Showing your own sales for today only. Ask a manager for anything older or for the full sales history.
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card className="p-4"><p className="text-sm text-muted-foreground">Transactions (filtered)</p><p className="mt-1 text-2xl font-bold tabular-nums">{stats.count}</p></Card>
@@ -171,7 +186,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetail(s.id)} aria-label="View invoice"><Eye className="h-4 w-4" /></Button>
-                          {s.saleStatus !== 'cancelled' && (
+                          {canCancel && s.saleStatus !== 'cancelled' && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600" onClick={() => cancelSale(s)} aria-label="Cancel sale"><XCircle className="h-4 w-4" /></Button>
                           )}
                         </div>
@@ -277,6 +292,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                     subtotal: printSale.subtotal,
                     discount: printSale.discount,
                     tax: printSale.tax,
+                    taxBase: printSale.taxBase ?? null,
                     total: printSale.total,
                     paidAmount: printSale.paidAmount,
                     changeAmount: printSale.changeAmount,

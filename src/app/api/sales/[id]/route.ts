@@ -1,18 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { requirePermission } from '@/lib/auth'
+import { requireUser, requirePermission, can } from '@/lib/auth'
 import { recordSyncOp } from '@/lib/sync'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const gate = await requirePermission(req, 'sales', 'view')
+  const gate = await requireUser(req)
   if (gate.response) return gate.response
   try {
+    // Task 50: sales:view inspects any invoice; a user granted only
+    // sales:view_own may open their OWN sale only (by cashier name or a shift
+    // of theirs) — anyone else's invoice is a 403.
+    const isViewer = can(gate.user, 'sales', 'view')
+    if (!isViewer && !can(gate.user, 'sales', 'view_own')) {
+      return NextResponse.json({ error: 'Access denied — requires Sales & Invoices permission.' }, { status: 403 })
+    }
     const { id } = await params
     const sale = await db.sale.findUnique({
       where: { id },
-      include: { customer: true, items: { include: { medicine: { include: { category: true } } } } },
+      include: { customer: true, items: { include: { medicine: { include: { category: true } } } }, shift: { select: { userId: true } } },
     })
     if (!sale) return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
+    if (!isViewer) {
+      const own = sale.cashierName === gate.user.name || sale.shift?.userId === gate.user.id
+      if (!own) return NextResponse.json({ error: 'Access denied — you can only view your own invoices.' }, { status: 403 })
+    }
     return NextResponse.json({ sale })
   } catch (e) {
     console.error('Sale GET error', e)

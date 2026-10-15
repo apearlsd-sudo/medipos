@@ -79,7 +79,7 @@ export const NAV_GROUPS: NavGroup[] = [
     title: 'Sales',
     items: [
       { key: 'shifts', label: 'Shift Management', icon: 'Timer', permission: ['shifts', 'view'], altPermission: ['shifts', 'view_own'] },
-      { key: 'sales', label: 'Sales & Invoices', icon: 'ReceiptText', permission: ['sales', 'view'] },
+      { key: 'sales', label: 'Sales & Invoices', icon: 'ReceiptText', permission: ['sales', 'view'], altPermission: ['sales', 'view_own'] },
       { key: 'quotations', label: 'Quotations', icon: 'FileText', permission: ['quotations', 'view'] },
       { key: 'approvals', label: 'Discount Approvals', icon: 'BadgePercent', permission: ['discounts', 'view'] },
     ],

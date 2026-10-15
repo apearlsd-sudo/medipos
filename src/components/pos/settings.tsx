@@ -16,6 +16,7 @@ import { DeviceDiscoveryCard } from '@/components/pos/device-discovery'
 import { WorkstationSyncCard } from '@/components/pos/workstation-sync'
 import { usePwaInstall } from '@/components/pos/pwa-register'
 import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
+import { sumComponentPcts } from '@/lib/tax-components'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
@@ -31,6 +32,13 @@ interface StoreSettings {
   currencyCode: string
   currencyLocale: string
   taxRate: string
+  taxEnabled: string
+  taxComponent1Label: string
+  taxComponent1Pct: string
+  taxComponent2Label: string
+  taxComponent2Pct: string
+  taxComponent3Label: string
+  taxComponent3Pct: string
   lowStockThreshold: string
   expiryAlertDays: string
   receiptHeader: string
@@ -50,6 +58,13 @@ const DEFAULTS: StoreSettings = {
   currencyCode: 'USD',
   currencyLocale: 'en-US',
   taxRate: '2.5',
+  taxEnabled: 'true',
+  taxComponent1Label: '',
+  taxComponent1Pct: '',
+  taxComponent2Label: '',
+  taxComponent2Pct: '',
+  taxComponent3Label: '',
+  taxComponent3Pct: '',
   lowStockThreshold: '20',
   expiryAlertDays: '90',
   receiptHeader: 'Thank you for choosing MediPOS Pharmacy — get well soon!',
@@ -194,9 +209,57 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <CardDescription>Defaults applied across the system.</CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5"><Label>Tax Rate (%)</Label><Input disabled={!canEditSettings} type="number" step="0.1" value={settings.taxRate} onChange={(e) => set('taxRate', e.target.value)} /></div>
+              <div className="space-y-1.5">
+                <Label>Tax Rate (%) — auto-summed</Label>
+                <Input readOnly aria-readonly disabled={!canEditSettings} type="number" step="0.1" value={sumComponentPcts(settings as unknown as Record<string, string>)} className="tabular-nums" />
+                <p className="text-xs text-muted-foreground">Always the sum of the statutory components below (0 = tax-free). Applies at the till and on receipts.</p>
+              </div>
               <div className="space-y-1.5"><Label>Low Stock Threshold</Label><Input disabled={!canEditSettings} type="number" value={settings.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} /></div>
               <div className="space-y-1.5"><Label>Expiry Alert (days)</Label><Input disabled={!canEditSettings} type="number" value={settings.expiryAlertDays} onChange={(e) => set('expiryAlertDays', e.target.value)} /></div>
+              <div className="col-span-2 flex items-center justify-between gap-3 rounded-lg border p-3">
+                <div>
+                  <Label>Charge tax on sales</Label>
+                  <p className="text-xs text-muted-foreground">Master switch for the till: when on, sales charge the component sum above (itemised per component on receipts); when off, every sale is booked tax-free (exempt supplies). Purchases are unaffected.</p>
+                </div>
+                <Switch checked={settings.taxEnabled !== 'false'} onCheckedChange={(v) => set('taxEnabled', v ? 'true' : 'false')} disabled={!canEditSettings} aria-label="Charge tax on sales" />
+              </div>
+              <div className="col-span-2 rounded-lg border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <Label>Statutory breakdown (optional)</Label>
+                    <p className="text-xs text-muted-foreground">The source of truth for the till: the Tax Rate field is always the sum of these components, and each one prints on receipts under the Tax heading.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" disabled={!canEditSettings} onClick={() => { set('taxComponent1Label', ''); set('taxComponent1Pct', ''); set('taxComponent2Label', ''); set('taxComponent2Pct', ''); set('taxComponent3Label', 'VAT'); set('taxComponent3Pct', '15'); }}>Ghana VAT 15%</Button>
+                    <Button type="button" variant="outline" size="sm" disabled={!canEditSettings} onClick={() => { set('taxComponent1Label', 'NHIL'); set('taxComponent1Pct', '2.5'); set('taxComponent2Label', 'GETFund'); set('taxComponent2Pct', '2.5'); set('taxComponent3Label', 'VAT'); set('taxComponent3Pct', '15'); }}>Ghana VAT 20% (+ levies)</Button>
+                    <Button type="button" variant="outline" size="sm" disabled={!canEditSettings} onClick={() => { set('taxComponent1Label', 'NHIL'); set('taxComponent1Pct', '2.5'); set('taxComponent2Label', 'GETFund'); set('taxComponent2Pct', '2.5'); set('taxComponent3Label', 'VAT'); set('taxComponent3Pct', '12.5'); }}>Ghana VAT 17.5% (+ levies)</Button>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="grid grid-cols-[1fr,76px] gap-2">
+                      <Input
+                        disabled={!canEditSettings}
+                        placeholder={`Component ${i} (e.g. VAT)`}
+                        aria-label={`Tax component ${i} label`}
+                        value={(settings as unknown as Record<string, string>)[`taxComponent${i}Label`] ?? ''}
+                        onChange={(e) => set(`taxComponent${i}Label` as keyof StoreSettings, e.target.value)}
+                      />
+                      <Input
+                        disabled={!canEditSettings}
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        placeholder="%"
+                        aria-label={`Tax component ${i} percent`}
+                        value={(settings as unknown as Record<string, string>)[`taxComponent${i}Pct`] ?? ''}
+                        onChange={(e) => set(`taxComponent${i}Pct` as keyof StoreSettings, e.target.value)}
+                        className="tabular-nums"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
             </CardContent>
           </Card>
 

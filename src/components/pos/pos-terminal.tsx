@@ -20,6 +20,7 @@ import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
+import { sumComponentPcts, taxComponents } from '@/lib/tax-components'
 import {
   BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Percent, Pill, Plus, Printer, ScanLine, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
@@ -266,7 +267,17 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
 
   const subtotal = useMemo(() => +cart.reduce((s, l) => s + l.unitPrice * l.qty, 0).toFixed(2), [cart])
   const discountValue = useMemo(() => Math.min(Number(orderDiscount) || 0, subtotal), [orderDiscount, subtotal])
-  const taxValue = useMemo(() => +(((subtotal - discountValue) * 2.5) / 100).toFixed(2), [subtotal, discountValue])
+  // Tax comes from the store's own configuration (Settings → Sales & Inventory
+  // Rules): the rate is ALWAYS the sum of the statutory components, and the
+  // master "Charge tax on sales" switch decides whether the till charges any
+  // tax at all. Off ⇒ every sale books tax-free (exempt supplies).
+  const taxComps = useMemo(() => taxComponents(storeSettings ?? null), [storeSettings])
+  const taxRatePct = useMemo(() => sumComponentPcts(storeSettings ?? null), [storeSettings])
+  const chargeTax = storeSettings?.taxEnabled !== 'false'
+  const taxValue = useMemo(
+    () => (chargeTax ? +(((subtotal - discountValue) * taxRatePct) / 100).toFixed(2) : 0),
+    [subtotal, discountValue, taxRatePct, chargeTax],
+  )
   const total = useMemo(() => +(subtotal - discountValue + taxValue).toFixed(2), [subtotal, discountValue, taxValue])
 
   // Tier 1 derived amounts (server recomputes; these drive the checkout UI)
@@ -372,7 +383,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           pointsRedeem: redemption.points || undefined,
           useInsurance: useIns || undefined,
           paidAmount: paymentMethod === 'cash' ? tenderedNum : total,
-          taxRate: 2.5,
+          taxRate: taxRatePct,
           note: note || null,
           ...(extra?.approval ? { approval: extra.approval } : {}),
           ...(extra?.discountRequestId ? { discountRequestId: extra.discountRequestId } : discountRequestId ? { discountRequestId } : {}),
@@ -385,6 +396,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           invoiceNo: `OFF-${Date.now().toString().slice(-6)}`,
           createdAt: new Date().toISOString(),
           subtotal, discount: discountValue, tax: taxValue, total,
+          taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
           paidAmount: paymentMethod === 'cash' ? Math.min(tenderedNum, total) : total,
           changeAmount: paymentMethod === 'cash' ? Math.max(0, +(tenderedNum - total).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
@@ -748,9 +760,20 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             </p>
           )}
           <div className="flex items-center justify-between">
-            <span className="text-muted-foreground">Tax (2.5%)</span>
-            <span className="font-medium tabular-nums">{fmtMoney(taxValue)}</span>
+            <span className="text-muted-foreground">{chargeTax ? (taxRatePct > 0 ? `Tax (${taxRatePct}%)` : 'Tax') : 'Tax (off)'}</span>
+            <span className={`font-medium tabular-nums ${!chargeTax ? 'text-muted-foreground/60' : ''}`}>{fmtMoney(taxValue)}</span>
           </div>
+          {chargeTax && taxComps.map((c) => (
+            <div key={c.label} className="flex items-center justify-between text-xs text-muted-foreground">
+              <span className="pl-4">{c.label} ({c.pct}%)</span>
+              <span className="tabular-nums">{fmtMoney(+((((subtotal - discountValue) * c.pct) / 100).toFixed(2)))}</span>
+            </div>
+          ))}
+          {!chargeTax && (
+            <p className="rounded-lg bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+              Tax charging is off in Settings — this sale is booked tax-free (exempt supplies).
+            </p>
+          )}
           <Separator />
           <div className="flex items-center justify-between">
             <span className="font-semibold">Total</span>
@@ -791,7 +814,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               <p className="text-xs uppercase tracking-wider text-muted-foreground">Amount Due</p>
               <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(payable)}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {cart.reduce((n, l) => n + l.qty, 0)} items · incl. {fmtMoney(taxValue)} tax
+                {cart.reduce((n, l) => n + l.qty, 0)} items · {chargeTax ? `incl. ${fmtMoney(taxValue)} tax` : 'tax exempt'}
                 {insuranceEstimate > 0 && <> · insurer pays {fmtMoney(insuranceEstimate)}</>}
                 {redemption.value > 0 && <> · points −{fmtMoney(redemption.value)}</>}
               </p>

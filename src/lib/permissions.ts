@@ -55,6 +55,7 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
     label: 'Sales & Invoices',
     actions: [
       VIEW,
+      { action: 'view_own', label: 'Own Sales (Today)', description: 'View own sales and invoices for today only — no other staff\u2019s sales, no history' },
       { action: 'delete', label: 'Cancel', description: 'Cancel invoices and restock items' },
     ],
   },
@@ -320,7 +321,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
   cashier: [
     'dashboard:view',
     'pos:access',
-    'sales:view',
+    'sales:view_own',
     'shifts:view_own',
     'discounts:view',
     'medicines:view',
