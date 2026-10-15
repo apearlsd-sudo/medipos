@@ -42,7 +42,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     // MoMo reconciliation: confirm the money actually arrived
     if (body.action === 'verify-payment') {
-      const due = +(existing.total - existing.insuranceAmount - existing.pointsValue).toFixed(2)
+      // Amount due = exact total − insurer share − redeemed points, plus any
+      // cash rounding stamped at booking (roundingDelta is 0 for non-cash).
+      const due = +(existing.total - existing.insuranceAmount - existing.pointsValue + (existing.roundingDelta ?? 0)).toFixed(2)
       const sale = await db.sale.update({
         where: { id },
         data: { paymentStatus: 'paid', paidAmount: due },

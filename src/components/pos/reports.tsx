@@ -105,6 +105,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
           [`Day-close report — ${dc.date} — ${dc.branchLabel}`],
           [],
           ['Sales', dc.sales.count, dc.sales.gross, dc.sales.discounts, dc.sales.tax, dc.sales.net],
+          ['Cash rounding (net)', '', '', '', '', dc.sales.rounding],
           [],
           ['Tender', 'Count', 'Amount'],
           ...Object.entries(dc.sales.byTender).map(([k, v]) => [k, v.count, v.amount]),
@@ -174,6 +175,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
           [`Accounting pack — ${ap.month}`],
           [],
           ['Net sales', ap.summary.net, '', 'VAT collected', ap.vat.taxCollected],
+          ['Cash rounding (net)', ap.summary.cashRounding, '', 'Taxable base', ap.vat.taxableBase],
           ['Gross sales', ap.summary.gross, '', 'Taxable base', ap.vat.taxableBase],
           ['Discounts', ap.summary.discounts, '', 'Transactions', ap.summary.transactions],
           ['Expenses', ap.summary.expensesTotal, '', 'Purchases', ap.summary.purchasesTotal],
@@ -1335,7 +1337,7 @@ interface DayCloseData {
   date: string
   branchLabel: string
   generatedAt: string
-  sales: { count: number; gross: number; discounts: number; tax: number; net: number; byTender: Record<string, { count: number; amount: number }>; insuranceBilled: number; pointsRedeemedValue: number }
+  sales: { count: number; gross: number; discounts: number; tax: number; net: number; rounding: number; byTender: Record<string, { count: number; amount: number }>; insuranceBilled: number; pointsRedeemedValue: number }
   refunds: { count: number; total: number; byMethod: Record<string, number> }
   expenses: { count: number; total: number }
   cash: { expectedNet: number; expectedInDrawers: number }
@@ -1386,7 +1388,10 @@ function DayCloseSection() {
         <Card className="p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Net sales</p>
           <p className="mt-1 text-2xl font-bold tracking-tight text-teal-600 dark:text-teal-400">{fmtMoney(data.sales.net)}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{data.sales.count} transactions · tax {fmtMoney(data.sales.tax)} · discounts {fmtMoney(data.sales.discounts)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {data.sales.count} transactions · tax {fmtMoney(data.sales.tax)} · discounts {fmtMoney(data.sales.discounts)}
+            {data.sales.rounding !== 0 && <> · cash rounding {data.sales.rounding > 0 ? '+' : ''}{fmtMoney(data.sales.rounding)}</>}
+          </p>
         </Card>
         <Card className="p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Refunds</p>
@@ -1425,6 +1430,13 @@ function DayCloseSection() {
             ))}
             {Object.keys(data.sales.byTender).length === 0 && (
               <TableRow><TableCell colSpan={3} className="py-8 text-center text-muted-foreground">No sales this day.</TableCell></TableRow>
+            )}
+            {data.sales.rounding !== 0 && (
+              <TableRow>
+                <TableCell className="italic text-muted-foreground">Cash rounding (net)</TableCell>
+                <TableCell />
+                <TableCell className="text-right font-medium tabular-nums">{data.sales.rounding > 0 ? '+' : ''}{fmtMoney(data.sales.rounding)}</TableCell>
+              </TableRow>
             )}
           </TableBody>
         </Table>
@@ -1496,7 +1508,7 @@ function DayCloseSection() {
 // ---------------- C2: accounting export pack ----------------
 interface AccountingPackData {
   month: string
-  summary: { transactions: number; gross: number; discounts: number; tax: number; net: number; taxableBase: number; expensesTotal: number; purchasesTotal: number; refundsTotal: number }
+  summary: { transactions: number; gross: number; discounts: number; tax: number; net: number; taxableBase: number; cashRounding: number; expensesTotal: number; purchasesTotal: number; refundsTotal: number }
   daily: Array<{ date: string; transactions: number; gross: number; discounts: number; tax: number; net: number }>
   byMethod: Array<{ method: string; count: number; amount: number }>
   byTender: Array<{ tender: string; count: number; amount: number }>
@@ -1565,7 +1577,7 @@ function AccountingSection() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stat('Net sales', data.summary.net, 'text-teal-600 dark:text-teal-400', `${data.summary.transactions} transactions · discounts ${fmtMoney(data.summary.discounts)}`)}
+        {stat('Net sales', data.summary.net, 'text-teal-600 dark:text-teal-400', `${data.summary.transactions} transactions · discounts ${fmtMoney(data.summary.discounts)}${data.summary.cashRounding !== 0 ? ` · cash rounding ${data.summary.cashRounding > 0 ? '+' : ''}${fmtMoney(data.summary.cashRounding)}` : ''}`)}
         {stat('VAT collected', data.vat.taxCollected, undefined, `taxable base ${fmtMoney(data.summary.taxableBase)}`)}
         {stat('Expenses', data.summary.expensesTotal, 'text-amber-600 dark:text-amber-400', `${data.expensesByCategory.length} categor(ies) · refunds ${fmtMoney(data.summary.refundsTotal)}`)}
         {stat('Purchases', data.summary.purchasesTotal, undefined, `${data.purchasesBySupplier.length} supplier(s) · credit out ${fmtMoney(data.creditAging.totalOutstanding)}`)}

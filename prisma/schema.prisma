@@ -278,6 +278,7 @@ model Sale {
   taxEra            TaxEra?    @relation(fields: [taxEraId], references: [id])
   taxComponentsJson String?    // frozen [{label,pct}] structure actually charged (exact receipt attribution)
   total             Float      @default(0)
+  roundingDelta     Float      @default(0) // cash rounding applied to the amount due (+ customer paid more, − in their favor; 0 = no rounding)
   paidAmount        Float      @default(0)
   changeAmount      Float      @default(0)
   paymentMethod     String     @default("cash")

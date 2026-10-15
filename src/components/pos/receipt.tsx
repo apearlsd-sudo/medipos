@@ -16,6 +16,8 @@ export interface ReceiptSale {
   taxBase?: number | null
   taxComponentsJson?: string | null
   total: number
+  /** Signed cash rounding applied to the amount due (+ store, − customer favor). */
+  roundingDelta?: number
   paidAmount: number
   changeAmount: number
   paymentMethod: string
@@ -205,6 +207,22 @@ export function ThermalReceipt({ sale, settings, variant = 'sale', originInvoice
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 700, margin: '4px 0' }}>
         <span>{isRefund ? 'TOTAL REFUNDED' : 'TOTAL'}</span><span>{fmtMoney(sale.total)}</span>
       </div>
+      {(() => {
+        // Cash rounding (coinless till): show the signed adjustment and the
+        // amount the cash customer was actually asked for.
+        if (isRefund || !sale.roundingDelta || Math.abs(sale.roundingDelta) < 0.005) return null
+        const due = +(sale.total - (sale.insuranceAmount ?? 0) - (sale.pointsValue ?? 0) + sale.roundingDelta).toFixed(2)
+        return (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9.5px', color: '#333' }}>
+              <span>Cash rounding</span><span>{sale.roundingDelta > 0 ? '+' : '-'}{fmtMoney(Math.abs(sale.roundingDelta))}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', fontWeight: 700 }}>
+              <span>Amount due (cash)</span><span>{fmtMoney(due)}</span>
+            </div>
+          </>
+        )
+      })()}
       {!!sale.insuranceAmount && sale.insuranceAmount > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
           <span>Insurance claim</span><span>-{fmtMoney(sale.insuranceAmount)}</span>

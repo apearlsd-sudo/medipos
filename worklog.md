@@ -661,3 +661,26 @@ Stage Summary:
 - Refunds now decide what physically happens to returned goods (shelf vs quarantine vs dispose) with expiry protection, per-line packs/loose detail on the return record, a printable credit note, and full inventory-log auditability.
 - The POS is keyboard-first: F1/F2/F3/F4/F6/F7/F8 + Ctrl+Enter + ?, discoverable via the built-in help overlay.
 - One latent test-suite fragility fixed (ws-sync picker + soft-delete leftovers). 136/136 regression green, deployed, DB backed up.
+
+---
+Task ID: 58
+Agent: main
+Task: Roadmap extra 1/3 — Cash rounding (coinless till): round the CASH leg of a sale to the nearest 5/10 pesewas with exact bookkeeping.
+
+Work Log:
+- DESIGN: rounding moves ONLY the amount the cash customer is asked for (roundedDue = due rounded half-up to 0.05/0.10); subtotal/discount/tax/taxBase/total rows stay EXACT so VAT-era attribution and the GRA filing reconciliation are untouched; the signed difference is stamped on the sale as roundingDelta (+ store collects, − customer's favor). Card/MoMo/credit legs always settle exactly; split tenders round only when a CASH row is present (detection mirrors the server: funded tender rows decide, else the single method).
+- SCHEMA: Sale.roundingDelta Float default 0 (db push, no data loss).
+- LIB pos-finance.ts: parseCashRoundingMode + roundCashFor(due, mode, cashInvolved) pure helpers.
+- SALES API: rounding resolved after tender parsing; single-cash paidAmount defaults to roundedDue and caps there; change = tendered − roundedDue; split short-check and paidAmount/change reconcile against roundedDue (400 message names the rounded due + rounding applied); card/momo/credit paths untouched; Sale.create + sync payload + response ({roundedDue} top-level) carry roundingDelta; loyalty earns on the rounded due.
+- MOMO VERIFY ([id] PUT verify-payment): due now includes the sale's roundingDelta so reconciliation settles the real cash figure.
+- RECEIPTS: ThermalReceipt + text e-receipt twin print "Cash rounding ±x.xx" + "Amount due (cash)" rows (credit notes suppressed); send-receipt API passes roundingDelta; Sales-page thermal reprint passes it through (detail API returns the whole row).
+- SYNC APPLIER: applySaleCreated copies roundingDelta so branch⇄HQ replicas stay reconcilable.
+- POS UI: checkout Amount Due shows the ROUNDED due with an amber "Cash rounding ±x.xx on the cash leg" chip when active; Confirm button, split remaining/change, insufficient-cash guards, offline provisional slip and the Exact quick-tender all use roundedPayable; no chip when rounding is off or no cash is involved.
+- SETTINGS: cashRounding ('none'|'0.05'|'0.10') added to the till whitelist (restricted roles read it — Task 56 layering); new Commerce settings card "Cash Rounding (coinless till)" with Off/5p/10p select; saving calls loadStoreSettings(true) so open tills flip instantly.
+- REPORTS: day-close adds sales.rounding (net of the day's deltas) surfaced in the Net-sales card subline + a "Cash rounding (net)" tender-breakdown row + Z-report CSV; accounting export-pack adds summary.cashRounding (Net-sales stat subline + CSV).
+- VERIFY: scripts/verify-cash-rounding-api.sh — 21/21 GREEN (idempotent: restores the setting, cancels fixture sales, asserts stock + day-close baseline restored): round-up/round-down cash math, omitted paidAmount defaults to rounded due, card/momo/credit exact, split cash+card rounds / no-cash doesn't / short-of-rounded 400 naming the due, day-close + export-pack deltas, detail field for reprint. scripts/verify-cash-rounding-ui.py — 16/16 GREEN: off-state exact (no chip), 0.05 state rounds with chip + Confirm + change-due math, receipt + Sales-page reprint show the rounding rows, fixture cancelled, setting restored, 0 page errors. (Two script bugs found and fixed along the way: a stray brace in the request template and unauthenticated pre-login API calls — the app code was correct.)
+- REGRESSION: tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29 = 136/136 green. tsc src/ clean, eslint clean on all 14 touched files, BUILD_EXIT=0 → ss-PID kill + relaunch → HTTP:200 LOGIN:200 HUB:200.
+- backup-db.sh run.
+
+Stage Summary:
+- The till now handles coinless cash: the cash leg rounds to the nearest 5/10 pesewas with the exact signed delta stamped per sale, printed on paper + e-receipts, reconciled in the Z-report and the accounting pack, and replicated through sync — while every ledger/VAT number stays exact. Next roadmap extras: sales targets (Task 59), owner digest (Task 60).

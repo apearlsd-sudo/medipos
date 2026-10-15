@@ -17,6 +17,8 @@ export interface TextReceiptSale {
   taxBase?: number | null
   taxComponentsJson?: string | null
   total: number
+  /** Signed cash rounding applied to the amount due (+ store, − customer favor). */
+  roundingDelta?: number
   paidAmount: number
   changeAmount: number
   paymentMethod: string
@@ -67,6 +69,13 @@ export function renderTextReceipt(sale: TextReceiptSale, settings: StoreSettings
     }
   }
   lines.push(`*TOTAL: ${fmtMoney(sale.total)}*`)
+  // Cash rounding (coinless till): signed adjustment + what the cash customer
+  // was actually asked for, mirroring the paper receipt.
+  if (sale.roundingDelta && Math.abs(sale.roundingDelta) >= 0.005) {
+    const due = +(sale.total - (sale.insuranceAmount ?? 0) - (sale.pointsValue ?? 0) + sale.roundingDelta).toFixed(2)
+    lines.push(`Cash rounding: ${sale.roundingDelta > 0 ? '+' : '-'}${fmtMoney(Math.abs(sale.roundingDelta))}`)
+    lines.push(`*Amount due (cash): ${fmtMoney(due)}*`)
+  }
   if (sale.insuranceAmount && sale.insuranceAmount > 0) lines.push(`Insurance claim: -${fmtMoney(sale.insuranceAmount)}`)
   if (sale.pointsValue && sale.pointsValue > 0) lines.push(`Points redeemed (${sale.pointsRedeemed}): -${fmtMoney(sale.pointsValue)}`)
 

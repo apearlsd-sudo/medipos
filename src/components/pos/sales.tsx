@@ -42,6 +42,7 @@ interface SaleRow {
 interface SaleDetail extends SaleRow {
   customerId: string | null
   changeAmount: number
+  roundingDelta?: number
   note: string | null
   taxBase?: number | null
   taxComponentsJson?: string | null
@@ -730,6 +731,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                     taxBase: printSale.taxBase ?? null,
                     taxComponentsJson: printSale.taxComponentsJson ?? null,
                     total: printSale.total,
+                    roundingDelta: printSale.roundingDelta ?? 0,
                     paidAmount: printSale.paidAmount,
                     changeAmount: printSale.changeAmount,
                     paymentMethod: printSale.paymentMethod,

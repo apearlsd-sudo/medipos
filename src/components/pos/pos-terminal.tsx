@@ -21,6 +21,7 @@ import { StartShiftDialog } from '@/components/pos/shift-dialogs'
 import type { ShiftRecord } from '@/components/pos/shift-report'
 import { fmtMoney, PAYMENT_METHODS } from '@/lib/format'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
+import { parseCashRoundingMode, roundCashFor } from '@/lib/pos-finance'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import { sumComponentPcts, taxComponents } from '@/lib/tax-components'
@@ -481,12 +482,26 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return { points, value: +(points * pointsSettings.pointValue).toFixed(2) }
   }, [pointsInput, selectedCustomer, patientTotal, pointsSettings])
   const payable = useMemo(() => Math.max(0, +(patientTotal - redemption.value).toFixed(2)), [patientTotal, redemption.value])
-  // Split-tender math (only cash rows may overpay — change returns on cash)
+  // Cash rounding (coinless till): the CASH leg of the sale rounds to the
+  // nearest 5/10 pesewas when the store enables it. The server is
+  // authoritative — these previews drive the checkout display and validation
+  // only; the booking recomputes everything.
+  const cashRoundingMode = useMemo(() => parseCashRoundingMode(storeSettings?.cashRounding), [storeSettings])
   const splitEligible = paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'momo'
+  // Mirror the server's detection exactly: when split-tender rows will be sent
+  // (splitMode + eligible + at least one funded row) rounding follows the
+  // TENDER rows; otherwise the single payment method decides.
+  const usingSplitRows = splitMode && splitEligible && splitTenders.some((t) => Number(t.amount) > 0)
+  const cashInPlay = usingSplitRows
+    ? splitTenders.some((t) => t.method === 'cash' && Number(t.amount) > 0)
+    : paymentMethod === 'cash'
+  const cashRounding = useMemo(() => roundCashFor(payable, cashRoundingMode, cashInPlay), [payable, cashRoundingMode, cashInPlay])
+  const roundedPayable = cashRounding.roundedDue
+  // Split-tender math (only cash rows may overpay — change returns on cash)
   const splitSum = useMemo(() => +splitTenders.reduce((s, t) => s + (Number(t.amount) || 0), 0).toFixed(2), [splitTenders])
-  const splitRemaining = useMemo(() => +(payable - splitSum).toFixed(2), [payable, splitSum])
+  const splitRemaining = useMemo(() => +(roundedPayable - splitSum).toFixed(2), [roundedPayable, splitSum])
   const splitHasCash = splitTenders.some((t) => t.method === 'cash')
-  const splitChange = splitHasCash ? Math.max(0, +(splitSum - payable).toFixed(2)) : 0
+  const splitChange = splitHasCash ? Math.max(0, +(splitSum - roundedPayable).toFixed(2)) : 0
   const tendersPayload = useMemo(
     () =>
       splitMode && splitEligible
@@ -543,7 +558,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }, [cart, meds])
 
   const tenderedNumTier1 = Number(tendered) || 0
-  const changeTier1 = Math.max(0, +(tenderedNumTier1 - payable).toFixed(2))
+  const changeTier1 = Math.max(0, +(tenderedNumTier1 - roundedPayable).toFixed(2))
   const rxInCart = cart.some((l) => l.prescriptionRequired)
   const tenderedNum = Number(tendered) || 0
   const change = Math.max(0, +(tenderedNum - total).toFixed(2))
@@ -583,8 +598,9 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           createdAt: new Date().toISOString(),
           subtotal, discount: discountValue, tax: taxValue, total,
           taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
-          paidAmount: tendersPayload ? Math.min(splitSum, total) : paymentMethod === 'cash' ? Math.min(tenderedNum, total) : total,
-          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' ? Math.max(0, +(tenderedNum - total).toFixed(2)) : 0,
+          roundingDelta: cashRounding.delta,
+          paidAmount: tendersPayload ? Math.min(splitSum, roundedPayable) : paymentMethod === 'cash' ? Math.min(tenderedNum, roundedPayable) : total,
+          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' ? Math.max(0, +(tenderedNum - roundedPayable).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
           paymentStatus: 'pending',
           offlineQueued: true,
@@ -649,7 +665,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         toast({ title: 'Add at least one tender', description: 'Split payment needs at least one tender with an amount.', variant: 'destructive' }); return
       }
       if (splitRemaining > 0.009) {
-        toast({ title: 'Split tenders are short', description: `${fmtMoney(splitRemaining)} of ${fmtMoney(payable)} is still uncovered — add or top up a tender.`, variant: 'destructive' }); return
+        toast({ title: 'Split tenders are short', description: `${fmtMoney(splitRemaining)} of ${fmtMoney(roundedPayable)} is still uncovered — add or top up a tender.`, variant: 'destructive' }); return
       }
       if (!splitHasCash && splitSum > payable + 0.009) {
         toast({ title: 'Overpayment not allowed', description: 'Only a cash tender can be overpaid — change is returned on cash.', variant: 'destructive' }); return
@@ -660,8 +676,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       if (rows.some((t) => t.reference.trim() && !/^[A-Za-z0-9.\-]{6,}$/.test(t.reference.trim()))) {
         toast({ title: 'Check the MoMo reference', description: 'Transaction IDs are 6+ letters/digits.', variant: 'destructive' }); return
       }
-    } else if (paymentMethod === 'cash' && tenderedNumTier1 < payable) {
-      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(payable)}.`, variant: 'destructive' })
+    } else if (paymentMethod === 'cash' && tenderedNumTier1 < roundedPayable) {
+      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(roundedPayable)}.`, variant: 'destructive' })
       return
     }
     if (paymentMethod === 'credit') {
@@ -683,8 +699,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }
 
   const authorizeAndComplete = async (approval: { username: string; password: string }): Promise<boolean> => {
-    if (!(splitMode && splitEligible) && paymentMethod === 'cash' && tenderedNumTier1 < payable) {
-      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(payable)}.`, variant: 'destructive' })
+    if (!(splitMode && splitEligible) && paymentMethod === 'cash' && tenderedNumTier1 < roundedPayable) {
+      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(roundedPayable)}.`, variant: 'destructive' })
       return false
     }
     return await completeSale({ approval })
@@ -1129,12 +1145,17 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           <div className="space-y-4">
             <div className="rounded-xl bg-muted/60 p-4 text-center">
               <p className="text-xs uppercase tracking-wider text-muted-foreground">Amount Due</p>
-              <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(payable)}</p>
+              <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(roundedPayable)}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {cart.reduce((n, l) => n + l.qty, 0)} items · {chargeTax ? `incl. ${fmtMoney(taxValue)} tax` : 'tax exempt'}
                 {insuranceEstimate > 0 && <> · insurer pays {fmtMoney(insuranceEstimate)}</>}
                 {redemption.value > 0 && <> · points −{fmtMoney(redemption.value)}</>}
               </p>
+              {cashRounding.delta !== 0 && (
+                <p className="mt-0.5 text-xs font-medium text-amber-600 tabular-nums dark:text-amber-400">
+                  Cash rounding {cashRounding.delta > 0 ? '+' : '−'}{fmtMoney(Math.abs(cashRounding.delta))} on the cash leg
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-4 gap-2">
@@ -1330,7 +1351,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {[payable, 10, 20, 50, 100].map((v, i) => (
+                    {[roundedPayable, 10, 20, 50, 100].map((v, i) => (
                       <Button key={i} variant="outline" size="sm" className="flex-1 rounded-full text-xs tabular-nums" onClick={() => setTendered(String(i === 0 ? Math.ceil(v * 100) / 100 : v))}>
                         {i === 0 ? 'Exact' : `$${v}`}
                       </Button>
@@ -1346,7 +1367,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             </div>
 
             <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={checkout} disabled={submitting} title="Keyboard: Ctrl+Enter">
-              {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(payable)}</>}
+              {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(roundedPayable)}</>}
             </Button>
             <p className="text-center text-[11px] text-muted-foreground">Press <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Ctrl</kbd>+<kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Enter</kbd> to confirm · <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Esc</kbd> to close</p>
           </div>

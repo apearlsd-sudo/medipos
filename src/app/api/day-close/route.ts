@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
       db.sale.findMany({
         where: saleWhere,
         select: {
-          id: true, invoiceNo: true, subtotal: true, discount: true, tax: true, total: true, paidAmount: true,
+          id: true, invoiceNo: true, subtotal: true, discount: true, tax: true, total: true, roundingDelta: true, paidAmount: true,
           paymentMethod: true, paymentProvider: true, paymentStatus: true, tenders: true,
           insuranceAmount: true, pointsValue: true, branchId: true, createdAt: true, shiftId: true,
         },
@@ -61,6 +61,7 @@ export async function GET(req: NextRequest) {
     let discounts = 0
     let tax = 0
     let net = 0
+    let rounding = 0
     let insuranceBilled = 0
     let pointsRedeemedValue = 0
     for (const s of sales) {
@@ -68,6 +69,7 @@ export async function GET(req: NextRequest) {
       discounts += s.discount
       tax += s.tax
       net += s.total
+      rounding += s.roundingDelta ?? 0
       insuranceBilled += s.insuranceAmount ?? 0
       pointsRedeemedValue += s.pointsValue ?? 0
       const tenders = s.tenders ? JSON.parse(s.tenders) as Array<{ method: string; amount: number }> : null
@@ -136,6 +138,7 @@ export async function GET(req: NextRequest) {
         discounts: +discounts.toFixed(2),
         tax: +tax.toFixed(2),
         net: +net.toFixed(2),
+        rounding: +rounding.toFixed(2),
         byTender,
         insuranceBilled: +insuranceBilled.toFixed(2),
         pointsRedeemedValue: +pointsRedeemedValue.toFixed(2),

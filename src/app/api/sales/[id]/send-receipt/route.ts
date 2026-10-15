@@ -53,6 +53,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       taxBase: sale.taxBase,
       taxComponentsJson: sale.taxComponentsJson,
       total: sale.total,
+      roundingDelta: sale.roundingDelta,
       paidAmount: sale.paidAmount,
       changeAmount: sale.changeAmount,
       paymentMethod: sale.paymentMethod,

@@ -119,6 +119,7 @@ async function applySaleCreated(
         taxEraId: str(p.taxEraId) || null,
         taxComponentsJson: str(p.taxComponentsJson) || null,
         total: num(p.total),
+        roundingDelta: num(p.roundingDelta),
         paidAmount: num(p.paidAmount),
         changeAmount: num(p.changeAmount),
         paymentMethod: str(p.paymentMethod, 'cash'),
