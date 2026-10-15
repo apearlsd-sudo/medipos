@@ -13,7 +13,7 @@ import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
@@ -44,7 +44,7 @@ interface ReportData {
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses'
+type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
@@ -60,10 +60,14 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'credit', label: 'Credit Aging', icon: HandCoins },
   { key: 'analytics', label: 'Analytics Pack', icon: BarChart3 },
   { key: 'expenses', label: 'Expenses & Net', icon: Wallet },
+  { key: 'accounting', label: 'Accounting Pack', icon: FileSpreadsheet },
 ]
 
 // Day-close section cache (for CSV export) — module-level, refreshed by the section.
 let dayCloseCache: DayCloseData | null = null
+
+// C2 — accounting pack cache (module-level, refreshed by the section)
+let accountingCache: AccountingPackData | null = null
 
 export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
   const [data, setData] = useState<ReportData | null>(null)
@@ -159,6 +163,44 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
           head: ['Category', 'Entries', 'Total'],
           body: (expensesCache?.byCategory ?? []).map((c) => [c.category, c.count, c.total]),
         }
+      case 'accounting': {
+        const ap = accountingCache
+        if (!ap) return { title: 'Accounting Pack', head: [], body: [] }
+        const rows: (string | number)[][] = [
+          [`Accounting pack — ${ap.month}`],
+          [],
+          ['Net sales', ap.summary.net, '', 'VAT collected', ap.vat.taxCollected],
+          ['Gross sales', ap.summary.gross, '', 'Taxable base', ap.vat.taxableBase],
+          ['Discounts', ap.summary.discounts, '', 'Transactions', ap.summary.transactions],
+          ['Expenses', ap.summary.expensesTotal, '', 'Purchases', ap.summary.purchasesTotal],
+          ['Refunds', ap.summary.refundsTotal, '', 'Credit outstanding', ap.creditAging.totalOutstanding],
+          [],
+          ['Daily sales'],
+          ['Date', 'Transactions', 'Gross', 'Discounts', 'Tax', 'Net'],
+          ...ap.daily.map((d) => [d.date, d.transactions, d.gross, d.discounts, d.tax, d.net]),
+          [],
+          ['Payment methods'],
+          ['Method', 'Count', 'Amount'],
+          ...ap.byMethod.map((m) => [m.method, m.count, m.amount]),
+          [],
+          ['Split tenders'],
+          ['Tender', 'Count', 'Amount'],
+          ...ap.byTender.map((t) => [t.tender, t.count, t.amount]),
+          [],
+          ['Expenses by category'],
+          ['Category', 'Entries', 'Total'],
+          ...ap.expensesByCategory.map((c) => [c.category, c.count, c.total]),
+          [],
+          ['Purchases by supplier'],
+          ['Supplier', 'Orders', 'Value'],
+          ...ap.purchasesBySupplier.map((p) => [p.supplier, p.count, p.value]),
+          [],
+          ['Credit aging (snapshot)'],
+          ['0–30', '31–60', '61–90', '90+', 'Total outstanding'],
+          [ap.creditAging.d30, ap.creditAging.d60, ap.creditAging.d90, ap.creditAging.d90p, ap.creditAging.totalOutstanding],
+        ]
+        return { title: `Accounting Pack ${ap.month}`, head: [], body: rows }
+      }
       default:
         return {
           title: 'Sales Summary',
@@ -170,7 +212,8 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
 
   const exportCSV = () => {
     const { title, head, body } = currentTable()
-    const rows = [['Report', title], ['Period', `Last ${data?.periodDays} days`], ['Scope', data?.scope?.label || 'All branches'], [], head, ...body]
+    const periodLabel = tab === 'accounting' && accountingCache ? `Month ${accountingCache.month}` : `Last ${data?.periodDays} days`
+    const rows = [['Report', title], ['Period', periodLabel], ['Scope', data?.scope?.label || 'All branches'], [], head, ...body]
     const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
     const a = document.createElement('a')
@@ -187,6 +230,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
     const storeName = storeSettings?.storeName || 'MediPOS Pharmacy'
     const currency = storeSettings?.currencyCode || 'USD'
     const scopeLabel = data.scope?.label || 'All branches'
+    const periodLabel = tab === 'accounting' && accountingCache ? `Month ${accountingCache.month}` : `Last ${data.periodDays} days`
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
     const pageW = doc.internal.pageSize.getWidth()
@@ -198,7 +242,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
     doc.setFontSize(15)
     doc.text(storeName, 14, 11)
     doc.setFontSize(10)
-    doc.text(`${title} — Last ${data.periodDays} days · ${scopeLabel} (${currency})`, 14, 19)
+    doc.text(`${title} — ${periodLabel} · ${scopeLabel} (${currency})`, 14, 19)
     doc.setFontSize(8)
     doc.text(`Generated ${new Date().toLocaleString()}`, pageW - 14, 11, { align: 'right' })
     doc.text('MediPOS Pro', pageW - 14, 19, { align: 'right' })
@@ -306,6 +350,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
 
       {/* ---------------- Tier 3: expenses & net position ---------------- */}
       {tab === 'expenses' && <ExpensesSection days={days} onData={setExpensesCache} grossProfit={data?.summary.grossProfit ?? 0} />}
+      {tab === 'accounting' && <AccountingSection />}
 
       {/* ---------------- Overview ---------------- */}
       {tab === 'overview' && (
@@ -1410,6 +1455,123 @@ function DayCloseSection() {
           </Table>
         </Card>
       )}
+    </div>
+  )
+}
+// ---------------- C2: accounting export pack ----------------
+interface AccountingPackData {
+  month: string
+  summary: { transactions: number; gross: number; discounts: number; tax: number; net: number; taxableBase: number; expensesTotal: number; purchasesTotal: number; refundsTotal: number }
+  daily: Array<{ date: string; transactions: number; gross: number; discounts: number; tax: number; net: number }>
+  byMethod: Array<{ method: string; count: number; amount: number }>
+  byTender: Array<{ tender: string; count: number; amount: number }>
+  vat: { taxableBase: number; taxCollected: number }
+  expensesByCategory: Array<{ category: string; count: number; total: number }>
+  purchasesBySupplier: Array<{ supplier: string; count: number; value: number }>
+  refunds: { count: number; total: number; byMethod: Record<string, number> }
+  creditAging: { d30: number; d60: number; d90: number; d90p: number; totalOutstanding: number }
+  generatedAt: string
+}
+
+function AccountingSection() {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7))
+  const [data, setData] = useState<AccountingPackData | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let alive = true
+    const run = () => {
+      setLoading(true)
+      fetch(`/api/reports/export-pack?month=${month}`, { cache: 'no-store' })
+        .then((r) => r.json())
+        .then((j) => { if (alive && j && !j.error) { setData(j); accountingCache = j } })
+        .finally(() => { if (alive) setLoading(false) })
+    }
+    const t = setTimeout(run, 0)
+    return () => { alive = false; clearTimeout(t) }
+  }, [month])
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-52 rounded-full" />
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
+    )
+  }
+
+  const stat = (label: string, value: number, tone?: string, sub?: string) => (
+    <Card className="p-5">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-2xl font-bold tracking-tight ${tone ?? ''}`}>{fmtMoney(value)}</p>
+      {sub && <p className="mt-0.5 text-xs text-muted-foreground">{sub}</p>}
+    </Card>
+  )
+  const simple = (head: string[], rows: (string | number)[][]) => (
+    <Table>
+      <TableHeader>
+        <TableRow className="hover:bg-transparent">{head.map((h) => <TableHead key={h}>{h}</TableHead>)}</TableRow>
+      </TableHeader>
+      <TableBody>
+        {rows.map((r, i) => (
+          <TableRow key={i}>{r.map((c, j) => <TableCell key={j} className={j === 0 ? 'font-medium' : 'tabular-nums'}>{typeof c === 'number' && j > 0 ? fmtMoney(c) : c}</TableCell>)}</TableRow>
+        ))}
+        {rows.length === 0 && <TableRow><TableCell colSpan={head.length} className="py-6 text-center text-muted-foreground">No entries this month.</TableCell></TableRow>}
+      </TableBody>
+    </Table>
+  )
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-44 rounded-full" aria-label="Accounting month" />
+        <span className="text-xs text-muted-foreground">One-click month pack for the accountant — CSV/PDF export covers every section below.</span>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {stat('Net sales', data.summary.net, 'text-teal-600 dark:text-teal-400', `${data.summary.transactions} transactions · discounts ${fmtMoney(data.summary.discounts)}`)}
+        {stat('VAT collected', data.vat.taxCollected, undefined, `taxable base ${fmtMoney(data.summary.taxableBase)}`)}
+        {stat('Expenses', data.summary.expensesTotal, 'text-amber-600 dark:text-amber-400', `${data.expensesByCategory.length} categor(ies) · refunds ${fmtMoney(data.summary.refundsTotal)}`)}
+        {stat('Purchases', data.summary.purchasesTotal, undefined, `${data.purchasesBySupplier.length} supplier(s) · credit out ${fmtMoney(data.creditAging.totalOutstanding)}`)}
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Daily sales — {data.month}</CardTitle></CardHeader>
+        <CardContent className="max-h-96 overflow-y-auto">
+          {simple(['Date', 'Transactions', 'Gross', 'Discounts', 'Tax', 'Net'], data.daily.map((d) => [d.date, d.transactions, d.gross, d.discounts, d.tax, d.net]))}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle className="text-base">Payments received</CardTitle></CardHeader>
+          <CardContent>
+            {simple(['Method', 'Count', 'Amount'], data.byMethod.map((m) => [m.method, m.count, m.amount]))}
+            {data.byTender.length > 0 && (
+              <>
+                <p className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Split-tender detail</p>
+                {simple(['Tender', 'Count', 'Amount'], data.byTender.map((t) => [t.tender, t.count, t.amount]))}
+              </>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-base">Expenses & purchases</CardTitle></CardHeader>
+          <CardContent>
+            {simple(['Category', 'Entries', 'Total'], data.expensesByCategory.map((c) => [c.category, c.count, c.total]))}
+            <p className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Purchases by supplier</p>
+            {simple(['Supplier', 'Orders', 'Value'], data.purchasesBySupplier.map((p) => [p.supplier, p.count, p.value]))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Credit aging snapshot</CardTitle></CardHeader>
+        <CardContent>
+          {simple(['0–30 days', '31–60 days', '61–90 days', '90+ days', 'Total outstanding'], [[data.creditAging.d30, data.creditAging.d60, data.creditAging.d90, data.creditAging.d90p, data.creditAging.totalOutstanding]])}
+        </CardContent>
+      </Card>
     </div>
   )
 }
