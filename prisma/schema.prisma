@@ -827,3 +827,23 @@ model TaxEra {
 
   @@index([isCurrent])
 }
+
+// Sales target — a revenue goal for one staff member (attributed by the
+// cashier name the sale books under, the same convention the Staff Performance
+// report uses) or for a whole branch, per period (daily / weekly / monthly).
+// Progress is always computed over the target's CURRENT window.
+model SalesTarget {
+  id        String   @id @default(cuid())
+  scope     String // 'user' | 'branch'
+  userName  String? // user scope: the attribution key (sale.cashierName)
+  branchId  String? // branch-scope target branch; optional home branch for user targets
+  period    String // 'daily' | 'weekly' | 'monthly'
+  amount    Float // revenue target for the period window
+  active    Boolean  @default(true)
+  note      String?
+  createdByName String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([period, active])
+}

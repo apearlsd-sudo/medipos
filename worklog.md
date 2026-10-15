@@ -684,3 +684,21 @@ Work Log:
 
 Stage Summary:
 - The till now handles coinless cash: the cash leg rounds to the nearest 5/10 pesewas with the exact signed delta stamped per sale, printed on paper + e-receipts, reconciled in the Z-report and the accounting pack, and replicated through sync — while every ledger/VAT number stays exact. Next roadmap extras: sales targets (Task 59), owner digest (Task 60).
+
+---
+Task ID: 59
+Agent: main
+Task: Roadmap extra 2/3 — Sales targets: revenue goals per staff member or branch (daily/weekly/monthly) with live progress.
+
+Work Log:
+- SCHEMA: SalesTarget model (scope 'user'|'branch', userName attribution key = sale.cashierName — the same convention the Staff Performance report uses, branchId, period daily|weekly|monthly, amount, active, note, createdByName) — db push, no data loss.
+- PERMISSIONS: new 'targets' module (Insights group) — targets:view (admin, pharmacist) + targets:manage (admin only); cashier deliberately gets NEITHER (they have no reports:view so could never reach the tab — a dead grant); seed-roles re-run (73→75 permissions; cashier 17→16).
+- API /api/targets (GET view / POST manage) + /api/targets/[id] (PUT/DELETE manage): progress computed server-side over each target's CURRENT window (daily = today, weekly = Mon–Sun, monthly = calendar month — server-local like day-close) via aggregate over completed sales (user scope: cashierName + optional branch filter; branch scope: branchId); rows carry revenue/salesCount/pct/remaining + window label; GET also returns staff + branch pickers for managers (managers may lack users:view) and canManage; POST validates scope/period/amount, resolves the user's name + home branch, enforces branch-staff can only target their own branch, rejects duplicate active subject+period with 409 ("edit it instead"); PUT edits amount/note/active; DELETE removes; every mutation audit-logged (target.created/updated/deleted + AuditTargetType 'sales_target' + AuditChanges scope/period).
+- UI: Reports → new "Sales Targets" tab (Target icon) — period switcher (All/Daily/Weekly/Monthly), 4 stat cards (in view / achieved / average attainment / combined remaining), table rows with Staff/Branch badges, window label, teal→amber progress bar with %, revenue/target, sales count, Achieved/On track/Behind/Paused status badges; manage actions (Edit amount+note, Pause/Resume, Delete with confirm) gated by canManage; New/Edit dialog (scope → staff or branch picker, period, amount, note; edit mode fixes the subject); empty state.
+- VERIFY: scripts/verify-targets-api.sh — 21/21 GREEN (idempotent: pre/post cleanup): auth gates (401 unauth, 403 view-only POST), 4 validation 400s, create user+branch targets, duplicate 409, live progress fields, DELTA TEST (a booked sale moves the cashier's target revenue by exactly the sale total), PUT amount recompute + pause, cross-branch 403, delete restores baseline, fixture sale cancelled + stock restored. scripts/verify-targets-ui.py — 15/15 GREEN (idempotent via pre-cleanup): create via dialog (keyboard-select through the radix listbox — clicking options fights the modal trap overlay), progress bar, amount edit, duplicate-rejection toast + dialog stays open by design + Cancel closes, pause/resume, period filter empty state, delete restores baseline, pharmacist (targets:view, no manage) sees the tab with NO manage/row actions, zero page errors.
+- FIXES along the way: bash UID readonly variable in the verify script; UI-assert false positive ("Cr edit Aging" tab matches has-text("Edit") — switched to exact-role locator).
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 ×2 → ss-PID kill + relaunch → HTTP:200 LOGIN:200 HUB:200. Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- Managers can set daily/weekly/monthly revenue goals for staff or branches, and everyone with Reports access sees live progress bars (attribution identical to the Staff Performance report), with pause/edit/delete and an audit trail. Next: Task 60 — owner digest.

@@ -36,6 +36,10 @@ export type AuditAction =
   | 'tax_era.created'
   | 'tax_era.activated'
   | 'tax_era.deleted'
+  // sales targets
+  | 'target.created'
+  | 'target.updated'
+  | 'target.deleted'
   // tier 3 — finance & quotations
   | 'expense.voided'
   | 'quotation.sent'
@@ -52,7 +56,7 @@ export type AuditAction =
   | 'system.cleaned'
   | 'system.backup'
 
-export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'sale_return' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer' | 'settings'
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'sale_return' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer' | 'settings' | 'sales_target'
 
 export interface AuditPriceChange {
   medicine: string
@@ -102,6 +106,9 @@ export interface AuditChanges {
   eraLabel?: string
   components?: Array<{ label: string; pct: number }>
   totalPct?: number
+  // sales targets
+  scope?: string
+  period?: string
 }
 
 export async function logAudit(opts: {

@@ -190,6 +190,15 @@ export const MODULE_GROUPS: PermissionModuleDef[] = [
     ],
   },
   {
+    group: 'Insights',
+    module: 'targets',
+    label: 'Sales Targets',
+    actions: [
+      { ...VIEW, description: 'See the sales targets and how the team is tracking against them' },
+      { action: 'manage', label: 'Manage', description: 'Create, edit, pause and delete sales targets' },
+    ],
+  },
+  {
     group: 'Administration',
     module: 'branches',
     label: 'Branches',
@@ -327,6 +336,7 @@ export const SYSTEM_ROLE_PERMISSIONS: Record<'admin' | 'pharmacist' | 'cashier',
     'quotations:convert',
     'reports:view',
     'reports:export',
+    'targets:view',
     'branches:view',
     'settings:view',
     'notifications:view',

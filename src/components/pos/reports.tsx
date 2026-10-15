@@ -8,12 +8,14 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
 import { PageHeader, StatusBadge } from '@/components/pos/shared'
 import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Percent, PiggyBank, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Percent, PiggyBank, Plus, ReceiptText, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useState } from 'react'
@@ -44,7 +46,7 @@ interface ReportData {
 
 const PIE_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6']
 
-type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting' | 'vat'
+type ReportTab = 'overview' | 'dayclose' | 'branches' | 'products' | 'staff' | 'stock' | 'expiry' | 'purchases' | 'payments' | 'claims' | 'credit' | 'analytics' | 'expenses' | 'accounting' | 'vat' | 'targets'
 
 const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
   { key: 'overview', label: 'Overview', icon: TrendingUp },
@@ -62,6 +64,7 @@ const TABS: Array<{ key: ReportTab; label: string; icon: React.ComponentType<{ c
   { key: 'expenses', label: 'Expenses & Net', icon: Wallet },
   { key: 'accounting', label: 'Accounting Pack', icon: FileSpreadsheet },
   { key: 'vat', label: 'VAT Filing', icon: ReceiptText },
+  { key: 'targets', label: 'Sales Targets', icon: Target },
 ]
 
 // Day-close section cache (for CSV export) — module-level, refreshed by the section.
@@ -388,6 +391,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
       {tab === 'expenses' && <ExpensesSection days={days} onData={setExpensesCache} grossProfit={data?.summary.grossProfit ?? 0} />}
       {tab === 'accounting' && <AccountingSection />}
       {tab === 'vat' && <VatFilingSection />}
+      {tab === 'targets' && <TargetsSection />}
 
       {/* ---------------- Overview ---------------- */}
       {tab === 'overview' && (
@@ -1859,6 +1863,324 @@ function VatFilingSection() {
           </Table>
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+// ---------------- Roadmap: sales targets ----------------
+interface TargetRow {
+  id: string
+  scope: 'user' | 'branch'
+  userName: string | null
+  branchId: string | null
+  branchName: string | null
+  period: 'daily' | 'weekly' | 'monthly'
+  amount: number
+  active: boolean
+  note: string | null
+  window: { start: string; end: string; label: string }
+  progress: { revenue: number; salesCount: number; pct: number; remaining: number }
+}
+interface TargetsData {
+  targets: TargetRow[]
+  staff: Array<{ id: string; name: string }>
+  branches: Array<{ id: string; name: string }>
+  canManage: boolean
+  now: string
+}
+
+const TARGET_PERIOD_LABEL: Record<string, string> = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' }
+
+function targetStatus(t: TargetRow): { label: string; cls: string } {
+  if (!t.active) return { label: 'Paused', cls: 'bg-muted text-muted-foreground' }
+  const p = t.progress.pct
+  if (p >= 100) return { label: 'Achieved', cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400' }
+  if (p >= 70) return { label: 'On track', cls: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400' }
+  return { label: 'Behind', cls: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400' }
+}
+
+function TargetsSection() {
+  const [data, setData] = useState<TargetsData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'daily' | 'weekly' | 'monthly'>('all')
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editing, setEditing] = useState<TargetRow | null>(null)
+  const [saving, setSaving] = useState(false)
+  // create/edit form
+  const [fScope, setFScope] = useState<'user' | 'branch'>('user')
+  const [fUserId, setFUserId] = useState('')
+  const [fBranchId, setFBranchId] = useState('')
+  const [fPeriod, setFPeriod] = useState<'daily' | 'weekly' | 'monthly'>('monthly')
+  const [fAmount, setFAmount] = useState('')
+  const [fNote, setFNote] = useState('')
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetch('/api/targets', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => { if (j && !j.error) setData(j) })
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const openCreate = () => {
+    setEditing(null)
+    setFScope('user'); setFUserId(''); setFBranchId(data?.branches[0]?.id ?? ''); setFPeriod('monthly'); setFAmount(''); setFNote('')
+    setDialogOpen(true)
+  }
+  const openEdit = (t: TargetRow) => {
+    setEditing(t)
+    setFScope(t.scope); setFUserId(''); setFBranchId(t.branchId ?? ''); setFPeriod(t.period)
+    setFAmount(String(t.amount)); setFNote(t.note ?? '')
+    setDialogOpen(true)
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const payload = editing
+        ? { amount: Number(fAmount), note: fNote }
+        : { scope: fScope, userId: fScope === 'user' ? fUserId : undefined, branchId: fScope === 'branch' ? fBranchId : undefined, period: fPeriod, amount: Number(fAmount), note: fNote }
+      const res = await fetch(editing ? `/api/targets/${editing.id}` : '/api/targets', {
+        method: editing ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) { toast({ title: 'Save failed', description: json.error, variant: 'destructive' }); return }
+      toast({ title: editing ? 'Target updated' : 'Target created' })
+      setDialogOpen(false)
+      load()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggleActive = async (t: TargetRow) => {
+    const res = await fetch(`/api/targets/${t.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: !t.active }) })
+    if (res.ok) { toast({ title: t.active ? 'Target paused' : 'Target resumed' }); load() }
+  }
+
+  const remove = async (t: TargetRow) => {
+    if (!confirm(`Delete the ${TARGET_PERIOD_LABEL[t.period]?.toLowerCase()} target for "${t.scope === 'user' ? t.userName : t.branchName}"?`)) return
+    const res = await fetch(`/api/targets/${t.id}`, { method: 'DELETE' })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) { toast({ title: 'Delete failed', description: json.error, variant: 'destructive' }); return }
+    toast({ title: 'Target deleted' })
+    load()
+  }
+
+  if (loading || !data) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-10 w-64 rounded-full" />
+        <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-xl" />)}</div>
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
+    )
+  }
+
+  const rows = data.targets.filter((t) => periodFilter === 'all' || t.period === periodFilter)
+  const activeRows = rows.filter((t) => t.active)
+  const achieved = activeRows.filter((t) => t.progress.pct >= 100).length
+  const avgPct = activeRows.length ? Math.round(activeRows.reduce((s, t) => s + t.progress.pct, 0) / activeRows.length) : 0
+  const combinedRemaining = +activeRows.reduce((s, t) => s + t.progress.remaining, 0).toFixed(2)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Tabs value={periodFilter} onValueChange={(v) => setPeriodFilter(v as typeof periodFilter)}>
+          <TabsList className="flex flex-wrap gap-1">
+            {(['all', 'daily', 'weekly', 'monthly'] as const).map((p) => (
+              <TabsTrigger key={p} value={p} className="rounded-full px-3.5 text-xs">{p === 'all' ? 'All periods' : TARGET_PERIOD_LABEL[p]}</TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <span className="text-xs text-muted-foreground">Progress is live for each target&rsquo;s current {periodFilter === 'all' ? 'period window' : `${periodFilter} window`}.</span>
+        {data.canManage && (
+          <Button onClick={openCreate} className="ml-auto rounded-full bg-teal-600 hover:bg-teal-700"><Plus className="h-4 w-4" /> New target</Button>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Targets in view</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{rows.length}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">{activeRows.length} active · {rows.length - activeRows.length} paused</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Achieved</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">{achieved}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">at or over 100% of the goal</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Average attainment</p>
+          <p className={`mt-1 text-2xl font-bold tabular-nums ${avgPct >= 70 ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>{avgPct}%</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">across active targets</p>
+        </Card>
+        <Card className="p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Combined remaining</p>
+          <p className="mt-1 text-2xl font-bold tabular-nums">{fmtMoney(combinedRemaining)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">left to reach every active goal</p>
+        </Card>
+      </div>
+
+      <Card>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Subject</TableHead>
+              <TableHead>Window</TableHead>
+              <TableHead className="w-[26%]">Progress</TableHead>
+              <TableHead className="text-right">Revenue / Target</TableHead>
+              <TableHead className="text-center">Sales</TableHead>
+              <TableHead className="text-center">Status</TableHead>
+              {data.canManage && <TableHead className="w-28" />}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.map((t) => {
+              const st = targetStatus(t)
+              const subject = t.scope === 'user' ? t.userName : t.branchName ?? 'All branches'
+              return (
+                <TableRow key={t.id} className={t.active ? '' : 'opacity-60'}>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className={t.scope === 'user' ? '' : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300'}>{t.scope === 'user' ? 'Staff' : 'Branch'}</Badge>
+                      <span className="font-medium">{subject}</span>
+                    </div>
+                    {t.note && <p className="mt-0.5 max-w-56 truncate text-xs text-muted-foreground" title={t.note}>{t.note}</p>}
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm">{TARGET_PERIOD_LABEL[t.period]}</div>
+                    <div className="text-xs text-muted-foreground">{t.window.label}</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <div className="h-2 w-full max-w-40 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className={`h-2 rounded-full ${t.progress.pct >= 100 ? 'bg-emerald-500' : t.progress.pct >= 70 ? 'bg-teal-500' : 'bg-amber-500'}`}
+                          style={{ width: `${Math.min(100, t.progress.pct)}%` }}
+                        />
+                      </div>
+                      <span className="w-12 shrink-0 text-right text-xs font-semibold tabular-nums">{t.progress.pct}%</span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <span className="font-medium">{fmtMoney(t.progress.revenue)}</span>
+                    <span className="text-muted-foreground"> / {fmtMoney(t.amount)}</span>
+                  </TableCell>
+                  <TableCell className="text-center tabular-nums">{t.progress.salesCount}</TableCell>
+                  <TableCell className="text-center"><Badge variant="outline" className={st.cls}>{st.label}</Badge></TableCell>
+                  {data.canManage && (
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button variant="ghost" size="sm" className="h-7 rounded-full px-2 text-xs" onClick={() => openEdit(t)}>Edit</Button>
+                        <Button variant="ghost" size="sm" className="h-7 rounded-full px-2 text-xs" onClick={() => toggleActive(t)}>{t.active ? 'Pause' : 'Resume'}</Button>
+                        <Button variant="ghost" size="sm" className="h-7 rounded-full px-2 text-xs text-red-500" onClick={() => remove(t)}>Delete</Button>
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              )
+            })}
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={data.canManage ? 7 : 6} className="py-10 text-center text-muted-foreground">
+                  No sales targets yet{data.canManage ? ' — set the first goal with “New target”.' : '.'}
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editing ? 'Edit sales target' : 'New sales target'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {!editing && (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Scope</Label>
+                  <Select value={fScope} onValueChange={(v) => { setFScope(v as 'user' | 'branch'); setFUserId('') }}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="user">A staff member</SelectItem>
+                      <SelectItem value="branch">A whole branch</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {fScope === 'user' ? (
+                  <div className="space-y-1.5">
+                    <Label>Staff member</Label>
+                    <Select value={fUserId} onValueChange={setFUserId}>
+                      <SelectTrigger><SelectValue placeholder="Pick staff" /></SelectTrigger>
+                      <SelectContent>
+                        {data.staff.map((u) => <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">Progress counts the sales this person rings up (by cashier name).</p>
+                  </div>
+                ) : (
+                  <div className="space-y-1.5">
+                    <Label>Branch</Label>
+                    <Select value={fBranchId} onValueChange={setFBranchId}>
+                      <SelectTrigger><SelectValue placeholder="Pick branch" /></SelectTrigger>
+                      <SelectContent>
+                        {data.branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label>Period</Label>
+                  <Select value={fPeriod} onValueChange={(v) => setFPeriod(v as typeof fPeriod)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Daily — resets every day</SelectItem>
+                      <SelectItem value="weekly">Weekly — Mon to Sun</SelectItem>
+                      <SelectItem value="monthly">Monthly — calendar month</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Target amount</Label>
+                <Input type="number" min={0.01} step="0.01" value={fAmount} onChange={(e) => setFAmount(e.target.value)} placeholder="e.g. 5000" className="tabular-nums" />
+              </div>
+              {editing && (
+                <div className="space-y-1.5">
+                  <Label>Subject (fixed)</Label>
+                  <Input disabled value={`${editing.scope === 'user' ? editing.userName : editing.branchName} · ${TARGET_PERIOD_LABEL[editing.period]}`} />
+                </div>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note (optional)</Label>
+              <Input value={fNote} onChange={(e) => setFNote(e.target.value)} placeholder="e.g. Q4 push — gift season" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {editing ? 'Only the amount and note can be changed — pause or recreate the target to reassign it.' : 'One active target per subject and period — the save is rejected if one already exists.'}
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" className="rounded-full" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={save}
+              disabled={saving || !fAmount || Number(fAmount) <= 0 || (!editing && fScope === 'user' && !fUserId) || (!editing && fScope === 'branch' && !fBranchId)}
+              className="rounded-full bg-teal-600 hover:bg-teal-700"
+            >
+              {editing ? 'Save changes' : 'Create target'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
