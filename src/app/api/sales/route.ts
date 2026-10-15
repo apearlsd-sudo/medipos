@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit'
 import { recordSyncOp } from '@/lib/sync'
 import { planPackSale } from '@/lib/packs'
 import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider, resolveTier, isBirthdayInWindow } from '@/lib/pos-finance'
-import { sumComponentPcts } from '@/lib/tax-components'
+import { sumComponentPcts, taxComponents, freezeComponentsJson } from '@/lib/tax-components'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -67,6 +67,9 @@ export async function GET(req: NextRequest) {
         subtotal: s.subtotal,
         discount: s.discount,
         tax: s.tax,
+        taxBase: s.taxBase,
+        taxComponentsJson: s.taxComponentsJson,
+        taxEraId: s.taxEraId,
         total: s.total,
         paidAmount: s.paidAmount,
         paymentMethod: s.paymentMethod,
@@ -164,6 +167,14 @@ export async function POST(req: NextRequest) {
     const tax = chargeTax ? +(((subtotal - discount) * storeTaxRate) / 100).toFixed(2) : 0
     const taxBase = chargeTax && tax > 0 ? +(subtotal - discount).toFixed(2) : null
     const total = +(subtotal - discount + tax).toFixed(2)
+
+    // Era stamping: freeze the exact component structure charged onto the sale
+    // and link the statutory era current at booking time. Receipts and VAT
+    // filings then attribute this sale EXACTLY even after the store later
+    // switches rates (Ghana's seasonal 15% / 17.5% / 20% regimes).
+    const chargedComps = chargeTax ? taxComponents(_settingsMap) : []
+    const taxComponentsJson = freezeComponentsJson(chargedComps)
+    const activeEra = chargeTax && tax > 0 ? await db.taxEra.findFirst({ where: { isCurrent: true } }) : null
 
     // --- Tier 1: customer-dependent paths ---------------------------------
     let paymentMethod = ['cash', 'card', 'momo', 'credit'].includes(body.paymentMethod) ? body.paymentMethod : 'cash'
@@ -383,6 +394,8 @@ export async function POST(req: NextRequest) {
           discountRequestId,
           subtotal, discount, tax, total,
           taxBase,
+          taxEraId: activeEra?.id ?? null,
+          taxComponentsJson,
           paidAmount,
           changeAmount,
           paymentMethod,
@@ -493,6 +506,8 @@ export async function POST(req: NextRequest) {
       branchId: saleBranchId,
       subtotal, discount, tax, total,
       taxBase,
+      taxEraId: activeEra?.id ?? null,
+      taxComponentsJson,
       paidAmount, changeAmount,
       paymentMethod, paymentProvider, paymentReference, paymentStatus,
       tenders: tendersJson ? JSON.parse(tendersJson) : null,

@@ -14,6 +14,7 @@ export interface ReceiptSale {
   discount: number
   tax: number
   taxBase?: number | null
+  taxComponentsJson?: string | null
   total: number
   paidAmount: number
   changeAmount: number

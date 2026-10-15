@@ -50,6 +50,37 @@ export function saleCarriesComponents(
   return Math.abs(sale.tax - expected) <= 0.02
 }
 
+/**
+ * Freeze the exact component structure a sale was charged under onto the sale
+ * row (JSON) so receipts and filings can attribute it EXACTLY later — even
+ * after the store customises components into a shape no statutory era matches.
+ */
+export function freezeComponentsJson(comps: TaxComponent[]): string | null {
+  if (!comps.length) return null
+  return JSON.stringify(comps.map((c) => ({ label: c.label, pct: c.pct })))
+}
+
+/**
+ * Read back a frozen structure. Returns null for blank/corrupt payloads or
+ * shapes that are not a non-empty list of {label, pct>0}.
+ */
+export function parseComponentsJson(json: string | null | undefined): TaxComponent[] | null {
+  if (!json) return null
+  try {
+    const arr = JSON.parse(json)
+    if (!Array.isArray(arr) || arr.length === 0) return null
+    const out: TaxComponent[] = []
+    for (const c of arr) {
+      const label = typeof c?.label === 'string' ? c.label.trim() : ''
+      const pct = Number(c?.pct)
+      if (label && Number.isFinite(pct) && pct > 0) out.push({ label, pct })
+    }
+    return out.length ? out : null
+  } catch {
+    return null
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Rate-era registry — Ghana's statutory structures the store runs or has run.
 // Seasonal switching (15% flat ↔ 20% with levies) means one month can hold
@@ -113,16 +144,23 @@ export function matchOtherRateEra(
 }
 
 /**
- * The component structure a sale was actually booked under: the current
- * structure when it matches, otherwise a known statutory era, else null.
+ * The component structure a sale was actually booked under, best-available:
+ * 1. the frozen structure stored ON the sale at booking time (exact — set by
+ *    the sales API since the era system shipped),
+ * 2. the CURRENT structure when the charged tax matches it,
+ * 3. a known statutory era matched by amount (legacy sales booked before the
+ *    era system, or sales synced from nodes that never stamped one),
+ * 4. null (exempt sale or unattributable).
  * Used by receipt printing so paperwork printed after a seasonal rate switch
  * still shows the breakdown the buyer actually paid.
  */
 export function saleStructureFor(
-  sale: { tax: number; taxBase?: number | null },
+  sale: { tax: number; taxBase?: number | null; taxComponentsJson?: string | null },
   currentComps: TaxComponent[],
 ): TaxComponent[] | null {
   if (!(sale.tax > 0) || !sale.taxBase || sale.taxBase <= 0) return null
+  const frozen = parseComponentsJson(sale.taxComponentsJson)
+  if (frozen) return frozen
   const currentTotal = +currentComps.reduce((s, c) => s + c.pct, 0).toFixed(2)
   if (currentComps.length > 0 && saleCarriesComponents(sale, currentTotal)) return currentComps
   return matchOtherRateEra(sale, currentComps)?.components ?? null

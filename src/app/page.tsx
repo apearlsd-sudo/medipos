@@ -31,7 +31,7 @@ import { canAccessView, type ViewKey } from '@/components/pos/nav-config'
 import { setCurrencyConfig } from '@/lib/format'
 import { createAppFetch } from '@/lib/offline'
 import { OfflineBanner } from '@/components/pos/offline-banner'
-import { loadStoreSettings, type StoreSettingsMap } from '@/lib/store-settings'
+import { loadStoreSettings, onStoreSettings, type StoreSettingsMap } from '@/lib/store-settings'
 import { Activity, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -144,6 +144,11 @@ export default function Home() {
       alive = false
     }
   }, [])
+
+  // Keep the app-root settings in lockstep with the shared cache: a VAT era
+  // activation (or any component force-reloading settings) must reach the
+  // prop-fed views — POS tax %, receipts, FEFO windows — immediately.
+  useEffect(() => onStoreSettings((s) => setSettings(s)), [])
 
   const navigate = useCallback((v: ViewKey) => {
     setView(v)

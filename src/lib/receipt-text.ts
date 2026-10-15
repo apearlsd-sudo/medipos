@@ -1,5 +1,6 @@
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import { fmtMoney, paymentMethodLabel } from '@/lib/format'
+import { saleStructureFor, taxComponents } from '@/lib/tax-components'
 
 /**
  * Plain-text e-receipt (A3) — the textual twin of the thermal receipt, sent
@@ -14,6 +15,7 @@ export interface TextReceiptSale {
   discount: number
   tax: number
   taxBase?: number | null
+  taxComponentsJson?: string | null
   total: number
   paidAmount: number
   changeAmount: number
@@ -54,7 +56,16 @@ export function renderTextReceipt(sale: TextReceiptSale, settings: StoreSettings
   lines.push(divider)
   lines.push(`Subtotal: ${fmtMoney(sale.subtotal)}`)
   if (sale.discount > 0) lines.push(`Discount: -${fmtMoney(sale.discount)}`)
-  if (sale.tax > 0) lines.push(`Tax: ${fmtMoney(sale.tax)}`)
+  if (sale.tax > 0) {
+    lines.push(`Tax: ${fmtMoney(sale.tax)}`)
+    // Itemise the statutory structure the buyer actually paid (frozen on the
+    // sale when booked; era/inference fallbacks for legacy rows) — the textual
+    // twin of the paper receipt's Tax heading.
+    const struct = saleStructureFor(sale, taxComponents(settings))
+    for (const c of struct ?? []) {
+      lines.push(`   ${c.label} (${c.pct}%): ${fmtMoney(+(((sale.taxBase ?? 0) * c.pct) / 100).toFixed(2))}`)
+    }
+  }
   lines.push(`*TOTAL: ${fmtMoney(sale.total)}*`)
   if (sale.insuranceAmount && sale.insuranceAmount > 0) lines.push(`Insurance claim: -${fmtMoney(sale.insuranceAmount)}`)
   if (sale.pointsValue && sale.pointsValue > 0) lines.push(`Points redeemed (${sale.pointsRedeemed}): -${fmtMoney(sale.pointsValue)}`)

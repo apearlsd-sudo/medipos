@@ -274,6 +274,9 @@ model Sale {
   discount          Float      @default(0)
   tax               Float      @default(0)
   taxBase           Float?     // taxable base the tax was computed on (null = tax-free sale)
+  taxEraId          String?    // statutory rate era this sale was booked under (null = exempt or pre-era)
+  taxEra            TaxEra?    @relation(fields: [taxEraId], references: [id])
+  taxComponentsJson String?    // frozen [{label,pct}] structure actually charged (exact receipt attribution)
   total             Float      @default(0)
   paidAmount        Float      @default(0)
   changeAmount      Float      @default(0)
@@ -794,4 +797,25 @@ model SaleReturnItem {
   restocked  Boolean    @default(false)
 
   @@index([returnId])
+}
+
+// Statutory rate era — the VAT structure (NHIL/GETFund/VAT mix) the store ran
+// during a period. Ghana switches seasonally between e.g. 15% flat and 20% with
+// levies; activating an era closes the previous one (effectiveTo = switch time)
+// and flips the till's statutory components. Sales keep the era they were
+// booked under so filings can attribute historical revenue exactly.
+model TaxEra {
+  id             String    @id @default(cuid())
+  label          String
+  componentsJson String // JSON [{label, pct}, ...] — the statutory structure
+  effectiveFrom  DateTime
+  effectiveTo    DateTime? // null = open-ended (current era)
+  isCurrent      Boolean   @default(false)
+  note           String?
+  createdByName  String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  sales          Sale[]
+
+  @@index([isCurrent])
 }

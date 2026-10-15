@@ -51,6 +51,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       discount: sale.discount,
       tax: sale.tax,
       taxBase: sale.taxBase,
+      taxComponentsJson: sale.taxComponentsJson,
       total: sale.total,
       paidAmount: sale.paidAmount,
       changeAmount: sale.changeAmount,

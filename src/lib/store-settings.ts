@@ -39,3 +39,16 @@ export function useStoreSettings(): StoreSettingsMap | null {
   }, [])
   return settings
 }
+
+/**
+ * Subscribe imperative code (e.g. the app root's settings state) to cache
+ * refreshes. Returns the unsubscribe function. Lets prop-fed views — the POS
+ * cart's tax percentage, receipt breakdowns, FEFO windows — follow a
+ * force-reload (VAT era activation, Settings save) immediately.
+ */
+export function onStoreSettings(fn: (s: StoreSettingsMap) => void): () => void {
+  listeners.add(fn)
+  return () => {
+    listeners.delete(fn)
+  }
+}

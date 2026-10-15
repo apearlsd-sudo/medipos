@@ -32,6 +32,10 @@ export type AuditAction =
   | 'sale.hold_discarded'
   // customer returns & refunds
   | 'return.created'
+  // statutory tax eras (VAT rate history)
+  | 'tax_era.created'
+  | 'tax_era.activated'
+  | 'tax_era.deleted'
   // tier 3 — finance & quotations
   | 'expense.voided'
   | 'quotation.sent'
@@ -48,7 +52,7 @@ export type AuditAction =
   | 'system.cleaned'
   | 'system.backup'
 
-export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'sale_return' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer'
+export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'sale_return' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer' | 'settings'
 
 export interface AuditPriceChange {
   medicine: string
@@ -93,6 +97,10 @@ export interface AuditChanges {
   refundAmount?: number
   refundMethod?: string
   itemCount?: number
+  // statutory tax eras
+  eraLabel?: string
+  components?: Array<{ label: string; pct: number }>
+  totalPct?: number
 }
 
 export async function logAudit(opts: {

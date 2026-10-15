@@ -15,6 +15,7 @@ import { NetworkSyncCard } from '@/components/pos/network-sync'
 import { DeviceDiscoveryCard } from '@/components/pos/device-discovery'
 import { WorkstationSyncCard } from '@/components/pos/workstation-sync'
 import { usePwaInstall } from '@/components/pos/pwa-register'
+import { TaxEraCard } from '@/components/pos/tax-era-settings'
 import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
 import { sumComponentPcts } from '@/lib/tax-components'
 import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
@@ -31,7 +32,6 @@ interface StoreSettings {
   currency: string
   currencyCode: string
   currencyLocale: string
-  taxRate: string
   taxEnabled: string
   taxComponent1Label: string
   taxComponent1Pct: string
@@ -58,7 +58,6 @@ const DEFAULTS: StoreSettings = {
   currency: 'USD',
   currencyCode: 'USD',
   currencyLocale: 'en-US',
-  taxRate: '2.5',
   taxEnabled: 'true',
   taxComponent1Label: '',
   taxComponent1Pct: '',
@@ -269,6 +268,8 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               </div>
             </CardContent>
           </Card>
+
+          <TaxEraCard canEdit={canEditSettings} />
 
           <Card>
             <CardHeader>

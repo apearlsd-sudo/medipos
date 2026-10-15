@@ -44,6 +44,7 @@ interface SaleDetail extends SaleRow {
   changeAmount: number
   note: string | null
   taxBase?: number | null
+  taxComponentsJson?: string | null
   customerPhone?: string | null
   customerEmail?: string | null
   items: Array<{ id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number; saleUnit?: string }>
@@ -545,6 +546,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                     discount: printSale.discount,
                     tax: printSale.tax,
                     taxBase: printSale.taxBase ?? null,
+                    taxComponentsJson: printSale.taxComponentsJson ?? null,
                     total: printSale.total,
                     paidAmount: printSale.paidAmount,
                     changeAmount: printSale.changeAmount,
