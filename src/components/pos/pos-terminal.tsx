@@ -905,14 +905,12 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         </div>
 
         <Tabs value={activeCat} onValueChange={setActiveCat}>
-          <ScrollArea className="w-full whitespace-nowrap pb-1">
-            <TabsList className="inline-flex h-9">
-              <TabsTrigger value="all" className="rounded-full px-4 text-xs">All</TabsTrigger>
-              {categories.map((c) => (
-                <TabsTrigger key={c.id} value={c.id} className="rounded-full px-4 text-xs">{c.name}</TabsTrigger>
-              ))}
-            </TabsList>
-          </ScrollArea>
+          <TabsList className="flex h-auto flex-wrap items-center gap-1">
+            <TabsTrigger value="all" className="rounded-full px-4 text-xs">All</TabsTrigger>
+            {categories.map((c) => (
+              <TabsTrigger key={c.id} value={c.id} className="rounded-full px-4 text-xs">{c.name}</TabsTrigger>
+            ))}
+          </TabsList>
         </Tabs>
 
         {loading ? (

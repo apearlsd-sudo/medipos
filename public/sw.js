@@ -19,7 +19,7 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-const CACHE_VERSION = 'medipos-v6' // v6: category delete flow (AlertDialog + move-to reassign)
+const CACHE_VERSION = 'medipos-v7' // v7: POS category chips wrap (no hidden off-screen categories)
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

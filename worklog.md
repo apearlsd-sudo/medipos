@@ -843,3 +843,18 @@ Work Log:
 
 Stage Summary:
 - Categories are now fully managed: empty ones delete outright, populated ones delete with an explicit choice of where their products land (any other category or an auto-managed Uncategorized group), guarded by permissions and a race-proof transaction. The tier1 fixture picker was also hardened against branch-price drift so the 136-test suite stays green regardless of catalog edits. Deployed on SW v6, DB backed up.
+
+---
+Task ID: 67
+Agent: main
+Task: "on the pos page some of the categories under the product searchbar are hidden, lets find a way for them to show" — POS category strip hid everything past the right edge.
+
+Work Log:
+- DIAGNOSIS: the POS product browser rendered category chips in a single horizontal ScrollArea with whitespace-nowrap — radix hides the scrollbar, so with 14 categories (Analgesics … Vitamins & Supplements, incl. Task-65's retail ones) everything beyond ~8 chips was invisible unless the user discovered hidden horizontal scrolling. Product-side filtering was fine; pure visibility.
+- FIX (pos-terminal.tsx): category strip is now a wrapping TabsList — `flex h-auto flex-wrap items-center gap-1` (ScrollArea wrapper removed; ScrollArea stays for cart + dialogs). Every category is on screen at every width: 3 rows at 1440/1024, stacked on phones. Tabs value/onValueChange + chip styling unchanged.
+- VERIFY (browser E2E, SW medipos-v6→v7, zero page errors): 1440×900 → 15/15 tabs fully within viewport across 3 rows; 1024×768 → 15/15 across 3 rows; 390×844 → 15/15 stacked (11 rows — tall but honest, nothing hidden; mid-relayout rect readings during the wrapper's transition-all animation initially looked like overflow, settled state is clean); screenshot confirms the 3-row chip layout at 1440. Functional click-through: Vitamins & Supplements chip → "6 products" badge + 6 grid cards; All → 69 back. Harness note (recurring lesson): radix components in this app need the full pointer chain (pointerdown+mousedown+click) under headless programmatic eval — plain .click() silently no-ops on Tabs triggers and dropdowns; real user input unaffected.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v6→v7 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- Every category is now visible under the POS search bar at any screen size — the single hidden-scroll strip became a wrapping chip cloud (3 rows on desktop, stacked on phones), with filtering behavior untouched. 136/136 regression green, deployed on SW v7, DB backed up.
