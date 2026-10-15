@@ -902,3 +902,17 @@ Work Log:
 
 Stage Summary:
 - Reports menu is now truly inline: the four categories are permanently visible as a menubar of pills — the active group filled teal — and each opens a compact dropdown of its own reports, with a "Viewing:" chip naming the current report. No hidden navigation, no collapsed trigger. 136/136 regression green, deployed on SW v10, DB backed up.
+---
+Task ID: 69c
+Agent: main
+Task: "hover-to-open instead of click" — the inline reports menubar should open on hover, not click.
+
+Work Log:
+- DESIGN: mouse users expect a menubar to open on hover. Each group DropdownMenu is now CONTROLLED (open={openMenu===label}) with modal={false} — non-modal is essential so pointer events stay alive on the other pills while a panel is open, enabling glide-across menu switching. Hover opens after an 80ms settle delay (fast mouse passes across the bar don't cascade panels open); leaving pill/panel closes after a 180ms grace period (covers the pill→panel gap and diagonal paths); entering the panel cancels the pending close. pointerType==='mouse' guards keep touch on the native tap-open path (a touch pointerenter followed by Radix's pointerdown toggle would otherwise open-then-instantly-close). onCloseAutoFocus preventDefault stops focus ping-pong between pill and panel during hover navigation. Keyboard/tap unchanged: Enter/Space opens via onOpenChange, Escape closes, outside-click closes, items select+close.
+- UI (reports.tsx): added openMenu state + hoverTimers ref (open 80ms / close 180ms), cancelHoverTimers/hoverOpen/hoverClose helpers, unmount cleanup; trigger Button gains onPointerEnter/Leave (mouse-only), DropdownMenuContent gains onPointerEnter (cancel close) / onPointerLeave (grace close). Everything else — pills, active fill, captions, Viewing chip, exports — untouched.
+- VERIFY (browser E2E with REAL Playwright mouse moves, SW medipos-v10→v11, zero page errors): (1) hover opens Sales panel with all 6 items — no click ever dispatched; (2) gliding across the bar switches panels live (Inventory 4 items → Finance 3 items), one panel at a time; (3) moving off the bar or out of the panel auto-closes after grace; (4) pill→panel pointer travel keeps the panel open (grace+cancel works); (5) mouse click on "Staff Performance" inside a hover-opened panel switches the section, moves the filled pill to Operations & Team, flips the Viewing chip, closes the panel; (6) keyboard: Enter on a focused pill opens, Escape closes. Screenshot shows the Inventory panel open under pure hover with the active Operations pill filled and Staff Performance rendered.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v10→v11 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- The reports menubar now behaves like a proper hover menu: glide onto a category to reveal its reports, glide across to switch, move away and it tucks itself back in — while tap and keyboard keep working unchanged. 136/136 regression green, deployed on SW v11, DB backed up.

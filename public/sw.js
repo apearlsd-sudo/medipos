@@ -19,7 +19,7 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-const CACHE_VERSION = 'medipos-v10' // v10: reports menu inline — 4 visible category pills, each with its own dropdown
+const CACHE_VERSION = 'medipos-v11' // v11: reports menubar opens on hover (mouse) — 80ms open delay, 180ms close grace
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

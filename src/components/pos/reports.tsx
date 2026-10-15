@@ -20,7 +20,7 @@ import {
   Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, Check, ChevronDown, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -95,6 +95,28 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
   // caches fed by the lazy sections so CSV/PDF export works on those tabs
   const [analyticsCache, setAnalyticsCache] = useState<AnalyticsData | null>(null)
   const [expensesCache, setExpensesCache] = useState<ExpensesData | null>(null)
+
+  // Inline menubar hover logic — one dropdown at a time. Hovering a group pill opens it (mouse only;
+  // touch/keyboard keep the regular tap/Enter open), and leaving the pill+panel closes after a short
+  // grace period so diagonal pointer paths and the pill→panel gap don't flicker the menu shut.
+  const [openMenu, setOpenMenu] = useState<string | null>(null)
+  const hoverTimers = useRef<{ open?: ReturnType<typeof setTimeout>; close?: ReturnType<typeof setTimeout> }>({})
+  const cancelHoverTimers = () => {
+    clearTimeout(hoverTimers.current.open)
+    clearTimeout(hoverTimers.current.close)
+  }
+  const hoverOpen = (label: string) => {
+    cancelHoverTimers()
+    hoverTimers.current.open = setTimeout(() => setOpenMenu(label), 80)
+  }
+  const hoverClose = () => {
+    cancelHoverTimers()
+    hoverTimers.current.close = setTimeout(() => setOpenMenu(null), 180)
+  }
+  useEffect(() => () => {
+    clearTimeout(hoverTimers.current.open)
+    clearTimeout(hoverTimers.current.close)
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -360,22 +382,39 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         {GROUPS.map((g) => {
           const groupActive = g.tabs.includes(tab)
           return (
-            <DropdownMenu key={g.label}>
+            <DropdownMenu
+              key={g.label}
+              open={openMenu === g.label}
+              modal={false}
+              onOpenChange={(o) => {
+                cancelHoverTimers()
+                setOpenMenu(o ? g.label : null)
+              }}
+            >
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
                   aria-label={`${g.label} reports`}
+                  aria-haspopup="menu"
                   className={
                     groupActive
                       ? 'rounded-full border-teal-600 bg-teal-600 px-4 font-semibold text-white shadow-sm hover:bg-teal-700 hover:text-white'
                       : 'rounded-full bg-teal-600/5 px-4 font-semibold text-teal-700 hover:bg-teal-600/10 dark:text-teal-300'
                   }
+                  onPointerEnter={(e) => { if (e.pointerType === 'mouse') hoverOpen(g.label) }}
+                  onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverClose() }}
                 >
                   {g.label}
                   <ChevronDown className="h-4 w-4 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-72">
+              <DropdownMenuContent
+                align="start"
+                className="w-72"
+                onCloseAutoFocus={(e) => e.preventDefault()}
+                onPointerEnter={(e) => { if (e.pointerType === 'mouse') cancelHoverTimers() }}
+                onPointerLeave={(e) => { if (e.pointerType === 'mouse') hoverClose() }}
+              >
                 <DropdownMenuLabel className="px-2 py-2">
                   <span className="text-xs font-bold uppercase tracking-wide text-foreground/70">{g.label}</span>
                   <span className="block text-[11px] font-normal text-muted-foreground">{g.caption}</span>
