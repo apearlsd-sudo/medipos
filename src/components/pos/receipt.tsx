@@ -19,6 +19,7 @@ export interface ReceiptSale {
   paymentProvider?: string | null
   paymentReference?: string | null
   paymentStatus?: string
+  tenders?: Array<{ method: string; amount: number; provider?: string; reference?: string }> | null
   pointsEarned?: number
   pointsRedeemed?: number
   pointsValue?: number
@@ -177,9 +178,30 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
           <span>Points redeemed ({sale.pointsRedeemed})</span><span>-{fmtMoney(sale.pointsValue)}</span>
         </div>
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-        <span>Paid ({paymentMethodLabel(sale.paymentMethod, sale.paymentProvider)})</span><span>{fmtMoney(sale.paidAmount)}</span>
-      </div>
+      {sale.tenders && sale.tenders.length > 1 ? (
+        <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
+      ) : (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+          <span>Paid ({paymentMethodLabel(sale.paymentMethod, sale.paymentProvider)})</span><span>{fmtMoney(sale.paidAmount)}</span>
+        </div>
+      )}
+      {sale.tenders && sale.tenders.length > 1 && (
+        <>
+          {sale.tenders.map((t, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+              <span>Split {i + 1}: {paymentMethodLabel(t.method, t.provider)}</span><span>{fmtMoney(t.amount)}</span>
+            </div>
+          ))}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px', fontWeight: 700 }}>
+            <span>Total paid</span><span>{fmtMoney(sale.tenders.reduce((s, t) => s + t.amount, 0))}</span>
+          </div>
+          {sale.tenders.some((t) => t.method === 'momo' && t.reference) && (
+            <div style={{ fontSize: '9.5px', color: '#333' }}>
+              MoMo refs: {sale.tenders.filter((t) => t.reference).map((t) => `${t.provider ?? 'momo'} ${t.reference}`).join(' · ')}
+            </div>
+          )}
+        </>
+      )}
       {sale.paymentMethod === 'momo' && sale.paymentReference && (
         <div style={{ fontSize: '9.5px', color: '#333' }}>MoMo ref: {sale.paymentReference}{sale.paymentStatus === 'pending' ? ' (verifying)' : ''}</div>
       )}

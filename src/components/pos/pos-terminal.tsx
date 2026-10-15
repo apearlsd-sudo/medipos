@@ -3,7 +3,9 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
+import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -22,7 +24,7 @@ import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import { sumComponentPcts, taxComponents } from '@/lib/tax-components'
 import {
-  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Percent, Pill, Plus, Printer, ScanLine, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Pause, Percent, Pill, Play, Plus, Printer, ScanLine, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -88,6 +90,36 @@ interface ApprovedDiscountRequest {
   items: Array<{ medicineId: string; name: string; sku: string; unit: string; unitPrice: number; qty: number }>
 }
 
+interface HeldSaleRow {
+  id: string
+  holdNo: number
+  userName: string
+  customerName: string | null
+  itemCount: number
+  total: number
+  note: string | null
+  items: CartLine[]
+  createdAt: string
+}
+
+interface SplitTender {
+  method: 'cash' | 'card' | 'momo'
+  amount: string
+  provider: string
+  reference: string
+}
+
+/** Parses the sale API's tenders JSON string into a typed array (null-safe). */
+function parseTenders(raw: unknown): ReceiptSale['tenders'] {
+  if (!raw) return null
+  try {
+    const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return Array.isArray(arr) && arr.length > 0 ? arr : null
+  } catch {
+    return null
+  }
+}
+
 export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { quickSearch?: string; onSalesRecorded?: () => void; storeSettings?: StoreSettingsMap | null }) {
   const [meds, setMeds] = useState<Medicine[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -123,6 +155,19 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const [scannerOpen, setScannerOpen] = useState(false)
   const [approvedListOpen, setApprovedListOpen] = useState(false)
   const [discountRequestId, setDiscountRequestId] = useState<string | null>(null)
+
+  // Held / parked sales (counter layaway): park the cart server-side, resume
+  // it later on any terminal of the same branch.
+  const [heldOpen, setHeldOpen] = useState(false)
+  const [heldList, setHeldList] = useState<HeldSaleRow[]>([])
+  const [holdBusy, setHoldBusy] = useState(false)
+  const [holdNoteOpen, setHoldNoteOpen] = useState(false)
+  const [holdNote, setHoldNote] = useState('')
+  const [resumeConfirm, setResumeConfirm] = useState<HeldSaleRow | null>(null)
+
+  // Split tenders (B2): pay one sale with a cash + card + momo mix
+  const [splitMode, setSplitMode] = useState(false)
+  const [splitTenders, setSplitTenders] = useState<SplitTender[]>([])
 
   const searchRef = useRef<HTMLInputElement>(null)
 
@@ -174,6 +219,106 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   useEffect(() => {
     if (quickSearch) setSearch(quickSearch)
   }, [quickSearch])
+
+  // Parked sales badge count — refreshed on mount, when the panel opens, and
+  // after any park/resume/discard action.
+  const loadHeld = useCallback(async () => {
+    try {
+      const res = await fetch('/api/held-sales', { cache: 'no-store' })
+      if (!res.ok) return
+      const json = await res.json()
+      setHeldList(json.held ?? [])
+    } catch {
+      /* offline: badge stays as-is */
+    }
+  }, [])
+
+  useEffect(() => { loadHeld() }, [loadHeld])
+
+  const parkSale = async () => {
+    setHoldBusy(true)
+    try {
+      const res = await fetch('/api/held-sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          items: cart,
+          total,
+          customerId: customerId === 'walkin' ? null : customerId,
+          customerName: selectedCustomer?.name ?? null,
+          note: holdNote || null,
+        }),
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast({ title: 'Could not park the sale', description: json.error ?? 'Try again in a moment.', variant: 'destructive' })
+        return
+      }
+      toast({ title: `Sale parked as #${json.held?.holdNo ?? '—'}`, description: 'Resume it any time from the Parked list — even on another till of this branch.' })
+      setCart([]); setOrderDiscount(0); setDiscountRequestId(null)
+      setCustomerId('walkin'); setHoldNote(''); setHoldNoteOpen(false)
+      loadHeld()
+    } catch {
+      toast({ title: 'You appear to be offline', description: 'Parked sales live on the server — reconnect and try again.', variant: 'destructive' })
+    } finally {
+      setHoldBusy(false)
+    }
+  }
+
+  const doResume = async (h: HeldSaleRow) => {
+    setHoldBusy(true)
+    try {
+      const res = await fetch(`/api/held-sales/${h.id}`, { cache: 'no-store' })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        toast({ title: 'Could not load the parked cart', description: json.error ?? 'It may have been resumed on another till.', variant: 'destructive' })
+        loadHeld()
+        return
+      }
+      const lines = (json.held?.items ?? []) as CartLine[]
+      if (!lines.length) {
+        toast({ title: 'Parked cart is empty', description: 'It will be removed.', variant: 'destructive' })
+        await fetch(`/api/held-sales/${h.id}`, { method: 'DELETE' })
+        loadHeld()
+        return
+      }
+      // Refresh availability caps against the live catalog before restoring.
+      const restored = lines.map((l) => {
+        const med = meds.find((m) => m.id === l.medicineId)
+        if (!med) return l
+        const innerQty = Math.max(1, med.innerQty ?? l.innerQty ?? 1)
+        const cap = l.saleUnit === 'inner' ? med.stockQty * innerQty + (med.looseUnits ?? 0) : med.stockQty
+        return { ...l, stockQty: cap, qty: Math.min(l.qty, Math.max(1, cap)) }
+      })
+      setCart(restored)
+      setCustomerId(json.held?.customerId ?? 'walkin')
+      if (json.held?.note) setNote(json.held.note)
+      await fetch(`/api/held-sales/${h.id}`, { method: 'DELETE' })
+      toast({ title: `Cart #${h.holdNo} resumed`, description: `${h.itemCount} item(s) back on the till — discounts were not parked.` })
+      setHeldOpen(false); setResumeConfirm(null)
+      loadHeld()
+    } catch {
+      toast({ title: 'You appear to be offline', description: 'Resuming needs a server connection.', variant: 'destructive' })
+    } finally {
+      setHoldBusy(false)
+    }
+  }
+
+  const discardHeld = async (h: HeldSaleRow) => {
+    setHoldBusy(true)
+    try {
+      const res = await fetch(`/api/held-sales/${h.id}?reason=discard`, { method: 'DELETE' })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        toast({ title: 'Could not discard', description: json.error ?? 'Try again.', variant: 'destructive' })
+        return
+      }
+      toast({ title: `Cart #${h.holdNo} discarded` })
+      loadHeld()
+    } finally {
+      setHoldBusy(false)
+    }
+  }
 
   const filtered = useMemo(() => {
     let list = meds
@@ -310,6 +455,21 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return { points, value: +(points * pointsSettings.pointValue).toFixed(2) }
   }, [pointsInput, selectedCustomer, patientTotal, pointsSettings])
   const payable = useMemo(() => Math.max(0, +(patientTotal - redemption.value).toFixed(2)), [patientTotal, redemption.value])
+  // Split-tender math (only cash rows may overpay — change returns on cash)
+  const splitEligible = paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'momo'
+  const splitSum = useMemo(() => +splitTenders.reduce((s, t) => s + (Number(t.amount) || 0), 0).toFixed(2), [splitTenders])
+  const splitRemaining = useMemo(() => +(payable - splitSum).toFixed(2), [payable, splitSum])
+  const splitHasCash = splitTenders.some((t) => t.method === 'cash')
+  const splitChange = splitHasCash ? Math.max(0, +(splitSum - payable).toFixed(2)) : 0
+  const tendersPayload = useMemo(
+    () =>
+      splitMode && splitEligible
+        ? splitTenders
+            .filter((t) => Number(t.amount) > 0)
+            .map((t) => ({ method: t.method, amount: +Number(t.amount).toFixed(2), ...(t.method === 'momo' ? { provider: t.provider } : {}), ...(t.reference.trim() ? { reference: t.reference.trim() } : {}) }))
+        : null,
+    [splitMode, splitEligible, splitTenders],
+  )
   // Tier 2: allergy conflicts (customer profile vs cart contents)
   const allergyConflicts = useMemo(() => {
     const raw = (selectedCustomer?.allergies ?? '').trim()
@@ -378,11 +538,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           discount: discountValue,
           customerId: customerId === 'walkin' ? null : customerId,
           paymentMethod,
-          paymentProvider: paymentMethod === 'momo' ? momoProvider : undefined,
-          paymentReference: paymentMethod === 'momo' ? (momoReference.trim() || undefined) : undefined,
+          ...(tendersPayload ? { tenders: tendersPayload, paidAmount: splitSum } : { paidAmount: paymentMethod === 'cash' ? tenderedNum : total }),
+          paymentProvider: !tendersPayload && paymentMethod === 'momo' ? momoProvider : undefined,
+          paymentReference: !tendersPayload && paymentMethod === 'momo' ? (momoReference.trim() || undefined) : undefined,
           pointsRedeem: redemption.points || undefined,
           useInsurance: useIns || undefined,
-          paidAmount: paymentMethod === 'cash' ? tenderedNum : total,
           taxRate: taxRatePct,
           note: note || null,
           ...(extra?.approval ? { approval: extra.approval } : {}),
@@ -397,11 +557,12 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           createdAt: new Date().toISOString(),
           subtotal, discount: discountValue, tax: taxValue, total,
           taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
-          paidAmount: paymentMethod === 'cash' ? Math.min(tenderedNum, total) : total,
-          changeAmount: paymentMethod === 'cash' ? Math.max(0, +(tenderedNum - total).toFixed(2)) : 0,
+          paidAmount: tendersPayload ? Math.min(splitSum, total) : paymentMethod === 'cash' ? Math.min(tenderedNum, total) : total,
+          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' ? Math.max(0, +(tenderedNum - total).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
           paymentStatus: 'pending',
           offlineQueued: true,
+          tenders: tendersPayload,
           cashierName: undefined,
           customerName: selectedCustomer?.name ?? null,
           items: cart.map((l) => ({ name: l.name, qty: l.qty, unitPrice: l.unitPrice, total: +(l.unitPrice * l.qty).toFixed(2) })),
@@ -421,6 +582,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       }
       setReceipt({
         ...json.sale,
+        tenders: parseTenders(json.sale?.tenders),
         customerName: json.sale?.customer?.name ?? null,
         shiftNo: json.sale?.shift?.shiftNo ?? null,
         approvedByName: json.sale?.approvedByName ?? null,
@@ -451,7 +613,24 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }
 
   const checkout = async () => {
-    if (paymentMethod === 'cash' && tenderedNumTier1 < payable) {
+    if (splitMode && splitEligible) {
+      const rows = splitTenders.filter((t) => Number(t.amount) > 0)
+      if (rows.length === 0) {
+        toast({ title: 'Add at least one tender', description: 'Split payment needs at least one tender with an amount.', variant: 'destructive' }); return
+      }
+      if (splitRemaining > 0.009) {
+        toast({ title: 'Split tenders are short', description: `${fmtMoney(splitRemaining)} of ${fmtMoney(payable)} is still uncovered — add or top up a tender.`, variant: 'destructive' }); return
+      }
+      if (!splitHasCash && splitSum > payable + 0.009) {
+        toast({ title: 'Overpayment not allowed', description: 'Only a cash tender can be overpaid — change is returned on cash.', variant: 'destructive' }); return
+      }
+      if (rows.some((t) => t.method === 'momo' && !t.provider)) {
+        toast({ title: 'MoMo provider missing', description: 'Choose a provider for each Mobile Money tender.', variant: 'destructive' }); return
+      }
+      if (rows.some((t) => t.reference.trim() && !/^[A-Za-z0-9.\-]{6,}$/.test(t.reference.trim()))) {
+        toast({ title: 'Check the MoMo reference', description: 'Transaction IDs are 6+ letters/digits.', variant: 'destructive' }); return
+      }
+    } else if (paymentMethod === 'cash' && tenderedNumTier1 < payable) {
       toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(payable)}.`, variant: 'destructive' })
       return
     }
@@ -474,7 +653,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }
 
   const authorizeAndComplete = async (approval: { username: string; password: string }): Promise<boolean> => {
-    if (paymentMethod === 'cash' && tenderedNumTier1 < payable) {
+    if (!(splitMode && splitEligible) && paymentMethod === 'cash' && tenderedNumTier1 < payable) {
       toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(payable)}.`, variant: 'destructive' })
       return false
     }
@@ -795,11 +974,33 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                 return
               }
               setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : '')
+              setSplitMode(false)
+              setSplitTenders([{ method: 'cash', amount: String(total.toFixed(2)), provider: '', reference: '' }])
               setCheckoutOpen(true)
             }}
           >
             Charge {fmtMoney(total)}
           </Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="outline"
+              className="rounded-full"
+              disabled={cart.length === 0 || holdBusy}
+              onClick={() => { setHoldNote(''); setHoldNoteOpen(true) }}
+              aria-label="Park this sale"
+            >
+              <Pause className="h-4 w-4" /> Park sale
+            </Button>
+            <Button
+              variant="outline"
+              className="rounded-full"
+              onClick={() => { setHeldOpen(true); loadHeld() }}
+              aria-label="Open parked sales"
+            >
+              <Play className="h-4 w-4" /> Parked
+              <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1.5 text-[11px] font-bold text-white tabular-nums">{heldList.length}</span>
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -870,7 +1071,96 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                 </div>
               )}
 
-                            {paymentMethod === 'momo' && (
+              {splitEligible && (
+                <label className="flex cursor-pointer items-center justify-between rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2.5 text-sm dark:border-sky-500/30 dark:bg-sky-500/10">
+                  <span>
+                    <span className="font-medium">Split payment</span>
+                    <span className="ml-1.5 text-xs text-muted-foreground">pay with a cash + card + MoMo mix</span>
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={splitMode}
+                    onChange={(e) => {
+                      setSplitMode(e.target.checked)
+                      if (e.target.checked && splitTenders.length === 0) setSplitTenders([{ method: 'cash', amount: String(payable.toFixed(2)), provider: '', reference: '' }])
+                    }}
+                    className="h-4 w-4 accent-teal-600"
+                  />
+                </label>
+              )}
+
+              {splitMode && splitEligible && (
+                <div className="space-y-2 rounded-xl border px-3 py-2.5">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium">Tenders</span>
+                    <span className={splitRemaining > 0.009 ? 'font-semibold text-amber-600 tabular-nums dark:text-amber-400' : 'font-semibold text-emerald-600 tabular-nums dark:text-emerald-400'}>
+                      {splitRemaining > 0.009 ? `${fmtMoney(splitRemaining)} remaining` : splitChange > 0 ? `${fmtMoney(splitChange)} change` : 'fully covered'}
+                    </span>
+                  </div>
+                  {splitTenders.map((t, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Select value={t.method} onValueChange={(v) => setSplitTenders((prev) => prev.map((r, j) => (j === i ? { ...r, method: v as SplitTender['method'] } : r)))}>
+                        <SelectTrigger className="h-9 w-24 shrink-0"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="card">Card</SelectItem>
+                          <SelectItem value="momo">MoMo</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        value={t.amount}
+                        onChange={(e) => setSplitTenders((prev) => prev.map((r, j) => (j === i ? { ...r, amount: e.target.value } : r)))}
+                        className="h-9 w-24 shrink-0 text-right tabular-nums"
+                        aria-label={`Tender ${i + 1} amount`}
+                      />
+                      {t.method === 'momo' && (
+                        <>
+                          <Select value={t.provider || 'mtn'} onValueChange={(v) => setSplitTenders((prev) => prev.map((r, j) => (j === i ? { ...r, provider: v } : r)))}>
+                            <SelectTrigger className="h-9 w-28 shrink-0"><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="mtn">MTN</SelectItem>
+                              <SelectItem value="telecel">Telecel</SelectItem>
+                              <SelectItem value="airteltigo">AirtelTigo</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            value={t.reference}
+                            onChange={(e) => setSplitTenders((prev) => prev.map((r, j) => (j === i ? { ...r, reference: e.target.value } : r)))}
+                            placeholder="Ref (optional)"
+                            className="h-9 min-w-0 flex-1"
+                            aria-label={`Tender ${i + 1} MoMo reference`}
+                          />
+                        </>
+                      )}
+                      {t.method !== 'momo' && <div className="min-w-0 flex-1" />}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 shrink-0 rounded-md text-muted-foreground hover:text-red-500"
+                        disabled={splitTenders.length === 1}
+                        onClick={() => setSplitTenders((prev) => prev.filter((_, j) => j !== i))}
+                        aria-label={`Remove tender ${i + 1}`}
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="rounded-full text-xs"
+                    onClick={() => setSplitTenders((prev) => [...prev, { method: 'momo', amount: String(Math.max(0, splitRemaining).toFixed(2)), provider: 'mtn', reference: '' }])}
+                    disabled={splitRemaining <= 0.009}
+                  >
+                    <Plus className="h-3.5 w-3.5" /> Add tender
+                  </Button>
+                </div>
+              )}
+
+              {paymentMethod === 'momo' && !splitMode && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <Label>MoMo Provider</Label>
@@ -909,7 +1199,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                 </div>
               )}
 
-              {paymentMethod === 'cash' && (
+              {paymentMethod === 'cash' && !splitMode && (
                 <>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
@@ -1022,6 +1312,96 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Park-sale note dialog */}
+      <Dialog open={holdNoteOpen} onOpenChange={setHoldNoteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Pause className="h-5 w-5 text-teal-600" /> Park this sale</DialogTitle>
+            <DialogDescription>
+              The cart is saved on the server and cleared from this till. Any staff member of this branch can resume it later.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg bg-muted px-3 py-2 text-sm">
+              <span className="font-medium">{cart.length} line(s)</span> · {cart.reduce((n, l) => n + l.qty, 0)} unit(s)
+              {selectedCustomer ? <> · for <span className="font-medium">{selectedCustomer.name}</span></> : null}
+              · <span className="tabular-nums font-semibold text-teal-600 dark:text-teal-400">{fmtMoney(total)}</span>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="hold-note">Note (optional)</Label>
+              <Textarea id="hold-note" value={holdNote} onChange={(e) => setHoldNote(e.target.value)} rows={2} placeholder="e.g. customer went to the ATM — slip #12" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHoldNoteOpen(false)}>Cancel</Button>
+            <Button className="rounded-full bg-teal-600 hover:bg-teal-700" disabled={holdBusy || cart.length === 0} onClick={parkSale}>
+              {holdBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Pause className="h-4 w-4" />} Park sale
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Parked-sales list dialog */}
+      <Dialog open={heldOpen} onOpenChange={setHeldOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Play className="h-5 w-5 text-teal-600" /> Parked sales</DialogTitle>
+            <DialogDescription>Carts parked at this branch. Resuming restores the items to your till.</DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[55vh] pr-2">
+            {heldList.length === 0 ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">No parked sales right now.</p>
+            ) : (
+              <div className="divide-y">
+                {heldList.map((h) => (
+                  <div key={h.id} className="flex items-start justify-between gap-3 py-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">
+                        #{h.holdNo} · {h.itemCount} item(s) · <span className="tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(h.total)}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        by {h.userName}{h.customerName ? ` · for ${h.customerName}` : ''} · {new Date(h.createdAt).toLocaleString()}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground/80">{h.items.map((l) => `${l.qty}× ${l.name}`).join(', ')}</p>
+                      {h.note && <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">📝 {h.note}</p>}
+                    </div>
+                    <div className="flex shrink-0 flex-col gap-1.5">
+                      <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" disabled={holdBusy} onClick={() => (cart.length > 0 ? setResumeConfirm(h) : doResume(h))}>
+                        <Play className="h-3.5 w-3.5" /> Resume
+                      </Button>
+                      <Button size="sm" variant="ghost" className="rounded-full text-muted-foreground hover:text-red-500" disabled={holdBusy} onClick={() => discardHeld(h)}>
+                        <Trash2 className="h-3.5 w-3.5" /> Discard
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* Resume-over-existing-cart confirmation */}
+      <AlertDialog open={!!resumeConfirm} onOpenChange={(open) => !open && setResumeConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Replace the current cart?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your till already has {cart.length} line(s). Resuming parked cart #{resumeConfirm?.holdNo} will clear them first — the current items are not parked anywhere.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep current cart</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-teal-600 hover:bg-teal-700"
+              onClick={() => { if (resumeConfirm) doResume(resumeConfirm) }}
+            >
+              Replace &amp; resume
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

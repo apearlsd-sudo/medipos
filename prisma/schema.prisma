@@ -279,6 +279,7 @@ model Sale {
   paymentMethod     String     @default("cash")
   paymentProvider   String? // momo provider: mtn | telecel | airteltigo
   paymentReference  String? // momo / insurance txn reference
+  tenders           String? // JSON split-tender list: [{method, amount, provider?, reference?}] — null = single tender
   paymentStatus     String     @default("paid")
   pointsEarned      Int        @default(0) // loyalty points awarded for this sale
   pointsRedeemed    Int        @default(0) // loyalty points spent on this sale
@@ -718,4 +719,24 @@ model StockTransferItem {
   destMedicineId String? // row the stock was merged into on receive
 
   @@index([transferId])
+}
+
+// Held / parked sales (counter layaway) — a cart snapshot parked server-side
+// so any staff member on the branch can resume it on any terminal.
+// Intentionally node-local (no SyncOp): an ephemeral counter scratchpad.
+model HeldSale {
+  id           String   @id @default(cuid())
+  holdNo       Int      // sequential park slip number (computed on create)
+  branchId     String?
+  userId       String   // staff who parked the cart
+  userName     String
+  customerId   String?
+  customerName String?
+  itemCount    Int      @default(0)
+  total        Float    @default(0)
+  items        String   // JSON snapshot of the cart lines at park time
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@index([branchId, createdAt])
 }

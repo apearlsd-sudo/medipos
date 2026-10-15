@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
     const total = +(subtotal - discount + tax).toFixed(2)
 
     // --- Tier 1: customer-dependent paths ---------------------------------
-    const paymentMethod = ['cash', 'card', 'momo', 'credit'].includes(body.paymentMethod) ? body.paymentMethod : 'cash'
+    let paymentMethod = ['cash', 'card', 'momo', 'credit'].includes(body.paymentMethod) ? body.paymentMethod : 'cash'
     type CustomerWithInsurer = import('@prisma/client').Prisma.CustomerGetPayload<{ include: { insurer: true } }>
     let customer: CustomerWithInsurer | null = null
     if (body.customerId) {
@@ -191,8 +191,69 @@ export async function POST(req: NextRequest) {
     let paymentStatus = 'paid'
     let paymentProvider: string | null = null
     let paymentReference: string | null = null
+    let tendersJson: string | null = null
 
-    if (paymentMethod === 'cash') {
+    // --- B2: split tenders (cash + card + momo mix on one sale) ------------
+    // When present, the tenders array replaces the single payment method:
+    // rows must jointly cover the due amount; only cash rows may overpay
+    // (change is returned on the cash tender).
+    interface TenderIn { method: string; amount: number; provider?: string; reference?: string }
+    const rawTenders: TenderIn[] = Array.isArray(body.tenders)
+      ? body.tenders.map((t: { method?: unknown; amount?: unknown; provider?: unknown; reference?: unknown }) => ({
+          method: String(t.method ?? ''),
+          amount: Number(t.amount ?? 0),
+          provider: t.provider == null ? undefined : String(t.provider),
+          reference: t.reference == null ? undefined : String(t.reference),
+        }))
+      : []
+    if (rawTenders.length > 0 && paymentMethod === 'credit') {
+      return NextResponse.json({ error: 'Credit sales cannot be combined with split tenders.' }, { status: 400 })
+    }
+
+    if (rawTenders.length > 0) {
+      let sum = 0
+      let hasCash = false
+      let momoPending = false
+      const clean: Array<{ method: string; amount: number; provider?: string; reference?: string }> = []
+      for (const t of rawTenders) {
+        if (!['cash', 'card', 'momo'].includes(t.method)) {
+          return NextResponse.json({ error: `Tender method "${t.method}" is not supported for split payments.` }, { status: 400 })
+        }
+        if (!Number.isFinite(t.amount) || t.amount <= 0) {
+          return NextResponse.json({ error: 'Every split tender needs an amount greater than zero.' }, { status: 400 })
+        }
+        if (t.method === 'momo') {
+          if (!t.provider || !isMomoProvider(t.provider)) {
+            return NextResponse.json({ error: 'Each Mobile Money tender needs a provider (MTN, Telecel or AirtelTigo).' }, { status: 400 })
+          }
+          if (!t.reference) momoPending = true // unverified momo part holds the whole sale pending
+        }
+        if (t.method === 'cash') hasCash = true
+        sum += t.amount
+        clean.push({ method: t.method, amount: +t.amount.toFixed(2), ...(t.provider ? { provider: t.provider } : {}), ...(t.reference ? { reference: t.reference } : {}) })
+      }
+      sum = +sum.toFixed(2)
+      if (sum + 0.011 < due) {
+        return NextResponse.json({ error: `Split tenders total ${sum.toFixed(2)} — short of the ${due.toFixed(2)} due.` }, { status: 400 })
+      }
+      if (!hasCash && sum > due + 0.011) {
+        return NextResponse.json({ error: 'Only a cash tender can be overpaid (change is returned on cash).' }, { status: 400 })
+      }
+      const primary = clean[0]
+      paymentMethod = primary.method
+      if (primary.method === 'momo') {
+        paymentProvider = primary.provider ?? null
+        paymentReference = primary.reference ?? null
+      }
+      paymentStatus = momoPending ? 'pending' : 'paid'
+      paidAmount = Math.min(sum, due)
+      changeAmount = hasCash ? +Math.max(0, sum - due).toFixed(2) : 0
+      tendersJson = JSON.stringify(clean)
+    }
+
+    if (tendersJson) {
+      // split tenders already resolved above — skip the single-tender paths
+    } else if (paymentMethod === 'cash') {
       paidAmount = Number(body.paidAmount ?? due)
       changeAmount = +Math.max(0, paidAmount - due).toFixed(2)
       paidAmount = Math.min(paidAmount, due)
@@ -306,6 +367,7 @@ export async function POST(req: NextRequest) {
           paymentMethod,
           paymentProvider,
           paymentReference,
+          tenders: tendersJson,
           paymentStatus,
           pointsEarned,
           pointsRedeemed: redemption.points,
@@ -408,6 +470,7 @@ export async function POST(req: NextRequest) {
       taxBase,
       paidAmount, changeAmount,
       paymentMethod, paymentProvider, paymentReference, paymentStatus,
+      tenders: tendersJson ? JSON.parse(tendersJson) : null,
       pointsEarned, pointsRedeemed: redemption.points, pointsValue: redemption.value,
       insuranceAmount: insurance?.insuranceAmount ?? 0,
       saleStatus: 'completed',

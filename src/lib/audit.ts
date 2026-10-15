@@ -26,6 +26,10 @@ export type AuditAction =
   | 'branch.updated'
   | 'branch.deleted'
   | 'branch.price_updated'
+  // held / parked sales (counter layaway)
+  | 'sale.held'
+  | 'sale.resumed'
+  | 'sale.hold_discarded'
   // tier 3 — finance & quotations
   | 'expense.voided'
   | 'quotation.sent'
