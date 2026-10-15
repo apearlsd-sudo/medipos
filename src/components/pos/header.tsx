@@ -1,16 +1,14 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { fmtDuration } from '@/components/pos/shifts'
-import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, Moon, PackageX, Percent, Search, Settings, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
+import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, Moon, PackageX, Percent, Settings, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 
@@ -43,7 +41,6 @@ function getSelectedBranch(): string {
 interface HeaderProps {
   title: string
   onMenuClick: () => void
-  onQuickSearch: (q: string) => void
   onGotoPOS: () => void
   onGotoShifts?: () => void
   onGotoApprovals?: () => void
@@ -51,9 +48,8 @@ interface HeaderProps {
   onAlertClick: () => void
 }
 
-export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShifts, onGotoApprovals, alerts, onAlertClick }: HeaderProps) {
+export function Header({ title, onMenuClick, onGotoPOS, onGotoShifts, onGotoApprovals, alerts, onAlertClick }: HeaderProps) {
   const { resolvedTheme, setTheme } = useTheme()
-  const [q, setQ] = useState('')
   const { user, logout, can } = useUser()
   const [activeShift, setActiveShift] = useState<ActiveShiftChip | null>(null)
   const [tick, setTick] = useState(0)
@@ -116,14 +112,6 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShi
   const initials = user.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
   const selectedBranchName = branchSel === 'all' ? 'All branches' : branches.find((b) => b.id === branchSel)?.name ?? 'Branch'
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (q.trim()) {
-      onQuickSearch(q.trim())
-      setQ('')
-    }
-  }
-
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-card/80 px-4 backdrop-blur-md sm:px-6">
       {/* Mobile menu */}
@@ -185,18 +173,6 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShi
             </span>
           )
         )}
-
-        {/* Global search */}
-        <form onSubmit={submit} className="relative hidden md:block" role="search">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search medicines, SKU, barcode…"
-            className="w-64 rounded-full bg-muted/60 pl-9 pr-4 xl:w-80"
-            aria-label="Global search"
-          />
-        </form>
 
         {/* POS button — only for roles that may sell */}
         {can('pos', 'access') && (
@@ -318,21 +294,6 @@ export function Header({ title, onMenuClick, onQuickSearch, onGotoPOS, onGotoShi
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Mobile search trigger */}
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant="outline" size="icon" className="rounded-full md:hidden" aria-label="Search">
-              <Search className="h-4 w-4" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="top" className="p-4">
-            <SheetTitle className="sr-only">Search</SheetTitle>
-            <form onSubmit={submit} className="relative" role="search">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search medicines…" className="pl-9" aria-label="Search medicines" />
-            </form>
-          </SheetContent>
-        </Sheet>
       </div>
     </header>
   )

@@ -858,3 +858,18 @@ Work Log:
 
 Stage Summary:
 - Every category is now visible under the POS search bar at any screen size — the single hidden-scroll strip became a wrapping chip cloud (3 rows on desktop, stacked on phones), with filtering behavior untouched. 136/136 regression green, deployed on SW v7, DB backed up.
+
+---
+Task ID: 68
+Agent: main
+Task: "remove product searchbar from the topbar" — the global "Search medicines, SKU, barcode…" input in the app header.
+
+Work Log:
+- DIAGNOSIS: the topbar search (desktop form + a mobile Sheet trigger) was a navigation-only shortcut — its quickSearch state was set but never read anywhere, so it jumped to Products without even pre-filling that page's search. Products and the POS terminal each carry their own (functional) search bars, making the topbar one redundant.
+- REMOVAL: header.tsx lost the desktop Global-search form and the mobile search Sheet, the q/submit plumbing, and the now-dead onQuickSearch prop + unused Input/Sheet/Search-icon imports; page.tsx dropped the onQuickSearch handler and the orphan quickSearch state. Header keeps: title, shift chip, branch switcher, POS button, theme toggle, approvals badge, alerts, user menu.
+- VERIFY (browser E2E, SW medipos-v7→v8, zero page errors): header has ZERO inputs; buttons intact (menu, shift, branches, POS, theme, notifications, user). Products page search still filters ("paracetamol" → 3 rows); POS terminal's scan/search field still present. Screenshot confirms the clean topbar.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v7→v8 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- The topbar is chrome-only again: identity, shift, branch, and quick actions — product search lives exactly where products live (POS product panel + Products page). Dead quickSearch plumbing removed from both layers. 136/136 regression green, deployed on SW v8, DB backed up.

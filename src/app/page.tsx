@@ -74,7 +74,6 @@ export default function Home() {
   const [view, setView] = useState<ViewKey>('dashboard')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const [quickSearch, setQuickSearch] = useState('')
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [posKey, setPosKey] = useState(0)
   const [branchKey, setBranchKey] = useState(0) // bumped when the super admin switches branch
@@ -251,7 +250,6 @@ export default function Home() {
           <Header
             title={VIEW_TITLES[activeView]}
             onMenuClick={() => setMobileOpen(true)}
-            onQuickSearch={(q) => { setQuickSearch(q); navigate('medicines') }}
             onGotoPOS={() => navigate('pos')}
             onGotoShifts={() => navigate('shifts')}
             onGotoApprovals={() => navigate('approvals')}
