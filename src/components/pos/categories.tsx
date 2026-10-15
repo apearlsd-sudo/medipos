@@ -1,11 +1,13 @@
 'use client'
 
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader } from '@/components/pos/shared'
 import { MoreHorizontal, Pencil, Plus, Tags, Trash2 } from 'lucide-react'
@@ -26,6 +28,9 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: (categoryId:
   const [editing, setEditing] = useState<Category | null>(null)
   const [form, setForm] = useState({ name: '', description: '' })
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState<Category | null>(null)
+  const [moveTo, setMoveTo] = useState('uncategorized')
+  const [deletingBusy, setDeletingBusy] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -59,13 +64,28 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: (categoryId:
     }
   }
 
-  const remove = async (c: Category) => {
-    if (!confirm(`Delete category "${c.name}"?`)) return
-    const res = await fetch(`/api/categories/${c.id}`, { method: 'DELETE' })
-    const json = await res.json()
-    if (!res.ok) { toast({ title: 'Delete failed', description: json.error, variant: 'destructive' }); return }
-    toast({ title: 'Category deleted' })
-    load()
+  const remove = async () => {
+    if (!deleting) return
+    const target = deleting
+    setDeletingBusy(true)
+    try {
+      const query = target._count.medicines > 0 ? `?moveTo=${encodeURIComponent(moveTo)}` : ''
+      const res = await fetch(`/api/categories/${target.id}${query}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!res.ok) {
+        toast({ title: 'Delete failed', description: json.error, variant: 'destructive' })
+        load()
+        return
+      }
+      toast({
+        title: 'Category deleted',
+        description: json.moved > 0 ? `${json.moved} item${json.moved === 1 ? '' : 's'} moved to ${json.target}.` : undefined,
+      })
+      load()
+    } finally {
+      setDeletingBusy(false)
+      setDeleting(null)
+    }
   }
 
   return (
@@ -113,7 +133,7 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: (categoryId:
                       <DropdownMenuItem onClick={() => { setEditing(c); setForm({ name: c.name, description: c.description ?? '' }); setDialogOpen(true) }}>
                         <Pencil className="h-4 w-4" /> Edit
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => remove(c)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => { setDeleting(c); setMoveTo('uncategorized') }} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </div>
@@ -129,6 +149,46 @@ export function Categories({ onGotoMedicines }: { onGotoMedicines?: (categoryId:
           ))}
         </div>
       )}
+
+      <AlertDialog open={!!deleting} onOpenChange={(open) => { if (!open && !deletingBusy) setDeleting(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                {deleting && deleting._count.medicines === 0 ? (
+                  <p>This category is empty and will be removed. This action cannot be undone.</p>
+                ) : (
+                  <>
+                    <p>
+                      {deleting?.name} has {deleting?._count.medicines} item{deleting?._count.medicines === 1 ? '' : 's'}. Pick where those items should go — they cannot be left without a category.
+                    </p>
+                    <Select value={moveTo} onValueChange={setMoveTo}>
+                      <SelectTrigger aria-label="Move items to"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="uncategorized">Uncategorized (general group)</SelectItem>
+                        {categories.filter((x) => x.id !== deleting?.id).map((x) => (
+                          <SelectItem key={x.id} value={x.id}>{x.name} ({x._count.medicines} item{x._count.medicines === 1 ? '' : 's'})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingBusy}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); remove() }}
+              disabled={deletingBusy}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deletingBusy ? 'Deleting…' : deleting && deleting._count.medicines > 0 ? `Delete & move ${deleting._count.medicines} item${deleting._count.medicines === 1 ? '' : 's'}` : 'Delete category'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
