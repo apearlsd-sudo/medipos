@@ -20,7 +20,7 @@ import { PageHeader } from '@/components/pos/shared'
 import { useUser } from '@/components/pos/user-context'
 import { toast } from '@/hooks/use-toast'
 import {
-  BellRing, CheckCircle2, ChevronDown, ChevronRight, Clock, Loader2, MessageSquare, RotateCcw,
+  BellRing, CheckCircle2, ChevronDown, ChevronRight, Clock, Loader2, Mail, MessageSquare, RotateCcw,
   Send, ShieldAlert, Smartphone, TimerOff, XCircle,
 } from 'lucide-react'
 import { fmtDate } from '@/lib/format'
@@ -47,6 +47,8 @@ interface SettingsShape {
   notifySmsEnabled: string
   notifySmsWebhookUrl: string
   notifySmsRecipients: string
+  notifyEmailEnabled: string
+  notifyEmailWebhookUrl: string
   notifyLowStockEnabled: string
   notifyLowStockCooldownH: string
   notifyExpiringEnabled: string
@@ -194,7 +196,7 @@ export function Notifications() {
     }
   }
 
-  const sendTest = async (channel: 'whatsapp' | 'sms') => {
+  const sendTest = async (channel: 'whatsapp' | 'sms' | 'email') => {
     setSendingTest(channel)
     try {
       const res = await fetch('/api/notifications/send', {
@@ -374,6 +376,29 @@ export function Notifications() {
             </div>
             <Button variant="outline" size="sm" disabled={!canManage || sendingTest === 'sms'} onClick={() => sendTest('sms')} className="rounded-full">
               {sendingTest === 'sms' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send test message
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* E-mail provider */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Mail className="h-4 w-4 text-teal-500" /> E-mail — Relay webhook
+            </CardTitle>
+            <CardDescription>Any SMTP relay that accepts a JSON POST. Body: {'{ to, subject, text }'}. Used for e-receipts and alerts.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between rounded-xl border p-3">
+              <div><Label>E-mail channel</Label><p className="text-xs text-muted-foreground">Enable e-mail delivery</p></div>
+              <Switch checked={settings.notifyEmailEnabled === 'true'} disabled={!canManage} onCheckedChange={(v) => set('notifyEmailEnabled', String(v))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Relay webhook URL</Label>
+              <Input disabled={!canManage} value={settings.notifyEmailWebhookUrl} onChange={(e) => set('notifyEmailWebhookUrl', e.target.value)} placeholder="https://mail-relay.example.com/send" />
+            </div>
+            <Button variant="outline" size="sm" disabled={!canManage || sendingTest === 'email'} onClick={() => sendTest('email')} className="rounded-full">
+              {sendingTest === 'email' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Send test message
             </Button>
           </CardContent>
         </Card>

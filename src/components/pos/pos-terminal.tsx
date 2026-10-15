@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { StatusBadge } from '@/components/pos/shared'
 import { ThermalReceipt, type ReceiptSale } from '@/components/pos/receipt'
 import { DiscountApprovalDialog } from '@/components/pos/discount-approval-dialog'
+import { SendReceiptDialog } from '@/components/pos/send-receipt-dialog'
 import { BarcodeScannerDialog } from '@/components/pos/barcode-scanner'
 import { StartShiftDialog } from '@/components/pos/shift-dialogs'
 import type { ShiftRecord } from '@/components/pos/shift-report'
@@ -24,7 +25,7 @@ import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import { sumComponentPcts, taxComponents } from '@/lib/tax-components'
 import {
-  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Pause, Percent, Pill, Play, Plus, Printer, ScanLine, Search, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Pause, Percent, Pill, Play, Plus, Printer, ScanLine, Search, Send, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -173,6 +174,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const [holdNoteOpen, setHoldNoteOpen] = useState(false)
   const [holdNote, setHoldNote] = useState('')
   const [resumeConfirm, setResumeConfirm] = useState<HeldSaleRow | null>(null)
+  const [sendReceiptOpen, setSendReceiptOpen] = useState(false)
 
   // Split tenders (B2): pay one sale with a cash + card + momo mix
   const [splitMode, setSplitMode] = useState(false)
@@ -605,6 +607,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         ...json.sale,
         tenders: parseTenders(json.sale?.tenders),
         customerName: json.sale?.customer?.name ?? null,
+        customerPhone: json.sale?.customer?.phone ?? null,
+        customerEmail: json.sale?.customer?.email ?? null,
         shiftNo: json.sale?.shift?.shiftNo ?? null,
         approvedByName: json.sale?.approvedByName ?? null,
         branchName: json.sale?.branchRef?.name ?? null,
@@ -1338,6 +1342,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => printWithPageStyle(THERMAL_PAGE_CSS)}>
                   <Printer className="h-4 w-4" /> Print 80mm Receipt
                 </Button>
+                {receipt.customerId && (
+                  <Button variant="outline" className="flex-1 rounded-full" onClick={() => setSendReceiptOpen(true)}>
+                    <Send className="h-4 w-4" /> Send
+                  </Button>
+                )}
                 <Button className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setReceipt(null)}>
                   New Sale
                 </Button>
@@ -1346,6 +1355,18 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           )}
         </DialogContent>
       </Dialog>
+
+      {/* A3 — send e-receipt after checkout */}
+      {receipt && (
+        <SendReceiptDialog
+          saleId={receipt.id ?? ''}
+          invoiceNo={receipt.invoiceNo}
+          phone={receipt.customerPhone ?? null}
+          email={receipt.customerEmail ?? null}
+          open={sendReceiptOpen}
+          onOpenChange={setSendReceiptOpen}
+        />
+      )}
 
       {/* Park-sale note dialog */}
       <Dialog open={holdNoteOpen} onOpenChange={setHoldNoteOpen}>

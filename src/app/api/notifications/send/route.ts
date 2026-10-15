@@ -14,7 +14,7 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   try {
     const bodyIn = (await req.json()) as { channel?: string; recipient?: string; body?: string }
-    const channel = bodyIn.channel === 'sms' ? 'sms' : 'whatsapp'
+    const channel = ['sms', 'email'].includes(bodyIn.channel ?? '') ? (bodyIn.channel as 'sms' | 'email') : 'whatsapp'
     const { settings } = await loadNotifySettings()
     const store = await db.storeSetting.findUnique({ where: { key: 'storeName' } })
     const storeName = store?.value ?? 'MediPOS Pharmacy'
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
       ? bodyIn.recipient.split(',').map((s) => s.trim()).filter(Boolean)
       : channel === 'whatsapp'
         ? settings.whatsappRecipients
-        : settings.smsRecipients
+        : [] // sms/email test sends take an explicit recipient
     if (recipients.length === 0) {
       return NextResponse.json({ error: 'No recipient given and none configured for this channel' }, { status: 400 })
     }

@@ -12,6 +12,8 @@ import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AvatarInitials, PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
 import { ThermalReceipt } from '@/components/pos/receipt'
+import { SendReceiptDialog } from '@/components/pos/send-receipt-dialog'
+import { Send } from 'lucide-react'
 import { useUser } from '@/components/pos/user-context'
 import { fmtDateTime, fmtMoney, paymentMethodLabel, PAYMENT_METHODS } from '@/lib/format'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
@@ -42,6 +44,8 @@ interface SaleDetail extends SaleRow {
   changeAmount: number
   note: string | null
   taxBase?: number | null
+  customerPhone?: string | null
+  customerEmail?: string | null
   items: Array<{ id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number; saleUnit?: string }>
 }
 
@@ -75,6 +79,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const [approvalUser, setApprovalUser] = useState('')
   const [approvalPass, setApprovalPass] = useState('')
   const [returnBusy, setReturnBusy] = useState(false)
+  const [sendTo, setSendTo] = useState<SaleDetail | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -97,7 +102,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const openDetail = async (id: string) => {
     const res = await fetch(`/api/sales/${id}`, { cache: 'no-store' })
     const json = await res.json()
-    if (json.sale) setDetail({ ...json.sale, customer: json.sale.customer?.name ?? 'Walk-in Customer' })
+    if (json.sale) setDetail({ ...json.sale, customer: json.sale.customer?.name ?? 'Walk-in Customer', customerPhone: json.sale.customer?.phone ?? null, customerEmail: json.sale.customer?.email ?? null })
   }
 
   const loadReturned = useCallback(async (saleId: string) => {
@@ -371,6 +376,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
 
               <div className="flex gap-2 print:hidden">
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setPrintSale(detail)}><Printer className="h-4 w-4" /> Thermal Receipt</Button>
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => setSendTo(detail)}><Send className="h-4 w-4" /> E-receipt</Button>
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setDetail(null)}>Close</Button>
               </div>
             </div>
@@ -511,6 +517,16 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* A3 — send e-receipt */}
+      <SendReceiptDialog
+        saleId={sendTo?.id ?? ''}
+        invoiceNo={sendTo?.invoiceNo ?? ''}
+        phone={sendTo?.customerPhone ?? null}
+        email={sendTo?.customerEmail ?? null}
+        open={!!sendTo}
+        onOpenChange={(o) => !o && setSendTo(null)}
+      />
 
       {/* Thermal receipt print dialog */}
       <Dialog open={!!printSale} onOpenChange={(o) => !o && setPrintSale(null)}>

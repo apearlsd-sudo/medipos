@@ -22,6 +22,8 @@ export const NOTIFY_SETTING_KEYS = [
   'notifySmsEnabled',
   'notifySmsWebhookUrl',
   'notifySmsRecipients',
+  'notifyEmailEnabled',
+  'notifyEmailWebhookUrl',
   'notifyLowStockEnabled',
   'notifyLowStockCooldownH',
   'notifyExpiringEnabled',
@@ -46,6 +48,8 @@ export interface NotifySettings {
   smsEnabled: boolean
   smsWebhookUrl: string
   smsRecipients: string[]
+  emailEnabled: boolean
+  emailWebhookUrl: string
   lowStockEnabled: boolean
   lowStockCooldownH: number
   expiringEnabled: boolean
@@ -93,6 +97,8 @@ export async function loadNotifySettings(): Promise<{ settings: NotifySettings; 
     smsEnabled: raw.notifySmsEnabled === 'true',
     smsWebhookUrl: raw.notifySmsWebhookUrl ?? '',
     smsRecipients: parseList(raw.notifySmsRecipients),
+    emailEnabled: raw.notifyEmailEnabled === 'true',
+    emailWebhookUrl: raw.notifyEmailWebhookUrl ?? '',
     lowStockEnabled: raw.notifyLowStockEnabled === 'true',
     lowStockCooldownH: Math.max(1, Number(raw.notifyLowStockCooldownH ?? 24) || 24),
     expiringEnabled: raw.notifyExpiringEnabled === 'true',
@@ -136,7 +142,7 @@ export interface DeliveryResult {
 }
 
 /** Attempts delivery of one message through the configured provider. Never throws. */
-export async function deliverMessage(channel: 'whatsapp' | 'sms', recipient: string, body: string): Promise<DeliveryResult> {
+export async function deliverMessage(channel: 'whatsapp' | 'sms' | 'email', recipient: string, body: string, subject?: string): Promise<DeliveryResult> {
   const { settings } = await loadNotifySettings()
   if (channel === 'whatsapp') {
     if (!settings.whatsappEnabled) return { status: 'skipped', error: 'WhatsApp channel disabled' }
@@ -163,25 +169,38 @@ export async function deliverMessage(channel: 'whatsapp' | 'sms', recipient: str
     }
   }
   // SMS via generic webhook gateway
-  if (!settings.smsEnabled) return { status: 'skipped', error: 'SMS channel disabled' }
-  if (!settings.smsWebhookUrl) return { status: 'skipped', error: 'SMS webhook URL not configured' }
+  if (channel === 'sms') {
+    if (!settings.smsEnabled) return { status: 'skipped', error: 'SMS channel disabled' }
+    if (!settings.smsWebhookUrl) return { status: 'skipped', error: 'SMS webhook URL not configured' }
+    try {
+      const r = await postJson(settings.smsWebhookUrl, { to: recipient, text: body, body })
+      if (r.ok) return { status: 'sent' }
+      return { status: 'failed', error: `SMS gateway ${r.status}: ${r.text || 'no body'}` }
+    } catch (e) {
+      return { status: 'failed', error: `SMS send error: ${(e as Error).message}` }
+    }
+  }
+  // Email via generic webhook relay (any SMTP bridge accepting JSON POST)
+  if (!settings.emailEnabled) return { status: 'skipped', error: 'Email channel disabled' }
+  if (!settings.emailWebhookUrl) return { status: 'skipped', error: 'Email webhook URL not configured' }
   try {
-    const r = await postJson(settings.smsWebhookUrl, { to: recipient, text: body, body })
+    const r = await postJson(settings.emailWebhookUrl, { to: recipient, subject: subject ?? 'Receipt', text: body, body })
     if (r.ok) return { status: 'sent' }
-    return { status: 'failed', error: `SMS gateway ${r.status}: ${r.text || 'no body'}` }
+    return { status: 'failed', error: `Email relay ${r.status}: ${r.text || 'no body'}` }
   } catch (e) {
-    return { status: 'failed', error: `SMS send error: ${(e as Error).message}` }
+    return { status: 'failed', error: `Email send error: ${(e as Error).message}` }
   }
 }
 
 export interface QueueInput {
-  channel: 'whatsapp' | 'sms'
+  channel: 'whatsapp' | 'sms' | 'email'
   recipients: string[]
   template: string
   body: string
   relatedType?: string
   relatedKey?: string | null
   meta?: Record<string, unknown>
+  subject?: string
 }
 
 /**
@@ -189,7 +208,7 @@ export interface QueueInput {
  * Returns the created rows (status already reflects the delivery attempt).
  */
 export async function queueAndDeliver(input: QueueInput) {
-  const provider = input.channel === 'whatsapp' ? 'whatsapp_cloud' : 'webhook_sms'
+  const provider = input.channel === 'whatsapp' ? 'whatsapp_cloud' : input.channel === 'email' ? 'webhook_email' : 'webhook_sms'
   const recipients = input.recipients.length > 0 ? input.recipients : ['']
   const created: Array<Awaited<ReturnType<typeof db.notificationOutbox.update>>> = []
   for (const recipient of recipients) {
@@ -206,7 +225,7 @@ export async function queueAndDeliver(input: QueueInput) {
         meta: input.meta ? JSON.stringify(input.meta) : null,
       },
     })
-    const result = await deliverMessage(input.channel, recipient, input.body)
+    const result = await deliverMessage(input.channel, recipient, input.body, input.subject)
     const updated = await db.notificationOutbox.update({
       where: { id: row.id },
       data: {

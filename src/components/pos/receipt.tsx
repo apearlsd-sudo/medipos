@@ -6,6 +6,8 @@ import type { StoreSettingsMap } from '@/lib/store-settings'
 import { saleStructureFor, taxComponents } from '@/lib/tax-components'
 
 export interface ReceiptSale {
+  id?: string
+  customerId?: string | null
   invoiceNo: string
   createdAt: string
   subtotal: number
@@ -28,6 +30,8 @@ export interface ReceiptSale {
   offlineQueued?: boolean
   cashierName?: string
   customerName?: string | null
+  customerPhone?: string | null
+  customerEmail?: string | null
   shiftNo?: string | null
   approvedByName?: string | null
   branchName?: string | null
