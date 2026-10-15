@@ -77,11 +77,26 @@ lc=$(curl -s -c $B -X POST http://localhost:$BRPORT/api/auth/login -H 'Content-T
 hc=$(curl -s -c $H -X POST http://localhost:3000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' -o /dev/null -w '%{http_code}')
 [ "$lc" = "200" ] && [ "$hc" = "200" ] && ok "branch + HQ logins" || { bad "logins (branch $lc / hq $hc)"; exit 1; }
 
-MEDBR=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?limit=50" | jqpy "([m for m in d['medicines'] if m['stockQty']>0 ][0]['branchId'])")
 _PICKED=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?limit=50")
-MEDID=$(echo "$_PICKED" | jqpy "[m for m in d['medicines'] if m['stockQty']>0 ][0]['id']")
-MEDSKU=$(echo "$_PICKED" | jqpy "[m for m in d['medicines'] if m['stockQty']>0 ][0]['sku']")
-BP=$(echo "$_PICKED" | jqpy "[m for m in d['medicines'] if m['stockQty']>0 ][0]['sellingPrice']")
+# pick a SELLABLE product: in stock, active and NOT expired — the till refuses
+# to sell expired stock, so the picker must never land on one
+read -r MEDID MEDSKU BP MEDBR <<< "$(echo "$_PICKED" | python3 -c "
+import sys, json, time
+from datetime import datetime
+d = json.load(sys.stdin)
+for m in d['medicines']:
+    if m.get('stockQty', 0) <= 0 or m.get('status', 'active') != 'active':
+        continue
+    exp = m.get('expiryDate')
+    if exp:
+        try:
+            if datetime.fromisoformat(str(exp).replace('Z', '+00:00')).timestamp() <= time.time():
+                continue
+        except Exception:
+            pass
+    print(m['id'], m['sku'], m['sellingPrice'], m.get('branchId') or '-')
+    break
+")"
 NP=$(python3 -c "print(round($BP + 7.77, 2))")
 echo "  (test product sku=$MEDSKU branch=$MEDBR price $BP → target $NP)"
 

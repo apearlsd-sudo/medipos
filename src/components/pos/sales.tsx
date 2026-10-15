@@ -18,7 +18,7 @@ import { useUser } from '@/components/pos/user-context'
 import { fmtDateTime, fmtMoney, paymentMethodLabel, PAYMENT_METHODS } from '@/lib/format'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
-import { Banknote, Eye, Loader2, Printer, ReceiptText, RotateCcw, Search, XCircle } from 'lucide-react'
+import { Banknote, CheckCircle2, Eye, Loader2, Printer, ReceiptText, RotateCcw, Search, ShieldAlert, PackageOpen, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -47,7 +47,20 @@ interface SaleDetail extends SaleRow {
   taxComponentsJson?: string | null
   customerPhone?: string | null
   customerEmail?: string | null
-  items: Array<{ id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number; saleUnit?: string }>
+  items: Array<{
+    id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number; saleUnit?: string
+    medicineId?: string | null
+    medicine?: { unit?: string; innerUnit?: string | null; innerQty?: number; batchNumber?: string | null; expiryDate?: string | null; stockQty?: number; looseUnits?: number } | null
+  }>
+}
+
+type RestockDisposition = 'sellable' | 'quarantine' | 'dispose'
+
+interface ReturnResult {
+  returnNo: string
+  refundAmount: number
+  refundMethod: string
+  items: Array<{ name: string; qty: number; saleUnit?: string; unitPrice: number; total: number; restockAction: string; restockPacks: number; restockLoose: number }>
 }
 
 export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () => void; storeSettings?: StoreSettingsMap | null }) {
@@ -77,6 +90,8 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const [returnProvider, setReturnProvider] = useState('mtn')
   const [returnReference, setReturnReference] = useState('')
   const [returnNote, setReturnNote] = useState('')
+  const [returnDispo, setReturnDispo] = useState<Record<string, RestockDisposition>>({})
+  const [returnResult, setReturnResult] = useState<ReturnResult | null>(null)
   const [approvalUser, setApprovalUser] = useState('')
   const [approvalPass, setApprovalPass] = useState('')
   const [returnBusy, setReturnBusy] = useState(false)
@@ -131,6 +146,8 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
     setReturnProvider('mtn')
     setReturnReference('')
     setReturnNote('')
+    setReturnDispo({})
+    setReturnResult(null)
     setApprovalUser('')
     setApprovalPass('')
     setReturnOpen(true)
@@ -138,6 +155,43 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   }
 
   const returnableOf = (it: SaleDetail['items'][number]) => it.qty - (returnedMap[it.id] ?? 0)
+  /** Days until the shelf batch behind a sale line expires (negative = expired). */
+  const daysLeftOf = (it: SaleDetail['items'][number]): number | null => {
+    const raw = it.medicine?.expiryDate
+    if (!raw) return null
+    const t = new Date(raw).getTime()
+    if (Number.isNaN(t)) return null
+    return Math.ceil((t - Date.now()) / 86_400_000)
+  }
+  /** Default disposition by return reason: damaged/expired goods don't resell. */
+  const defaultDispoFor = (reason: string): RestockDisposition => (reason === 'damaged' || reason === 'expired' ? 'quarantine' : 'sellable')
+  /** Effective disposition for a line — expired stock can never be sellable. */
+  const dispoOf = (it: SaleDetail['items'][number]): RestockDisposition => {
+    const chosen = returnDispo[it.id] ?? defaultDispoFor(returnReason)
+    const dl = daysLeftOf(it)
+    return chosen === 'sellable' && dl !== null && dl <= 0 ? 'quarantine' : chosen
+  }
+  /** Client-side restock plan for the summary line (server recomputes). */
+  const restockSummary = (() => {
+    if (!returnSale) return null
+    let shelfPacks = 0, shelfLoose = 0, quarantinePacks = 0, disposedUnits = 0
+    for (const it of returnSale.items) {
+      const q = returnQtys[it.id] ?? 0
+      if (q <= 0) continue
+      const d = dispoOf(it)
+      const innerQty = Math.max(1, it.medicine?.innerQty ?? 1)
+      const innerUnits = it.saleUnit === 'inner' ? q : q * innerQty
+      if (d === 'sellable') {
+        shelfPacks += Math.floor(innerUnits / innerQty)
+        shelfLoose += innerUnits % innerQty
+      } else if (d === 'quarantine') {
+        quarantinePacks += Math.ceil(innerUnits / innerQty)
+      } else {
+        disposedUnits += innerUnits
+      }
+    }
+    return { shelfPacks, shelfLoose, quarantinePacks, disposedUnits }
+  })()
   const returnEstimate = (() => {
     if (!returnSale) return 0
     let sub = 0
@@ -152,7 +206,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const submitReturn = async () => {
     if (!returnSale) return
     const items = returnSale.items
-      .map((it) => ({ saleItemId: it.id, qty: returnQtys[it.id] ?? 0 }))
+      .map((it) => ({ saleItemId: it.id, qty: returnQtys[it.id] ?? 0, disposition: dispoOf(it) }))
       .filter((x) => x.qty > 0)
     if (items.length === 0) { toast({ title: 'Nothing selected', description: 'Enter a return quantity for at least one item.', variant: 'destructive' }); return }
     setReturnBusy(true)
@@ -178,9 +232,23 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
         return
       }
       if (!res.ok) { toast({ title: 'Return failed', description: json.error ?? 'Unknown error', variant: 'destructive' }); return }
-      toast({ title: `Return ${json.return?.returnNo ?? ''} processed`, description: `Refunded ${fmtMoney(json.return?.refundAmount ?? returnEstimate)} via ${returnMethod}.` })
+      const ret = json.return
+      setReturnResult({
+        returnNo: ret?.returnNo ?? '',
+        refundAmount: ret?.refundAmount ?? returnEstimate,
+        refundMethod: returnMethod,
+        items: (ret?.items ?? []).map((it: { name: string; qty: number; saleUnit?: string; unitPrice: number; total: number; restockAction?: string; restockPacks?: number; restockLoose?: number }) => ({
+          name: it.name,
+          qty: it.qty,
+          saleUnit: it.saleUnit,
+          unitPrice: it.unitPrice,
+          total: it.total,
+          restockAction: it.restockAction ?? 'sellable',
+          restockPacks: it.restockPacks ?? 0,
+          restockLoose: it.restockLoose ?? 0,
+        })),
+      })
       setReturnOpen(false)
-      setReturnSale(null)
       load()
       onSalesChanged?.()
     } finally {
@@ -387,30 +455,43 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
 
       {/* A1 — process return dialog */}
       <Dialog open={returnOpen} onOpenChange={(o) => { if (!o) { setReturnOpen(false); setReturnSale(null) } }}>
-        <DialogContent className="sm:max-w-xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><RotateCcw className="h-5 w-5 text-amber-500" /> Customer return — #{returnSale?.invoiceNo}</DialogTitle>
-            <DialogDescription>Take goods back, restock the shelf and refund the customer. Refunds carry this sale's discount and tax shares.</DialogDescription>
+            <DialogDescription>Refund the customer and decide exactly what happens to the returned goods: back to the shelf, held in quarantine, or disposed. Refunds carry this sale's discount and tax shares.</DialogDescription>
           </DialogHeader>
           {returnSale && (
             <div className="space-y-4 text-sm">
-              <ScrollArea className="max-h-56 rounded-xl border">
+              <ScrollArea className="max-h-64 rounded-xl border">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Item</TableHead>
                       <TableHead className="text-center">Sold</TableHead>
-                      <TableHead className="text-center">Returned</TableHead>
-                      <TableHead className="text-center w-24">Return qty</TableHead>
-                      <TableHead className="text-right">Line total</TableHead>
+                      <TableHead className="text-center">Ret.</TableHead>
+                      <TableHead className="text-center w-20">Qty</TableHead>
+                      <TableHead className="w-36">Restock to</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {returnSale.items.map((it) => {
                       const returnable = returnableOf(it)
+                      const dl = daysLeftOf(it)
+                      const expired = dl !== null && dl <= 0
+                      const shortDated = !expired && dl !== null && dl <= 90
+                      const d = dispoOf(it)
                       return (
                         <TableRow key={it.id}>
-                          <TableCell><p className="font-medium">{it.name}</p><p className="text-xs text-muted-foreground">{it.sku}{it.saleUnit === 'inner' ? ' · loose units' : ''}</p></TableCell>
+                          <TableCell>
+                            <p className="font-medium">{it.name}</p>
+                            <p className="text-xs text-muted-foreground">{it.sku}{it.saleUnit === 'inner' ? ' · loose units' : ''}</p>
+                            {it.medicine && (it.medicine.batchNumber || it.medicine.expiryDate) && (
+                              <p className={`mt-0.5 text-[11px] ${expired ? 'font-semibold text-destructive' : shortDated ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                                Batch {it.medicine.batchNumber ?? '—'}
+                                {it.medicine.expiryDate && <> · exp {new Date(it.medicine.expiryDate).toISOString().slice(0, 10)}{dl !== null ? ` (${expired ? 'EXPIRED' : `${dl}d`})` : ''}</>}
+                              </p>
+                            )}
+                          </TableCell>
                           <TableCell className="text-center tabular-nums">{it.qty}</TableCell>
                           <TableCell className="text-center tabular-nums text-muted-foreground">{returnedMap[it.id] ?? 0}</TableCell>
                           <TableCell className="text-center">
@@ -424,17 +505,43 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                                 const v = Math.max(0, Math.min(returnable, Math.trunc(Number(e.target.value) || 0)))
                                 setReturnQtys((prev) => ({ ...prev, [it.id]: v }))
                               }}
-                              className="mx-auto h-8 w-20 text-center tabular-nums"
+                              className="mx-auto h-8 w-16 text-center tabular-nums"
                               aria-label={`Return quantity for ${it.name}`}
                             />
                           </TableCell>
-                          <TableCell className="text-right tabular-nums">{fmtMoney(it.total)}</TableCell>
+                          <TableCell>
+                            <Select
+                              value={d}
+                              disabled={returnable <= 0 || (returnQtys[it.id] ?? 0) <= 0}
+                              onValueChange={(v) => setReturnDispo((prev) => ({ ...prev, [it.id]: v as RestockDisposition }))}
+                            >
+                              <SelectTrigger className="h-8 text-xs" aria-label={`Restock destination for ${it.name}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="sellable" disabled={expired}>Shelf (sellable)</SelectItem>
+                                <SelectItem value="quarantine">Quarantine</SelectItem>
+                                <SelectItem value="dispose">Dispose</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            {expired && <p className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-destructive"><ShieldAlert className="h-3 w-3" /> expired — can't resell</p>}
+                          </TableCell>
                         </TableRow>
                       )
                     })}
                   </TableBody>
                 </Table>
               </ScrollArea>
+
+              {restockSummary && (restockSummary.shelfPacks + restockSummary.shelfLoose + restockSummary.quarantinePacks + restockSummary.disposedUnits) > 0 && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl bg-muted/60 px-4 py-2.5 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1.5 font-medium text-foreground"><PackageOpen className="h-3.5 w-3.5 text-teal-600" /> Restock plan</span>
+                  {restockSummary.shelfPacks > 0 && <span className="tabular-nums">{restockSummary.shelfPacks} pack(s) → shelf</span>}
+                  {restockSummary.shelfLoose > 0 && <span className="tabular-nums">+{restockSummary.shelfLoose} loose → shelf</span>}
+                  {restockSummary.quarantinePacks > 0 && <span className="tabular-nums">{restockSummary.quarantinePacks} pack(s) → quarantine</span>}
+                  {restockSummary.disposedUnits > 0 && <span className="tabular-nums">{restockSummary.disposedUnits} unit(s) → disposed</span>}
+                </div>
+              )}
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
@@ -449,6 +556,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
+                  <p className="text-[11px] text-muted-foreground">Damaged / expired returns default to quarantine.</p>
                 </div>
                 <div className="space-y-1.5">
                   <Label>Refund method</Label>
@@ -463,23 +571,23 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                   </Select>
                 </div>
                 {returnMethod === 'momo' && (
-                  <>
-                    <div className="space-y-1.5">
-                      <Label>MoMo provider</Label>
-                      <Select value={returnProvider} onValueChange={setReturnProvider}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="mtn">MTN MoMo</SelectItem>
-                          <SelectItem value="telecel">Telecel Cash</SelectItem>
-                          <SelectItem value="airteltigo">AirtelTigo</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Txn reference (optional)</Label>
-                      <Input value={returnReference} onChange={(e) => setReturnReference(e.target.value)} placeholder="e.g. 1234567ABC" />
-                    </div>
-                  </>
+                  <div className="space-y-1.5">
+                    <Label>MoMo provider</Label>
+                    <Select value={returnProvider} onValueChange={setReturnProvider}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mtn">MTN MoMo</SelectItem>
+                        <SelectItem value="telecel">Telecel Cash</SelectItem>
+                        <SelectItem value="airteltigo">AirtelTigo</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {(returnMethod === 'momo' || returnMethod === 'card') && (
+                  <div className="space-y-1.5">
+                    <Label>Txn reference (optional)</Label>
+                    <Input value={returnReference} onChange={(e) => setReturnReference(e.target.value)} placeholder={returnMethod === 'momo' ? 'e.g. 1234567ABC' : 'POS / auth code'} />
+                  </div>
                 )}
                 {returnMethod === 'store_credit' && !returnSale.customerId && (
                   <p className="text-xs text-destructive sm:col-span-2">This sale has no loyalty customer — store credit needs one. Choose another refund method.</p>
@@ -515,6 +623,80 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
             >
               {returnBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />} Process return
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* A1 — return processed: outcome + credit note */}
+      <Dialog open={!!returnResult} onOpenChange={(o) => { if (!o) setReturnResult(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CheckCircle2 className="h-5 w-5 text-teal-600" /> Return {returnResult?.returnNo} processed</DialogTitle>
+            <DialogDescription>The customer has been refunded and the goods handled per the restock plan.</DialogDescription>
+          </DialogHeader>
+          {returnResult && (
+            <div className="space-y-4 text-sm">
+              <div className="flex items-center justify-between rounded-xl bg-muted/60 px-4 py-3">
+                <span className="text-muted-foreground">Refunded via {paymentMethodLabel(returnResult.refundMethod)}</span>
+                <span className="text-lg font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(returnResult.refundAmount)}</span>
+              </div>
+              <div className="rounded-xl border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Item</TableHead>
+                      <TableHead className="text-center">Qty</TableHead>
+                      <TableHead>Restock outcome</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {returnResult.items.map((it, i) => (
+                      <TableRow key={i}>
+                        <TableCell><p className="font-medium">{it.name}</p><p className="text-xs text-muted-foreground tabular-nums">{fmtMoney(it.total)}</p></TableCell>
+                        <TableCell className="text-center tabular-nums">{it.qty}{it.saleUnit === 'inner' ? ' loose' : ''}</TableCell>
+                        <TableCell className="text-xs">
+                          {it.restockAction === 'sellable' && (
+                            <span className="text-teal-700 dark:text-teal-400">
+                              {it.restockPacks > 0 ? `${it.restockPacks} pack(s)` : ''}{it.restockPacks > 0 && it.restockLoose > 0 ? ' + ' : ''}{it.restockLoose > 0 ? `${it.restockLoose} loose` : ''} back on shelf
+                            </span>
+                          )}
+                          {it.restockAction === 'quarantine' && <span className="text-amber-700 dark:text-amber-400">{it.restockPacks} pack(s) held in quarantine</span>}
+                          {it.restockAction === 'dispose' && <span className="text-muted-foreground">disposed (written off)</span>}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <div className="max-h-52 overflow-y-auto rounded-lg border bg-white">
+                {returnSale && (
+                  <ThermalReceipt
+                    variant="refund"
+                    originInvoice={returnSale.invoiceNo}
+                    refundReason={returnReason.replace('_', ' ')}
+                    sale={{
+                      invoiceNo: returnResult.returnNo,
+                      createdAt: new Date().toISOString(),
+                      subtotal: returnResult.refundAmount,
+                      discount: 0,
+                      tax: 0,
+                      total: returnResult.refundAmount,
+                      paidAmount: returnResult.refundAmount,
+                      changeAmount: 0,
+                      paymentMethod: returnResult.refundMethod,
+                      cashierName: returnSale.cashierName,
+                      customerName: returnSale.customer,
+                      items: returnResult.items.map((it) => ({ name: it.name, qty: it.qty, unitPrice: it.unitPrice, total: it.total, saleUnit: it.saleUnit })),
+                    }}
+                    settings={storeSettings ?? null}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" className="rounded-full" onClick={() => printWithPageStyle(THERMAL_PAGE_CSS)}><Printer className="h-4 w-4" /> Print credit note</Button>
+            <Button className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setReturnResult(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

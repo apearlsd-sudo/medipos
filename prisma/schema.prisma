@@ -795,6 +795,13 @@ model SaleReturnItem {
   total      Float // proportional line amount refunded (incl. share of discount/tax)
   saleUnit   String     @default("pack")
   restocked  Boolean    @default(false)
+  // Detailed restock: what physically happened to the returned goods.
+  //   sellable   — back to the shelf (stockQty/looseUnits)
+  //   quarantine — held aside for the quarantine desk (quarantineQty)
+  //   dispose    — destroyed on arrival (no stock movement, write-off log)
+  restockAction String @default("sellable")
+  restockPacks  Int    @default(0) // whole packs/packs-equivalents moved
+  restockLoose  Int    @default(0) // loose inner units moved (sellable only)
 
   @@index([returnId])
 }

@@ -97,6 +97,7 @@ export interface AuditChanges {
   refundAmount?: number
   refundMethod?: string
   itemCount?: number
+  dispositions?: string[] // per-line restock dispositions (sellable/quarantine/dispose)
   // statutory tax eras
   eraLabel?: string
   components?: Array<{ label: string; pct: number }>

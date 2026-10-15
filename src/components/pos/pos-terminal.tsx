@@ -25,7 +25,7 @@ import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import { sumComponentPcts, taxComponents } from '@/lib/tax-components'
 import {
-  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Loader2, Minus, Pause, Percent, Pill, Play, Plus, Printer, ScanLine, Search, Send, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
+  BadgeCheck, Banknote, Barcode, CheckCircle2, CreditCard, Keyboard, Loader2, Minus, Pause, Percent, Pill, Play, Plus, Printer, ScanLine, Search, Send, ShoppingCart, Smartphone, ShieldCheck, Timer, Trash2, TriangleAlert, Wallet, X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -175,6 +175,9 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const [holdNote, setHoldNote] = useState('')
   const [resumeConfirm, setResumeConfirm] = useState<HeldSaleRow | null>(null)
   const [sendReceiptOpen, setSendReceiptOpen] = useState(false)
+  // Keyboard shortcuts (F1 help, F4 charge, …) + clear-cart confirmation
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
 
   // Split tenders (B2): pay one sale with a cash + card + momo mix
   const [splitMode, setSplitMode] = useState(false)
@@ -687,6 +690,78 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return await completeSale({ approval })
   }
 
+  // Open the checkout dialog — shared by the Charge button and the F4 shortcut.
+  const openCheckout = () => {
+    if (submitting || checkoutOpen || cart.length === 0) return
+    if (!shift) {
+      toast({ title: 'Start your shift first', description: 'Open a shift to record this sale on your register.', variant: 'destructive' })
+      setStartShiftOpen(true)
+      return
+    }
+    setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : '')
+    setSplitMode(false)
+    setSplitTenders([{ method: 'cash', amount: String(total.toFixed(2)), provider: '', reference: '' }])
+    setCheckoutOpen(true)
+  }
+
+  // POS keyboard shortcuts: the till is a keyboard-first surface. Function keys
+  // work everywhere (even while typing); '?' only outside inputs, and
+  // Ctrl+Enter confirms payment from inside the checkout dialog. Re-registered
+  // every render so the handlers always see fresh cart/checkout state.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const typing = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
+      if (e.ctrlKey && e.key === 'Enter') {
+        if (checkoutOpen && !submitting) {
+          e.preventDefault()
+          void checkout()
+        }
+        return
+      }
+      if (e.ctrlKey || e.altKey || e.metaKey) return
+      switch (e.key) {
+        case 'F1': // shortcut help
+          e.preventDefault()
+          setHelpOpen(true)
+          break
+        case 'F2': // focus the scan/search box
+          e.preventDefault()
+          searchRef.current?.focus()
+          searchRef.current?.select()
+          break
+        case 'F3': // camera barcode scanner
+          e.preventDefault()
+          setScannerOpen(true)
+          break
+        case 'F4': // charge / checkout
+          e.preventDefault()
+          openCheckout()
+          break
+        case 'F6': // park the sale
+          e.preventDefault()
+          if (!checkoutOpen && cart.length > 0 && !holdBusy) { setHoldNote(''); setHoldNoteOpen(true) }
+          break
+        case 'F7': // parked sales
+          e.preventDefault()
+          if (!checkoutOpen) { setHeldOpen(true); loadHeld() }
+          break
+        case 'F8': // clear the cart (with confirmation)
+          e.preventDefault()
+          if (!checkoutOpen && cart.length > 0) setClearConfirmOpen(true)
+          break
+        case '?':
+          if (!typing) {
+            e.preventDefault()
+            setHelpOpen(true)
+          }
+          break
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
   const loadApprovedRequest = (req: ApprovedDiscountRequest) => {
     // Rebuild the cart from the approved snapshot (server re-validates stock)
     setCart(
@@ -1007,17 +1082,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             className="w-full rounded-full bg-teal-600 hover:bg-teal-700"
             size="lg"
             disabled={cart.length === 0}
-            onClick={() => {
-              if (!shift) {
-                toast({ title: 'Start your shift first', description: 'Open a shift to record this sale on your register.', variant: 'destructive' })
-                setStartShiftOpen(true)
-                return
-              }
-              setTendered(total > 0 ? String(Math.ceil(total / 5) * 5) : '')
-              setSplitMode(false)
-              setSplitTenders([{ method: 'cash', amount: String(total.toFixed(2)), provider: '', reference: '' }])
-              setCheckoutOpen(true)
-            }}
+            title="Keyboard: F4"
+            onClick={openCheckout}
           >
             Charge {fmtMoney(total)}
           </Button>
@@ -1027,6 +1093,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               className="rounded-full"
               disabled={cart.length === 0 || holdBusy}
               onClick={() => { setHoldNote(''); setHoldNoteOpen(true) }}
+              title="Keyboard: F6"
               aria-label="Park this sale"
             >
               <Pause className="h-4 w-4" /> Park sale
@@ -1035,12 +1102,21 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               variant="outline"
               className="rounded-full"
               onClick={() => { setHeldOpen(true); loadHeld() }}
+              title="Keyboard: F7"
               aria-label="Open parked sales"
             >
               <Play className="h-4 w-4" /> Parked
               <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-teal-600 px-1.5 text-[11px] font-bold text-white tabular-nums">{heldList.length}</span>
             </Button>
           </div>
+          <Button
+            variant="ghost"
+            className="w-full rounded-full text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setHelpOpen(true)}
+            title="Keyboard: F1"
+          >
+            <Keyboard className="h-3.5 w-3.5" /> Keyboard shortcuts
+          </Button>
         </div>
       </Card>
 
@@ -1269,12 +1345,66 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               </div>
             </div>
 
-            <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={checkout} disabled={submitting}>
+            <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={checkout} disabled={submitting} title="Keyboard: Ctrl+Enter">
               {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(payable)}</>}
             </Button>
+            <p className="text-center text-[11px] text-muted-foreground">Press <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Ctrl</kbd>+<kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Enter</kbd> to confirm · <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Esc</kbd> to close</p>
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Keyboard shortcuts help (F1) */}
+      <Dialog open={helpOpen} onOpenChange={setHelpOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Keyboard className="h-5 w-5 text-teal-600" /> Keyboard shortcuts</DialogTitle>
+            <DialogDescription>Work the till at speed — no mouse needed. Shortcuts are live anywhere on the POS screen.</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-1.5 text-sm">
+            {([
+              ['F1', 'Shortcut help (this dialog)'],
+              ['F2', 'Focus the scan / search box'],
+              ['F3', 'Scan a barcode with the camera'],
+              ['F4', 'Charge — open checkout'],
+              ['F6', 'Park this sale'],
+              ['F7', 'Parked sales'],
+              ['F8', 'Clear the cart'],
+              ['Ctrl + Enter', 'Confirm payment (in checkout)'],
+              ['Enter', 'Add the scanned / first result to cart'],
+              ['Esc', 'Close the open dialog'],
+              ['?', 'This help (outside a text field)'],
+            ] as Array<[string, string]>).map(([keys, label]) => (
+              <div key={keys} className="flex items-center justify-between rounded-lg px-2 py-1.5 odd:bg-muted/50">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="flex gap-1">
+                  {keys.split(' + ').map((k, i) => (
+                    <kbd key={i} className="rounded border bg-muted px-1.5 py-0.5 font-mono text-[11px] font-semibold">{k}</kbd>
+                  ))}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">Barcode scanners type fast and press Enter — just scan into the search box. Letter shortcuts never fire while you are typing.</p>
+        </DialogContent>
+      </Dialog>
+
+      {/* Clear cart confirmation (F8) */}
+      <AlertDialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear the cart?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All {cart.reduce((n, l) => n + l.qty, 0)} item(s) ({fmtMoney(subtotal)}) will be removed from this sale. Park it instead if you want to come back to it later (F6).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep items</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={() => { setCart([]); setOrderDiscount(0); toast({ title: 'Cart cleared' }) }}>
+              Clear cart
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Start shift dialog (shift gating) */}
       <StartShiftDialog open={startShiftOpen} onOpenChange={setStartShiftOpen} onStarted={loadCurrentShift} />

@@ -44,13 +44,20 @@ export interface ReceiptSale {
 interface ThermalReceiptProps {
   sale: ReceiptSale
   settings: StoreSettingsMap | null
+  /** 'refund' renders a CREDIT NOTE (customer return) instead of a sale invoice. */
+  variant?: 'sale' | 'refund'
+  /** Original sale invoice a refund refers to (shown under the RMA number). */
+  originInvoice?: string | null
+  /** Return reason printed on the credit note. */
+  refundReason?: string | null
 }
 
 /**
  * 80mm thermal receipt. Print with printWithPageStyle(THERMAL_PAGE_CSS) — the
  * .print-area class makes only this node visible on paper.
  */
-export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
+export function ThermalReceipt({ sale, settings, variant = 'sale', originInvoice, refundReason }: ThermalReceiptProps) {
+  const isRefund = variant === 'refund'
   const storeName = settings?.storeName || 'MediPOS Pharmacy'
   const storeAddress = settings?.storeAddress || ''
   const storePhone = settings?.storePhone || ''
@@ -76,11 +83,28 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
 
       <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
 
+      {/* Refund credit-note banner */}
+      {isRefund && (
+        <div style={{ textAlign: 'center', margin: '4px 0', border: '1.5px solid #000', padding: '3px 0', fontSize: '11px', fontWeight: 700, letterSpacing: '1px' }}>
+          CREDIT NOTE — CUSTOMER REFUND
+        </div>
+      )}
+
       {/* Meta */}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
-        <span>Invoice: <strong>{sale.invoiceNo}</strong></span>
+        <span>{isRefund ? 'Refund: ' : 'Invoice: '}<strong>{sale.invoiceNo}</strong></span>
         <span>{dateStr} {timeStr}</span>
       </div>
+      {isRefund && originInvoice && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+          <span>Original invoice: {originInvoice}</span>
+        </div>
+      )}
+      {isRefund && refundReason && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
+          <span>Reason: {refundReason}</span>
+        </div>
+      )}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px' }}>
         <span>Customer: {sale.customerName || 'Walk-in'}</span>
         <span>Cashier: {sale.cashierName || '—'}</span>
@@ -122,21 +146,27 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
 
       <div style={{ borderTop: '1px dashed #000', margin: '6px 0' }} />
 
-      {/* Totals */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-        <span>Subtotal</span><span>{fmtMoney(sale.subtotal)}</span>
-      </div>
-      {sale.discount > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-          <span>Discount</span><span>-{fmtMoney(sale.discount)}</span>
-        </div>
+      {/* Totals — credit notes show only the refunded total (the net discount/tax
+          shares are already folded into it; printing subtotal+tax rows would
+          double-count). */}
+      {!isRefund && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+            <span>Subtotal</span><span>{fmtMoney(sale.subtotal)}</span>
+          </div>
+          {sale.discount > 0 && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+              <span>Discount</span><span>-{fmtMoney(sale.discount)}</span>
+            </div>
+          )}
+          {sale.discount > 0 && sale.approvedByName && (
+            <div style={{ fontSize: '9px', color: '#333' }}>Approved by: {sale.approvedByName}</div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
+            <span>Tax</span><span>{fmtMoney(sale.tax)}</span>
+          </div>
+        </>
       )}
-      {sale.discount > 0 && sale.approvedByName && (
-        <div style={{ fontSize: '9px', color: '#333' }}>Approved by: {sale.approvedByName}</div>
-      )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-        <span>Tax</span><span>{fmtMoney(sale.tax)}</span>
-      </div>
       {(() => {
         // Tax components print whenever the sale carries tax: each statutory
         // piece is itemised under the Tax heading.
@@ -173,7 +203,7 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
         })
       })()}
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', fontWeight: 700, margin: '4px 0' }}>
-        <span>TOTAL</span><span>{fmtMoney(sale.total)}</span>
+        <span>{isRefund ? 'TOTAL REFUNDED' : 'TOTAL'}</span><span>{fmtMoney(sale.total)}</span>
       </div>
       {!!sale.insuranceAmount && sale.insuranceAmount > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
@@ -189,7 +219,7 @@ export function ThermalReceipt({ sale, settings }: ThermalReceiptProps) {
         <div style={{ borderTop: '1px dashed #000', margin: '4px 0' }} />
       ) : (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-          <span>Paid ({paymentMethodLabel(sale.paymentMethod, sale.paymentProvider)})</span><span>{fmtMoney(sale.paidAmount)}</span>
+          <span>{isRefund ? 'Refunded' : 'Paid'} ({paymentMethodLabel(sale.paymentMethod, sale.paymentProvider)})</span><span>{fmtMoney(sale.paidAmount)}</span>
         </div>
       )}
       {sale.tenders && sale.tenders.length > 1 && (
