@@ -888,3 +888,17 @@ Work Log:
 
 Stage Summary:
 - The Reports page menu is now a categorized dropdown: four labeled groups with captions instead of 17 cramped chips, the active report always named on the trigger, and every report two keystrokes away. 136/136 regression green, deployed on SW v9, DB backed up.
+---
+Task ID: 69b
+Agent: main
+Task: "it should be inline menu" — revision to Task 69: the single collapsed report dropdown should be an inline menu instead.
+
+Work Log:
+- REVISION: v1 hid all 4 categories behind ONE dropdown trigger showing only the active report — the categories themselves were invisible until clicked. "Inline" = the categories sit permanently on the page as menu labels.
+- UI (reports.tsx): the single DropdownMenu is replaced by an inline categorized menubar — 4 always-visible teal pills (Sales & Revenue / Inventory & Purchasing / Finance & Compliance / Operations & Team), each opening its OWN dropdown (w-72) with the group label + caption header, separator, and that group's reports (icon + label + Check on active). The pill of the group owning the ACTIVE report is filled teal (bg-teal-600 text-white) so "where am I" reads at a glance; inactive pills keep the tinted outline style. A right-aligned muted chip "Viewing: {report}" (md+ only) names the current report. Desktop shows all 4 pills in one row; at 390px they wrap to a clean vertical stack and each dropdown (288px) still fits the viewport. Removed the now-dead activeGroup lookup; DropdownMenuGroup retained around items for a11y. tab/setTab mechanics, export + period + scope controls untouched.
+- VERIFY (browser E2E, SW medipos-v9→v10, zero page errors): 4 pills visible inline with Sales & Revenue active on default Overview; Finance dropdown lists exactly Expenses & Net / Accounting Pack / VAT Filing; picking VAT Filing switches section (VAT content renders), moves the filled pill to Finance & Compliance, flips the chip to "Viewing: VAT Filing", auto-closes the menu; cross-group hop back to Payments & MoMo re-highlights Sales & Revenue and updates the chip; Operations dropdown lists Day Close (Z) / Branch Comparison / Staff Performance / Owner Digest. Screenshot (desktop, menu open) + mobile 390px screenshot confirm layout. Old single trigger confirmed gone.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v9→v10 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green in a single pass (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- Reports menu is now truly inline: the four categories are permanently visible as a menubar of pills — the active group filled teal — and each opens a compact dropdown of its own reports, with a "Viewing:" chip naming the current report. No hidden navigation, no collapsed trigger. 136/136 regression green, deployed on SW v10, DB backed up.

@@ -330,7 +330,6 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
   }
 
   const tabMeta = TABS.find((t) => t.key === tab)!
-  const activeGroup = GROUPS.find((g) => g.tabs.includes(tab))
 
   return (
     <div className="space-y-4">
@@ -356,47 +355,51 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
         }
       />
 
-      {/* Report menu — categorized dropdown (17 reports in 4 groups) */}
-      <div className="flex flex-wrap items-center gap-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="outline"
-              className="rounded-full bg-teal-600/5 px-4 font-semibold text-teal-700 hover:bg-teal-600/10 dark:text-teal-300"
-              aria-label="Choose report"
-            >
-              <tabMeta.icon className="h-4 w-4" />
-              {tabMeta.label}
-              <ChevronDown className="h-4 w-4 opacity-60" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-[75vh] w-80 overflow-y-auto">
-            {GROUPS.map((g, gi) => (
-              <DropdownMenuGroup key={g.label}>
+      {/* Report menu — inline categorized menubar: 4 always-visible group pills, each with its own dropdown */}
+      <div className="flex flex-wrap items-center gap-2">
+        {GROUPS.map((g) => {
+          const groupActive = g.tabs.includes(tab)
+          return (
+            <DropdownMenu key={g.label}>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  aria-label={`${g.label} reports`}
+                  className={
+                    groupActive
+                      ? 'rounded-full border-teal-600 bg-teal-600 px-4 font-semibold text-white shadow-sm hover:bg-teal-700 hover:text-white'
+                      : 'rounded-full bg-teal-600/5 px-4 font-semibold text-teal-700 hover:bg-teal-600/10 dark:text-teal-300'
+                  }
+                >
+                  {g.label}
+                  <ChevronDown className="h-4 w-4 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-72">
                 <DropdownMenuLabel className="px-2 py-2">
                   <span className="text-xs font-bold uppercase tracking-wide text-foreground/70">{g.label}</span>
                   <span className="block text-[11px] font-normal text-muted-foreground">{g.caption}</span>
                 </DropdownMenuLabel>
-                {g.tabs.map((k) => {
-                  const meta = TABS.find((t) => t.key === k)!
-                  return (
-                    <DropdownMenuItem key={k} onSelect={() => setTab(k)} className="gap-2.5">
-                      <meta.icon className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />
-                      <span className="flex-1">{meta.label}</span>
-                      {tab === k && <Check className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />}
-                    </DropdownMenuItem>
-                  )
-                })}
-                {gi < GROUPS.length - 1 && <DropdownMenuSeparator />}
-              </DropdownMenuGroup>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        {activeGroup && (
-          <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:inline-flex">
-            {activeGroup.label} · {activeGroup.caption}
-          </span>
-        )}
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  {g.tabs.map((k) => {
+                    const meta = TABS.find((t) => t.key === k)!
+                    return (
+                      <DropdownMenuItem key={k} onSelect={() => setTab(k)} className="gap-2.5">
+                        <meta.icon className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />
+                        <span className="flex-1">{meta.label}</span>
+                        {tab === k && <Check className="h-4 w-4 shrink-0 text-teal-600 dark:text-teal-400" />}
+                      </DropdownMenuItem>
+                    )
+                  })}
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
+        })}
+        <span className="ml-auto hidden items-center gap-1.5 rounded-full border bg-muted/40 px-3 py-1.5 text-xs font-medium text-muted-foreground md:inline-flex">
+          <tabMeta.icon className="h-3.5 w-3.5 text-teal-500" /> Viewing: {tabMeta.label}
+        </span>
       </div>
 
       {/* Summary cards (always visible for context) */}
