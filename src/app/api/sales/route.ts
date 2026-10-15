@@ -177,17 +177,29 @@ export async function POST(req: NextRequest) {
     const activeEra = chargeTax && tax > 0 ? await db.taxEra.findFirst({ where: { isCurrent: true } }) : null
 
     // --- Tier 1: customer-dependent paths ---------------------------------
-    let paymentMethod = ['cash', 'card', 'momo', 'credit'].includes(body.paymentMethod) ? body.paymentMethod : 'cash'
+    // 'insurance' is a first-class method: the till leg settles the patient's
+    // cash share exactly like cash, while the insurer's share books as a claim
+    // (useInsurance below). Never silently rewrite it to 'cash' — receipts,
+    // filters and reports must be able to say "Insurance".
+    let paymentMethod = ['cash', 'card', 'momo', 'credit', 'insurance'].includes(body.paymentMethod) ? body.paymentMethod : 'cash'
     type CustomerWithInsurer = import('@prisma/client').Prisma.CustomerGetPayload<{ include: { insurer: true } }>
     let customer: CustomerWithInsurer | null = null
     if (body.customerId) {
       customer = await db.customer.findUnique({ where: { id: body.customerId }, include: { insurer: true } })
       if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
     }
+    if (paymentMethod === 'insurance' && !(customer?.insurer && customer.insurer.active)) {
+      return NextResponse.json(
+        { error: customer ? `${customer.name} has no active insurer — attach one on their profile or pick another payment method.` : 'Insurance sales need an insured customer — select one first.' },
+        { status: 400 },
+      )
+    }
 
-    // Insurance co-pay split (customer must carry an active insurer)
+    // Insurance co-pay split (customer must carry an active insurer). Choosing
+    // the Insurance method implies the claim — same contract the POS UI enforces
+    // by locking the "Use insurance" checkbox on.
     let insurance: ReturnType<typeof splitInsurance> | null = null
-    const useInsurance = body.useInsurance === true
+    const useInsurance = body.useInsurance === true || paymentMethod === 'insurance'
     if (useInsurance && customer?.insurer && customer.insurer.active) {
       insurance = splitInsurance(lines, discount, customer.insurer.coveragePercent, customer.insurer.name)
     }
@@ -230,7 +242,7 @@ export async function POST(req: NextRequest) {
     // is asked for moves, and the signed difference is stamped on the sale as
     // roundingDelta (+ = store collects the difference, − = customer's favor).
     const roundingMode = parseCashRoundingMode(_settingsMap.cashRounding)
-    const cashInvolved = rawTenders.length > 0 ? rawTenders.some((t) => t.method === 'cash') : paymentMethod === 'cash'
+    const cashInvolved = rawTenders.length > 0 ? rawTenders.some((t) => t.method === 'cash') : paymentMethod === 'cash' || paymentMethod === 'insurance'
     const { roundedDue, delta: roundingDelta } = roundCashFor(due, roundingMode, cashInvolved)
     if (rawTenders.length > 0 && paymentMethod === 'credit') {
       return NextResponse.json({ error: 'Credit sales cannot be combined with split tenders.' }, { status: 400 })
@@ -279,9 +291,10 @@ export async function POST(req: NextRequest) {
 
     if (tendersJson) {
       // split tenders already resolved above — skip the single-tender paths
-    } else if (paymentMethod === 'cash') {
-      // The cash customer pays the ROUNDED due (cash rounding may move it a
-      // few pesewas); everything is reconciled against roundedDue.
+    } else if (paymentMethod === 'cash' || paymentMethod === 'insurance') {
+      // The cash/insurance till leg pays the ROUNDED patient share (cash
+      // rounding may move it a few pesewas); everything is reconciled against
+      // roundedDue. The insurer's share is booked separately as a claim.
       paidAmount = Number(body.paidAmount ?? roundedDue)
       changeAmount = +Math.max(0, paidAmount - roundedDue).toFixed(2)
       paidAmount = Math.min(paidAmount, roundedDue)

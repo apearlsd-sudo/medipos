@@ -21,6 +21,18 @@ import type { StoreSettingsMap } from '@/lib/store-settings'
 import { Banknote, CheckCircle2, Eye, Loader2, Printer, ReceiptText, RotateCcw, Search, ShieldAlert, PackageOpen, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
+import type { ReceiptSale } from '@/components/pos/receipt'
+
+/** Tenders live on the row as a JSON string — parse for the receipt, tolerate junk. */
+function parseTendersJson(raw: string | null): ReceiptSale['tenders'] {
+  if (!raw) return null
+  try {
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) && arr.length > 0 ? arr : null
+  } catch {
+    return null
+  }
+}
 
 interface SaleRow {
   id: string
@@ -48,6 +60,17 @@ interface SaleDetail extends SaleRow {
   taxComponentsJson?: string | null
   customerPhone?: string | null
   customerEmail?: string | null
+  /** Insurer's billed share — printed as the "Insurance claim" receipt row. */
+  insuranceAmount?: number | null
+  /** Insurer billed (resolved from the customer's active insurer). */
+  insurerName?: string | null
+  /** Raw tenders JSON string on the row (split-tender sales) — parsed before printing. */
+  tenders?: string | null
+  pointsEarned?: number | null
+  pointsRedeemed?: number | null
+  pointsValue?: number | null
+  paymentProvider?: string | null
+  paymentReference?: string | null
   items: Array<{
     id: string; name: string; sku: string | null; qty: number; unitPrice: number; total: number; saleUnit?: string
     medicineId?: string | null
@@ -119,7 +142,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const openDetail = async (id: string) => {
     const res = await fetch(`/api/sales/${id}`, { cache: 'no-store' })
     const json = await res.json()
-    if (json.sale) setDetail({ ...json.sale, customer: json.sale.customer?.name ?? 'Walk-in Customer', customerPhone: json.sale.customer?.phone ?? null, customerEmail: json.sale.customer?.email ?? null })
+    if (json.sale) setDetail({ ...json.sale, customer: json.sale.customer?.name ?? 'Walk-in Customer', customerPhone: json.sale.customer?.phone ?? null, customerEmail: json.sale.customer?.email ?? null, insurerName: json.sale.customer?.insurer?.name ?? null })
   }
 
   const loadReturned = useCallback(async (saleId: string) => {
@@ -714,13 +737,13 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
 
       {/* Thermal receipt print dialog */}
       <Dialog open={!!printSale} onOpenChange={(o) => !o && setPrintSale(null)}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Receipt — #{printSale?.invoiceNo}</DialogTitle>
           </DialogHeader>
           {printSale && (
             <div className="space-y-3">
-              <div className="max-h-[50vh] overflow-y-auto rounded-lg border bg-white">
+              <div className="max-h-[70vh] overflow-y-auto rounded-lg border bg-white">
                 <ThermalReceipt
                   sale={{
                     invoiceNo: printSale.invoiceNo,
@@ -735,6 +758,15 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                     paidAmount: printSale.paidAmount,
                     changeAmount: printSale.changeAmount,
                     paymentMethod: printSale.paymentMethod,
+                    paymentProvider: printSale.paymentProvider ?? null,
+                    paymentReference: printSale.paymentReference ?? null,
+                    paymentStatus: printSale.paymentStatus,
+                    tenders: parseTendersJson(printSale.tenders ?? null),
+                    insuranceAmount: printSale.insuranceAmount ?? 0,
+                    insurerName: printSale.insurerName ?? null,
+                    pointsEarned: printSale.pointsEarned ?? 0,
+                    pointsRedeemed: printSale.pointsRedeemed ?? 0,
+                    pointsValue: printSale.pointsValue ?? 0,
                     cashierName: printSale.cashierName,
                     customerName: printSale.customer,
                     items: printSale.items.map((it) => ({ name: it.name, qty: it.qty, unitPrice: it.unitPrice, total: it.total })),

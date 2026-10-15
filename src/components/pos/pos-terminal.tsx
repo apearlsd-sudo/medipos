@@ -601,6 +601,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           subtotal, discount: discountValue, tax: taxValue, total,
           taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
           roundingDelta: cashRounding.delta,
+          insuranceAmount: insuranceEstimate > 0 ? insuranceEstimate : undefined,
           paidAmount: tendersPayload ? Math.min(splitSum, roundedPayable) : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.min(tenderedNum, roundedPayable) : total,
           changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.max(0, +(tenderedNum - roundedPayable).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
@@ -627,6 +628,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       setReceipt({
         ...json.sale,
         tenders: parseTenders(json.sale?.tenders),
+        insurerName: json.insurance?.insurerName ?? null,
         customerName: json.sale?.customer?.name ?? null,
         customerPhone: json.sale?.customer?.phone ?? null,
         customerEmail: json.sale?.customer?.email ?? null,
@@ -1490,7 +1492,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
 
       {/* Receipt dialog */}
       <Dialog open={!!receipt} onOpenChange={(open) => !open && setReceipt(null)}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5 text-emerald-500" /> Payment Successful
@@ -1498,7 +1500,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           </DialogHeader>
           {receipt && (
             <div className="space-y-3">
-              <div className="max-h-[50vh] overflow-y-auto rounded-lg border bg-white">
+              <div className="max-h-[70vh] overflow-y-auto rounded-lg border bg-white">
                 <ThermalReceipt sale={receipt} settings={storeSettings ?? null} />
               </div>
               <div className="flex gap-2 print:hidden">

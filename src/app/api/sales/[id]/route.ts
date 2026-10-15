@@ -17,7 +17,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params
     const sale = await db.sale.findUnique({
       where: { id },
-      include: { customer: true, items: { include: { medicine: { include: { category: true } } } }, shift: { select: { userId: true } } },
+      // customer carries the insurer so receipts can name who was billed
+      include: { customer: { include: { insurer: true } }, items: { include: { medicine: { include: { category: true } } } }, shift: { select: { userId: true } } },
     })
     if (!sale) return NextResponse.json({ error: 'Sale not found' }, { status: 404 })
     if (!isViewer) {

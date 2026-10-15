@@ -31,6 +31,8 @@ export interface ReceiptSale {
   loyaltyTier?: string | null
   birthdayBonus?: number
   insuranceAmount?: number
+  /** Insurer billed on this sale — shown with the claim row when present. */
+  insurerName?: string | null
   customerCreditBalance?: number | null
   offlineQueued?: boolean
   cashierName?: string
@@ -225,7 +227,7 @@ export function ThermalReceipt({ sale, settings, variant = 'sale', originInvoice
       })()}
       {!!sale.insuranceAmount && sale.insuranceAmount > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10.5px' }}>
-          <span>Insurance claim</span><span>-{fmtMoney(sale.insuranceAmount)}</span>
+          <span>Insurance claim{sale.insurerName ? ` (${sale.insurerName})` : ''}</span><span>-{fmtMoney(sale.insuranceAmount)}</span>
         </div>
       )}
       {!!sale.pointsValue && sale.pointsValue > 0 && (
