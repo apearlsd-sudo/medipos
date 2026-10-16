@@ -10,6 +10,7 @@ import { planPackSale } from '@/lib/packs'
 import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider, resolveTier, isBirthdayInWindow, roundCashFor, parseCashRoundingMode } from '@/lib/pos-finance'
 import { sumComponentPcts, taxComponents, freezeComponentsJson } from '@/lib/tax-components'
 import { parseDateRange } from '@/lib/date-filter'
+import { nextDocNo } from '@/lib/next-doc-no'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -390,9 +391,16 @@ export async function POST(req: NextRequest) {
     }
     // -----------------------------------------------------------------------
 
-    // Generate invoice number
-    const count = await db.sale.count()
-    const invoiceNo = `INV-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
+    // Generate invoice number — highest existing suffix for this year, never
+    // COUNT (count-based numbering re-issues numbers after any row deletion
+    // and then fails every sale with a unique-constraint violation).
+    const invYear = new Date().getFullYear()
+    const invPrefix = `INV-${invYear}-`
+    const invoiceNo = await nextDocNo(
+      invPrefix,
+      () => db.sale.findFirst({ where: { invoiceNo: { startsWith: invPrefix } }, orderBy: { invoiceNo: 'desc' }, select: { invoiceNo: true } }).then((s) => s?.invoiceNo ?? null),
+      (no) => db.sale.findUnique({ where: { invoiceNo: no }, select: { invoiceNo: true } }).then((s) => !!s),
+    )
 
     // Attribute the sale to the cashier's open shift when one exists
     const openShift = await db.shift.findFirst({

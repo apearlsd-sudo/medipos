@@ -5,6 +5,7 @@ import { logAudit } from '@/lib/audit'
 import { recordSyncOp } from '@/lib/sync'
 import { planPackSale } from '@/lib/packs'
 import { quotationPayload } from '../route'
+import { nextDocNo } from '@/lib/next-doc-no'
 
 interface RouteCtx { params: Promise<{ id: string }> }
 
@@ -139,8 +140,16 @@ async function convertToSale(
     planned.push({ medicineId: med.id, qty: line.qty, packs: plan.packs, looseAfter: plan.looseAfter, innerTotal: plan.innerTotal })
   }
 
-  const count = await db.sale.count()
-  const invoiceNo = `INV-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
+  // Invoice number — highest existing suffix for this year, never COUNT
+  // (count-based numbering re-issues numbers after any row deletion and then
+  // fails the conversion with a unique-constraint violation).
+  const invYear = new Date().getFullYear()
+  const invPrefix = `INV-${invYear}-`
+  const invoiceNo = await nextDocNo(
+    invPrefix,
+    () => db.sale.findFirst({ where: { invoiceNo: { startsWith: invPrefix } }, orderBy: { invoiceNo: 'desc' }, select: { invoiceNo: true } }).then((s) => s?.invoiceNo ?? null),
+    (no) => db.sale.findUnique({ where: { invoiceNo: no }, select: { invoiceNo: true } }).then((s) => !!s),
+  )
 
   const result = await db.$transaction(async (tx) => {
     const sale = await tx.sale.create({

@@ -19,7 +19,7 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-const CACHE_VERSION = 'medipos-v20' // v19: server-side date-range filters on every event ledger; v20: settings page categorized into inline menu sections
+const CACHE_VERSION = 'medipos-v21' // v20: settings page categorized into inline menu sections; v21: collision-safe invoice numbering (max-sequence instead of row count)
 // v19: date picker filters — from/to on every event ledger (sales, purchases, expenses, prescriptions, quotations, transfers, shifts, returns, stock takes, inventory logs)
 const SHELL_ASSETS = [
   '/offline.html',
