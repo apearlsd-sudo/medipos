@@ -20,7 +20,12 @@ cd /home/z/my-project
 PASS=0; FAIL=0
 ok()  { echo "PASS: $1"; PASS=$((PASS+1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
-trap 'kill "$(cat /tmp/branch-ws.pid 2>/dev/null)" 2>/dev/null; kill_port 3100; rm -f db/branch-ws-test.db db/branch-ws-test.db-journal /tmp/wsbj.txt /tmp/wshj.txt' EXIT
+# Cleanup on exit: stop the branch node, drop its snapshot DB, then surgically
+# remove the WSYNC probe product + the test sales it absorbed from the HQ DB
+# (price bumps and sale replication used to leak onto whichever REAL product
+# the picker landed on — Globrex drifted GH₵16 → GH₵45.97 across 3 runs on
+# 2026-10-16 before this probe isolation existed).
+trap 'kill "$(cat /tmp/branch-ws.pid 2>/dev/null)" 2>/dev/null; kill_port 3100; rm -f db/branch-ws-test.db db/branch-ws-test.db-journal /tmp/wsbj.txt /tmp/wshj.txt; node scripts/cleanup-ws-sync-probe.js 2>/dev/null || true' EXIT
 
 KEYHASH=$(python3 -c "import hashlib; print(hashlib.sha256(b'medipos-hq-sync-key').hexdigest()[:16])")
 BRPORT=3100
@@ -39,6 +44,22 @@ kill_port ${BRPORT}
 for i in $(seq 1 10); do port_free ${BRPORT} && break; sleep 0.5; done
 port_free ${BRPORT} || { bad "could not free :$BRPORT"; exit 1; }
 rm -f db/branch-ws-test.db db/branch-ws-test.db-journal
+
+# 0b. dedicated probe product on HQ, created BEFORE the snapshot so the branch
+# sees it too. ALL price bumps and both test sales land on this probe — the
+# picker used to hand over the first real in-stock product instead, mutating
+# its price permanently and leaving phantom replicated sales in the ledger.
+PROBE_SKU="WSYNC-P$(date +%s)"
+rm -f /tmp/wsync-hq.txt
+hc0=$(curl -s -c /tmp/wsync-hq.txt -X POST http://localhost:3000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' -o /dev/null -w '%{http_code}')
+[ "$hc0" = "200" ] || { bad "HQ login for probe setup ($hc0)"; exit 1; }
+CATID=$(curl -s -b /tmp/wsync-hq.txt "http://localhost:3000/api/categories" | jqpy "d['categories'][0]['id'] if d.get('categories') else ''")
+[ -n "$CATID" ] || { bad "no category found for probe"; exit 1; }
+PROBE=$(curl -s -b /tmp/wsync-hq.txt -X POST http://localhost:3000/api/medicines -H 'Content-Type: application/json' -d "{\"name\":\"WSYNC probe\",\"sku\":\"$PROBE_SKU\",\"categoryId\":\"$CATID\",\"unit\":\"Box\",\"costPrice\":5,\"sellingPrice\":10,\"stockQty\":300}")
+MEDID=$(echo "$PROBE" | jqpy "d['medicine']['id'] if d.get('medicine') else ''")
+[ -n "$MEDID" ] || { bad "probe product creation failed: $PROBE"; exit 1; }
+ok "probe product $PROBE_SKU created on HQ (isolates price bumps + test sales)"
+
 python3 -c "import sqlite3; s=sqlite3.connect('db/custom.db'); s.execute(\"VACUUM INTO 'db/branch-ws-test.db'\"); s.close()" || { bad "snapshot copy"; exit 1; }
 python3 -c "import sqlite3; c=sqlite3.connect('db/branch-ws-test.db'); c.execute('PRAGMA journal_mode=DELETE'); c.close()" || { bad "journal reset"; exit 1; }
 ok "branch DB snapshot created (VACUUM INTO, journal reset)"
@@ -77,26 +98,16 @@ lc=$(curl -s -c $B -X POST http://localhost:$BRPORT/api/auth/login -H 'Content-T
 hc=$(curl -s -c $H -X POST http://localhost:3000/api/auth/login -H 'Content-Type: application/json' -d '{"username":"admin","password":"admin123"}' -o /dev/null -w '%{http_code}')
 [ "$lc" = "200" ] && [ "$hc" = "200" ] && ok "branch + HQ logins" || { bad "logins (branch $lc / hq $hc)"; exit 1; }
 
-_PICKED=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?limit=50")
-# pick a SELLABLE product: in stock, active and NOT expired — the till refuses
-# to sell expired stock, so the picker must never land on one
+_PICKED=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?search=$PROBE_SKU")
+# use the dedicated probe product — never a real one. (The old picker took the
+# first sellable product from the branch list, which was a real item.)
 read -r MEDID MEDSKU BP MEDBR <<< "$(echo "$_PICKED" | python3 -c "
-import sys, json, time
-from datetime import datetime
+import sys, json
 d = json.load(sys.stdin)
-for m in d['medicines']:
-    if m.get('stockQty', 0) <= 0 or m.get('status', 'active') != 'active':
-        continue
-    exp = m.get('expiryDate')
-    if exp:
-        try:
-            if datetime.fromisoformat(str(exp).replace('Z', '+00:00')).timestamp() <= time.time():
-                continue
-        except Exception:
-            pass
-    print(m['id'], m['sku'], m['sellingPrice'], m.get('branchId') or '-')
-    break
+m = [m for m in d['medicines'] if m['sku'].startswith('WSYNC-')][0]
+print(m['id'], m['sku'], m['sellingPrice'], m.get('branchId') or '-')
 ")"
+[ -n "$MEDID" ] || { bad "probe product not visible on branch"; exit 1; }
 NP=$(python3 -c "print(round($BP + 7.77, 2))")
 echo "  (test product sku=$MEDSKU branch=$MEDBR price $BP → target $NP)"
 
@@ -251,6 +262,12 @@ echo "$LIVE2" | grep -q "WS-1" && ok "branch re-established WS live link after h
 # --- cleanup --------------------------------------------------------------------------
 kill "$(cat /tmp/branch-ws.pid 2>/dev/null)" 2>/dev/null; kill_port ${BRPORT}
 rm -f "$BDB"
+CLEAN=$(node scripts/cleanup-ws-sync-probe.js 2>/dev/null)
+# probes can legitimately exceed 1: HQ's pending SyncOps are re-applied (and
+# relayed back) by the ephemeral branch, so older probe rows can resurface.
+echo "$CLEAN" | grep -qE "cleanup: probes=[1-9]" && ok "probe + its test sales surgically removed from HQ ($CLEAN)" || bad "probe cleanup unexpected: $CLEAN"
+LEFT=$(curl -s -b $H "http://localhost:3000/api/medicines?search=WSYNC-" | jqpy "len(d.get('medicines', []))")
+[ "$LEFT" = "0" ] && ok "no WSYNC probe rows remain in HQ ledger" || bad "$LEFT probe rows survived"
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]
