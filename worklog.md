@@ -993,3 +993,18 @@ Work Log:
 
 Stage Summary:
 - The pharmacy now has a proactive expiry desk: within two clicks the owner sees everything about to expire (window configurable 30–120 days), then bulk-returns it to the supplier for credit or writes it off early — every action a real, cancellable return note tagged pre-expiry with a days-early snapshot, reported in a dedicated Expiry-report card so pre-emptive action is visible next to the expired-loss pile. Suite also fixed a latent numbering bug that could 500 any write-off once rows had been deleted. 46/46 verify + 136/136 regression + E2E green, deployed on SW v15.
+
+---
+Task ID: implement-all (final verification pass)
+Agent: main
+Task: verify the complete "implement all" delivery (Task 72 close-the-gap + Task 73 pre-expiry disposal workflow) on the live production state.
+
+Work Log:
+- Confirmed repo state: Task 72 commit 26fe37f and Task 73 commit 3270fed present; working tree clean; all feature files in place (api/disposals/pre-expiry, lib/stock-returns, lib/writeoff-expense, lib/doc-no).
+- Confirmed deployment: production :3000 root 200, hub :3003 root 200, /api/auth/me 401 gate correct, sw.js serves medipos-v15.
+- Re-ran FULL 136-test regression against the deployed state in one pass: tier1 24/24, tier2 17/17, tier3 30/30, tier4 36/36, ws-sync 29/29 — all green.
+- Live API smoke as admin: login 200; GET /api/disposals/pre-expiry?days=60 returns real candidates (e.g. FER-2420, daysLeft 9, 188 units, GHS 338.40 at risk, supplier resolved).
+- backup-db.sh run (medipos-20261016-102708.db, 14 retained).
+
+Stage Summary:
+- "implement all" delivery is fully landed and re-verified end-to-end on the live SW v15 build: write-offs hit the P&L (auto-expense + Net-after-Write-offs) and the pre-expiry disposal desk is live and serving. Nothing outstanding; DB backed up.
