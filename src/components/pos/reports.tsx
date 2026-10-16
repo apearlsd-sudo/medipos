@@ -2372,13 +2372,16 @@ function OwnerDigestSection() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Tabs value={range} onValueChange={(v) => setRange(v as typeof range)}>
-          <TabsList className="flex flex-wrap gap-1">
-            <TabsTrigger value="today" className="rounded-full px-3.5 text-xs">Today</TabsTrigger>
-            <TabsTrigger value="week" className="rounded-full px-3.5 text-xs">This week</TabsTrigger>
-            <TabsTrigger value="month" className="rounded-full px-3.5 text-xs">This month</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <Select value={range} onValueChange={(v) => setRange(v as typeof range)}>
+          <SelectTrigger aria-label="Digest period" className="h-9 w-[9.5rem] rounded-full bg-background text-xs font-medium shadow-none sm:w-40 dark:bg-input/30">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="w-40">
+            <SelectItem value="today" className="text-xs">Today</SelectItem>
+            <SelectItem value="week" className="text-xs">This week</SelectItem>
+            <SelectItem value="month" className="text-xs">This month</SelectItem>
+          </SelectContent>
+        </Select>
         <span className="text-xs text-muted-foreground">{data.label} · {data.branchLabel} · generated {new Date(data.generatedAt).toLocaleTimeString()}</span>
         {canSend && (
           <Button onClick={send} disabled={sending} className="ml-auto rounded-full bg-teal-600 hover:bg-teal-700">

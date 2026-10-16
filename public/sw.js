@@ -20,7 +20,8 @@
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
 // v22: responsive mobile fit — cards/inputs shrinkable in grids, scrollable tab bars, responsive table min-widths + mobile column sets (dashboard/inventory/users/settings/shifts/notifications/suppliers/branches + all ledger tables)
-const CACHE_VERSION = "medipos-v23";
+// v24: date-range preset filters (Today / 7 days / 30 days / This month) collapsed into a dropdown on every ledger page + owner digest
+const CACHE_VERSION = "medipos-v24";
 // v19: date picker filters — from/to on every event ledger (sales, purchases, expenses, prescriptions, quotations, transfers, shifts, returns, stock takes, inventory logs)
 const SHELL_ASSETS = [
   '/offline.html',
