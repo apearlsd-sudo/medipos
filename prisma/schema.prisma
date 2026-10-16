@@ -555,7 +555,7 @@ model StockTake {
   title           String
   scope           String          @default("all") // all | category
   scopeCategory   String?
-  status          String          @default("in_progress") // in_progress | completed | cancelled
+  status          String          @default("in_progress") // in_progress | paused | completed | cancelled
   startedById     String
   startedByName   String
   completedById   String?
@@ -563,6 +563,13 @@ model StockTake {
   note            String?
   completeNote    String?
   applyToStock    Boolean         @default(false)
+  // --- pause / resume lifecycle (multi-day counts) ---
+  pausedAt        DateTime? // when the current (or last) pause started; null while active
+  pausedById      String?
+  pausedByName    String?
+  pauseNote       String? // why the session was paused
+  resumedAt       DateTime? // last resume timestamp
+  resumeCount     Int         @default(0) // how many times this session was resumed
   totalItems      Int             @default(0) // count lines in session
   countedItems    Int             @default(0) // lines with a count entered
   systemQty       Int             @default(0) // snapshot units at session start

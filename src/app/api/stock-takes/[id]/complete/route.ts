@@ -17,7 +17,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params
     const take = await db.stockTake.findUnique({ where: { id } })
     if (!take) return NextResponse.json({ error: 'Stock take not found' }, { status: 404 })
-    if (take.status !== 'in_progress') {
+    if (take.status !== 'in_progress' && take.status !== 'paused') {
       return NextResponse.json({ error: 'This count session is already closed' }, { status: 409 })
     }
 

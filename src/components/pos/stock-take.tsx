@@ -11,14 +11,14 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PageHeader, StatusBadge } from '@/components/pos/shared'
 import { VarianceBadge, VarianceValueBadge, signedQty } from '@/components/pos/stock-take-badges'
 import {
-  CancelTakeDialog, CompleteTakeDialog, CountSheetDialog, StartTakeDialog, TakeDetailDialog,
+  CancelTakeDialog, CompleteTakeDialog, CountSheetDialog, PauseTakeDialog, StartTakeDialog, TakeDetailDialog,
   type StockTakeRec,
 } from '@/components/pos/stock-take-dialogs'
 import { fmtCompact, fmtDate, fmtDateTime, fmtMoney } from '@/lib/format'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
   BarChart3, CalendarRange, ClipboardCheck, Download, Eye, FileText, History, ListChecks, PackageSearch,
-  PlayCircle, RefreshCcw, Scale, TrendingDown, TrendingUp, XCircle,
+  PauseCircle, PlayCircle, RefreshCcw, Scale, TrendingDown, TrendingUp, XCircle,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -55,6 +55,8 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
   const [completeTake, setCompleteTake] = useState<StockTakeRec | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [cancelTake, setCancelTake] = useState<StockTakeRec | null>(null)
+  const [pauseOpen, setPauseOpen] = useState(false)
+  const [pauseTake, setPauseTake] = useState<StockTakeRec | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [detailId, setDetailId] = useState<string | null>(null)
 
@@ -85,6 +87,9 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
   }, [tab, loadReport])
 
   const active = useMemo(() => takes.find((t) => t.status === 'in_progress') ?? null, [takes])
+  const paused = useMemo(() => takes.find((t) => t.status === 'paused') ?? null, [takes])
+  const open = active ?? paused
+  const isPaused = !!paused
 
   const filteredHistory = useMemo(() => {
     let list = takes
@@ -107,6 +112,7 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
     return {
       completed: completed.length,
       cancelled: takes.filter((t) => t.status === 'cancelled').length,
+      paused: takes.filter((t) => t.status === 'paused').length,
       netValue,
       accuracy: lines > 0 ? Math.round((matched / lines) * 1000) / 10 : 0,
     }
@@ -115,7 +121,26 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
   const openCountSheet = (t: StockTakeRec) => { setSheetTakeId(t.id); setSheetOpen(true) }
   const openComplete = (t: StockTakeRec) => { setCompleteTake(t); setCompleteOpen(true) }
   const openCancel = (t: StockTakeRec) => { setCancelTake(t); setCancelOpen(true) }
+  const openPause = (t: StockTakeRec) => { setPauseTake(t); setPauseOpen(true) }
   const openDetail = (id: string) => { setDetailId(id); setDetailOpen(true) }
+
+  const resumeTake = async (t: StockTakeRec) => {
+    try {
+      const res = await fetch(`/api/stock-takes/${t.id}/resume`, { method: 'PUT' })
+      const json = await res.json()
+      if (!res.ok) {
+        toast({ title: 'Cannot resume count', description: json.error ?? 'Unknown error', variant: 'destructive' })
+        return
+      }
+      toast({
+        title: `Count ${json.take.stockTakeNo} resumed`,
+        description: `${json.rebaselined ?? 0} uncounted line(s) re-baselined to current stock${json.added ? ` · ${json.added} new product(s) added to the sheet` : ''} — counting continues where you left off.`,
+      })
+      load()
+    } catch {
+      toast({ title: 'Network error', description: 'Session not resumed — try again.', variant: 'destructive' })
+    }
+  }
 
   const applyPreset = (days: number) => {
     const f = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10)
@@ -245,7 +270,7 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
             <Button variant="outline" size="icon" className="rounded-full" onClick={load} aria-label="Refresh stock takes">
               <RefreshCcw className="h-4 w-4" />
             </Button>
-            <Button className="rounded-full bg-teal-600 hover:bg-teal-700" disabled={!!active} onClick={() => setStartOpen(true)}>
+            <Button className="rounded-full bg-teal-600 hover:bg-teal-700" disabled={!!open} onClick={() => setStartOpen(true)}>
               <PlayCircle className="h-4 w-4" /> Start Stock Take
             </Button>
           </>
@@ -255,34 +280,57 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
       {/* ============ Active count session ============ */}
       {loading ? (
         <Skeleton className="h-56 rounded-2xl" />
-      ) : active ? (
-        <Card className="overflow-hidden border-teal-600/20">
-          <div className="flex flex-col gap-3 border-b bg-gradient-to-r from-teal-600/10 via-teal-500/5 to-transparent px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+      ) : open ? (
+        <Card className={`overflow-hidden ${isPaused ? 'border-amber-500/30' : 'border-teal-600/20'}`}>
+          <div className={`flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${isPaused ? 'bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-transparent' : 'bg-gradient-to-r from-teal-600/10 via-teal-500/5 to-transparent'}`}>
             <div className="flex items-center gap-3">
-              <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-teal-600 text-white shadow-md shadow-teal-600/25">
-                <ClipboardCheck className="h-5.5 w-5.5" />
+              <span className={`flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-md ${isPaused ? 'bg-amber-500 shadow-amber-500/25' : 'bg-teal-600 shadow-teal-600/25'}`}>
+                {isPaused ? <PauseCircle className="h-5.5 w-5.5" /> : <ClipboardCheck className="h-5.5 w-5.5" />}
               </span>
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-bold">{active.stockTakeNo}</h2>
-                  <StatusBadge status="active" />
+                  <h2 className="text-lg font-bold">{open.stockTakeNo}</h2>
+                  {isPaused ? <StatusBadge status="paused" /> : <StatusBadge status="active" />}
+                  {(open.resumeCount ?? 0) > 0 && (
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold">
+                      resumed {open.resumeCount}×{open.resumedAt ? ` · last ${fmtDateTime(open.resumedAt)}` : ''}
+                    </span>
+                  )}
                   <span className="text-xs text-muted-foreground">
-                    {active.title} · {active.scope === 'category' ? active.scopeCategory : 'All products'} · by {active.startedByName} · {fmtDateTime(active.startedAt)}
+                    {open.title} · {open.scope === 'category' ? open.scopeCategory : 'All products'} · by {open.startedByName} · {fmtDateTime(open.startedAt)}
                   </span>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Physical count in progress — system stock was snapshotted when the session opened.
-                </p>
+                {isPaused ? (
+                  <p className="text-sm text-muted-foreground">
+                    Session paused{open.pausedAt ? ` ${fmtDateTime(open.pausedAt)}` : ''}{open.pausedByName ? ` by ${open.pausedByName}` : ''}{open.pauseNote ? ` — ${open.pauseNote}` : ''}.
+                    The shop keeps trading normally — resume any later day: uncounted lines re-baseline to current stock and products registered in the meantime join the sheet.
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Physical count in progress — system stock was snapshotted when the session opened.
+                  </p>
+                )}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => openCountSheet(active)}>
-                <PackageSearch className="h-4 w-4" /> Count Products
-              </Button>
-              <Button variant="outline" size="sm" className="rounded-full" onClick={() => openComplete(active)}>
+              {isPaused ? (
+                <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => resumeTake(open)}>
+                  <PlayCircle className="h-4 w-4" /> Resume Counting
+                </Button>
+              ) : (
+                <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => openCountSheet(open)}>
+                  <PackageSearch className="h-4 w-4" /> Count Products
+                </Button>
+              )}
+              {!isPaused && (
+                <Button variant="outline" size="sm" className="rounded-full text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:hover:bg-amber-500/10" onClick={() => openPause(open)}>
+                  <PauseCircle className="h-4 w-4" /> Pause
+                </Button>
+              )}
+              <Button variant="outline" size="sm" className="rounded-full" onClick={() => openComplete(open)}>
                 <ListChecks className="h-4 w-4" /> Review &amp; Complete
               </Button>
-              <Button variant="outline" size="sm" className="rounded-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-500/10" onClick={() => openCancel(active)}>
+              <Button variant="outline" size="sm" className="rounded-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-500/10" onClick={() => openCancel(open)}>
                 <XCircle className="h-4 w-4" /> Cancel
               </Button>
             </div>
@@ -291,30 +339,30 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
           <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-xl border bg-card p-4">
               <p className="text-xs text-muted-foreground">Lines Counted</p>
-              <p className="text-xl font-bold tabular-nums">{active.countedItems}<span className="text-sm font-normal text-muted-foreground"> / {active.totalItems}</span></p>
-              <Progress value={active.totalItems > 0 ? (active.countedItems / active.totalItems) * 100 : 0} className="mt-2 h-1.5" aria-label="Count progress" />
+              <p className="text-xl font-bold tabular-nums">{open.countedItems}<span className="text-sm font-normal text-muted-foreground"> / {open.totalItems}</span></p>
+              <Progress value={open.totalItems > 0 ? (open.countedItems / open.totalItems) * 100 : 0} className="mt-2 h-1.5" aria-label="Count progress" />
             </div>
             <div className="rounded-xl border bg-card p-4">
               <p className="text-xs text-muted-foreground">Units — System vs Counted</p>
-              <p className="text-xl font-bold tabular-nums">{active.systemQty} <span className="text-sm font-normal text-muted-foreground">→ {active.countedQty}</span></p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">snapshot at session start → physical</p>
+              <p className="text-xl font-bold tabular-nums">{open.systemQty} <span className="text-sm font-normal text-muted-foreground">→ {open.countedQty}</span></p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{(open.resumeCount ?? 0) > 0 ? 're-baselined to current stock on resume' : 'snapshot at session start → physical'}</p>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <p className="text-xs text-muted-foreground">Net Quantity Variance</p>
-              <p className={`text-xl font-bold tabular-nums ${active.varianceQty > 0 ? 'text-emerald-600 dark:text-emerald-400' : active.varianceQty < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
-                {signedQty(active.varianceQty)} <span className="text-xs font-normal text-muted-foreground">units</span>
+              <p className={`text-xl font-bold tabular-nums ${open.varianceQty > 0 ? 'text-emerald-600 dark:text-emerald-400' : open.varianceQty < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                {signedQty(open.varianceQty)} <span className="text-xs font-normal text-muted-foreground">units</span>
               </p>
               <div className="mt-1.5 flex gap-1.5">
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">+{active.positiveLines} lines</span>
-                <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">−{active.negativeLines} lines</span>
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">+{open.positiveLines} lines</span>
+                <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">−{open.negativeLines} lines</span>
               </div>
             </div>
             <div className="rounded-xl border bg-card p-4">
               <p className="text-xs text-muted-foreground">Value Impact (at cost)</p>
-              <p className={`text-xl font-bold tabular-nums ${active.varianceValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                {active.varianceValue >= 0 ? '+' : '−'}{fmtMoney(Math.abs(active.varianceValue))}
+              <p className={`text-xl font-bold tabular-nums ${open.varianceValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                {open.varianceValue >= 0 ? '+' : '−'}{fmtMoney(Math.abs(open.varianceValue))}
               </p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">{active.matchedLines} lines matched exactly</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">{open.matchedLines} lines matched exactly</p>
             </div>
           </div>
         </Card>
@@ -359,6 +407,7 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="paused">Paused</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                   <SelectItem value="cancelled">Cancelled</SelectItem>
                 </SelectContent>
@@ -368,7 +417,7 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {[
-              { label: 'Completed Counts', value: String(historyStats.completed), hint: `${historyStats.cancelled} cancelled sessions` },
+              { label: 'Completed Counts', value: String(historyStats.completed), hint: `${historyStats.cancelled} cancelled · ${historyStats.paused} paused` },
               { label: 'Net Variance Value', value: fmtMoney(historyStats.netValue), hint: 'across completed counts, at cost' },
               { label: 'Count Accuracy', value: `${historyStats.accuracy}%`, hint: 'lines matched system exactly' },
               { label: 'Sessions on Record', value: String(takes.length), hint: 'all time' },
@@ -650,6 +699,12 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
         take={cancelTake}
         onCancelled={load}
       />
+      <PauseTakeDialog
+        open={pauseOpen}
+        onOpenChange={setPauseOpen}
+        take={pauseTake}
+        onPaused={load}
+      />
       <TakeDetailDialog open={detailOpen} onOpenChange={setDetailOpen} takeId={detailId} />
     </div>
   )
@@ -661,7 +716,7 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
 
 function TakeStatusBadge({ status }: { status: string }) {
   if (status === 'in_progress') return <StatusBadge status="active" />
-  return <StatusBadge status={status} />
+  return <StatusBadge status={status} /> // paused / completed / cancelled map in shared styles
 }
 
 function FieldLabel({ text }: { text: string }) {

@@ -19,7 +19,7 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-const CACHE_VERSION = 'medipos-v16' // v15: pre-expiry disposal desk — bulk write-off / supplier return before expiry, preExpiryDisposals report card
+const CACHE_VERSION = 'medipos-v17' // v17: stock-take pause/resume — park a count session, resume any later day with uncounted-line re-baselining
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

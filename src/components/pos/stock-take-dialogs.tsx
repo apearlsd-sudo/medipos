@@ -15,7 +15,7 @@ import { VarianceBadge, VarianceValueBadge } from '@/components/pos/stock-take-b
 import { BarcodeScannerDialog } from '@/components/pos/barcode-scanner'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
 import {
-  AlertTriangle, Check, CheckCircle2, ClipboardCheck, Loader2, PackageSearch, PlayCircle, ScanLine, ScrollText, Search, XCircle,
+  AlertTriangle, Check, CheckCircle2, ClipboardCheck, Loader2, PackageSearch, PauseCircle, PlayCircle, ScanLine, ScrollText, Search, XCircle,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -65,6 +65,11 @@ export interface StockTakeRec {
   matchedLines: number
   startedAt: string
   completedAt: string | null
+  pausedAt?: string | null
+  pausedByName?: string | null
+  pauseNote?: string | null
+  resumedAt?: string | null
+  resumeCount?: number
   items?: StockTakeItemRec[]
 }
 
@@ -164,6 +169,77 @@ export function StartTakeDialog({ open, onOpenChange, onStarted }: {
           <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={start} disabled={submitting || !title.trim() || (scope === 'category' && !categoryId)}>
             {submitting ? 'Snapshotting stock…' : 'Start Count Session'}
           </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Pause dialog — park the session; counting resumes any later day
+// ---------------------------------------------------------------------------
+
+export function PauseTakeDialog({ open, onOpenChange, take, onPaused }: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  take: StockTakeRec | null
+  onPaused: () => void
+}) {
+  const [note, setNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => { if (open) setNote('') }, [open])
+
+  const pause = async () => {
+    if (!take) return
+    setSubmitting(true)
+    try {
+      const res = await fetch(`/api/stock-takes/${take.id}/pause`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: note.trim() || null }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        toast({ title: 'Cannot pause count', description: json.error ?? 'Unknown error', variant: 'destructive' })
+        return
+      }
+      toast({
+        title: `Count ${json.take.stockTakeNo} paused`,
+        description: 'Counting is parked — resume any time, even days from now. Every count entered so far is kept.',
+      })
+      onOpenChange(false)
+      onPaused()
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (!take) return null
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PauseCircle className="h-5 w-5 text-amber-500" /> Pause {take.stockTakeNo}?
+          </DialogTitle>
+          <DialogDescription>
+            The session is parked — nothing is lost. The shop keeps trading normally; when you resume
+            (today, tomorrow or next week) the not-yet-counted lines are re-baselined to the then-current
+            system stock, and products registered in the meantime join the sheet.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Reason (optional)</Label>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. closing time, counting resumes tomorrow morning" />
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" className="rounded-full" onClick={() => onOpenChange(false)}>Keep Counting</Button>
+            <Button className="rounded-full bg-amber-500 hover:bg-amber-600" onClick={pause} disabled={submitting}>
+              {submitting ? 'Pausing…' : 'Pause Session'}
+            </Button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -314,6 +390,7 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
 
   const progressPct = take && take.totalItems > 0 ? (take.countedItems / take.totalItems) * 100 : 0
   const allCounted = take ? take.countedItems === take.totalItems && take.totalItems > 0 : false
+  const paused = take?.status === 'paused'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -328,6 +405,16 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
             Type the quantity you physically count on the shelf. Counts save automatically on Enter or when you leave the field.
           </DialogDescription>
         </DialogHeader>
+
+        {paused && (
+          <div className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+            <PauseCircle className="h-4 w-4 shrink-0" />
+            <span>
+              This session is paused{take?.pausedAt ? ` since ${fmtDateTime(take.pausedAt)}` : ''} — counts are disabled.
+              Resume the session from the Stock Take panel to continue counting.
+            </span>
+          </div>
+        )}
 
         {loading ? (
           <div className="space-y-2 py-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
@@ -429,6 +516,7 @@ export function CountSheetDialog({ open, onOpenChange, takeId, onChanged, onComp
                             step={1}
                             inputMode="numeric"
                             value={draft}
+                            disabled={paused}
                             ref={(el) => { if (el) inputRefs.current.set(item.id, el); else inputRefs.current.delete(item.id) }}
                             onChange={(e) => {
                               setDrafts((d) => ({ ...d, [item.id]: e.target.value }))
@@ -762,6 +850,17 @@ export function TakeDetailDialog({ open, onOpenChange, takeId }: {
               </DialogDescription>
             </DialogHeader>
 
+            {(take.status === 'paused' || (take.resumeCount ?? 0) > 0) && (
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
+                <span className="flex items-center gap-1.5 font-semibold">
+                  <PauseCircle className="h-3.5 w-3.5" />
+                  {take.status === 'paused' ? `Paused${take.pausedAt ? ` since ${fmtDateTime(take.pausedAt)}` : ''}` : 'Multi-day session'}
+                </span>
+                {(take.resumeCount ?? 0) > 0 && <span>resumed {take.resumeCount}× · last {take.resumedAt ? fmtDateTime(take.resumedAt) : '—'}</span>}
+                {take.pausedByName && take.status === 'paused' && <span>by {take.pausedByName}</span>}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 { label: 'Lines', value: `${take.countedItems}/${take.totalItems}` },
@@ -797,6 +896,9 @@ export function TakeDetailDialog({ open, onOpenChange, takeId }: {
 
             {take.note && (
               <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold">Opening note:</span> {take.note}</p>
+            )}
+            {take.pauseNote && (
+              <p className="rounded-lg bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><span className="font-semibold">Pause note:</span> {take.pauseNote}</p>
             )}
             {take.completeNote && (
               <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold">Closing note:</span> {take.completeNote}</p>

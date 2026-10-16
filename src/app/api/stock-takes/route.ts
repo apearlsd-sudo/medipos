@@ -61,10 +61,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Pick a category to count' }, { status: 400 })
     }
 
-    const open = await db.stockTake.findFirst({ where: { status: 'in_progress' } })
+    // One open session at a time — paused sessions still hold the snapshot
+    // desk, so they block a new start too (resume or cancel them first).
+    const open = await db.stockTake.findFirst({ where: { status: { in: ['in_progress', 'paused'] } } })
     if (open) {
       return NextResponse.json(
-        { error: `Count session ${open.stockTakeNo} is still in progress. Complete or cancel it before starting a new one.` },
+        {
+          error: open.status === 'paused'
+            ? `Count session ${open.stockTakeNo} is paused. Resume or cancel it before starting a new one.`
+            : `Count session ${open.stockTakeNo} is still in progress. Complete or cancel it before starting a new one.`,
+        },
         { status: 409 },
       )
     }

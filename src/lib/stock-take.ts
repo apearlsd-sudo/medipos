@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { nextDocNo } from '@/lib/doc-no'
 
 // ---------------------------------------------------------------------------
 // Shared stock-take computation helpers (server-side)
@@ -77,10 +78,19 @@ export async function refreshTakeCounters(stockTakeId: string): Promise<StockTak
   return agg
 }
 
-/** Generate the next sequential stock-take number: ST-2026-0001 */
+/**
+ * Generate the next sequential stock-take number: ST-2026-0001.
+ * Gap-proof (highest existing + 1, not count + 1): verify cleanups and
+ * cancelled-session deletes must never make the next number collide.
+ */
 export async function nextStockTakeNo(): Promise<string> {
-  const count = await db.stockTake.count()
-  return `ST-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
+  const prefix = `ST-${new Date().getFullYear()}-`
+  const last = await db.stockTake.findFirst({
+    where: { stockTakeNo: { startsWith: prefix } },
+    orderBy: { stockTakeNo: 'desc' },
+    select: { stockTakeNo: true },
+  })
+  return nextDocNo(last?.stockTakeNo, prefix)
 }
 
 export interface StockTakeReportRow {
