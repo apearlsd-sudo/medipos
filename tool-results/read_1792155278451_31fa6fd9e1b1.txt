@@ -1,0 +1,771 @@
+     1→     1→'use client'
+     2→     2→
+     3→     3→import { Button } from '@/components/ui/button'
+     4→     4→import { Card } from '@/components/ui/card'
+     5→     5→import { Input } from '@/components/ui/input'
+     6→     6→import { Progress } from '@/components/ui/progress'
+     7→     7→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+     8→     8→import { Skeleton } from '@/components/ui/skeleton'
+     9→     9→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    10→    10→import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    11→    11→import { PageHeader, StatusBadge } from '@/components/pos/shared'
+    12→    12→import { VarianceBadge, VarianceValueBadge, signedQty } from '@/components/pos/stock-take-badges'
+    13→    13→import {
+    14→    14→  CancelTakeDialog, CompleteTakeDialog, CountSheetDialog, PauseTakeDialog, StartTakeDialog, TakeDetailDialog,
+    15→    15→  type StockTakeRec,
+    16→    16→} from '@/components/pos/stock-take-dialogs'
+    17→    17→import { fmtCompact, fmtDate, fmtDateTime, fmtMoney } from '@/lib/format'
+    18→    18→import type { StoreSettingsMap } from '@/lib/store-settings'
+    19→    19→import {
+    20→    20→  BarChart3, CalendarRange, ClipboardCheck, Download, Eye, FileText, History, ListChecks, PackageSearch,
+    21→    21→  PauseCircle, PlayCircle, RefreshCcw, Scale, TrendingDown, TrendingUp, XCircle,
+    22→    22→} from 'lucide-react'
+    23→    23→import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+    24→    24→import { useCallback, useEffect, useMemo, useState } from 'react'
+    25→    25→import jsPDF from 'jspdf'
+    26→    26→import autoTable from 'jspdf-autotable'
+    27→    27→import { toast } from '@/hooks/use-toast'
+    28→    28→
+    29→    29→// ---------------------------------------------------------------------------
+    30→    30→// Module
+    31→    31→// ---------------------------------------------------------------------------
+    32→    32→
+    33→    33→export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap | null }) {
+    34→    34→  const [takes, setTakes] = useState<StockTakeRec[]>([])
+    35→    35→  const [loading, setLoading] = useState(true)
+    36→    36→  const [tab, setTab] = useState<'history' | 'report'>('history')
+    37→    37→
+    38→    38→  // filters
+    39→    39→  const [search, setSearch] = useState('')
+    40→    40→  const [statusFilter, setStatusFilter] = useState('all')
+    41→    41→
+    42→    42→  // report
+    43→    43→  const todayIso = new Date().toISOString().slice(0, 10)
+    44→    44→  const monthAgoIso = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10)
+    45→    45→  const [from, setFrom] = useState(monthAgoIso)
+    46→    46→  const [to, setTo] = useState(todayIso)
+    47→    47→  const [report, setReport] = useState<StockTakeReportData | null>(null)
+    48→    48→  const [reportLoading, setReportLoading] = useState(false)
+    49→    49→
+    50→    50→  // dialogs
+    51→    51→  const [startOpen, setStartOpen] = useState(false)
+    52→    52→  const [sheetOpen, setSheetOpen] = useState(false)
+    53→    53→  const [sheetTakeId, setSheetTakeId] = useState<string | null>(null)
+    54→    54→  const [completeOpen, setCompleteOpen] = useState(false)
+    55→    55→  const [completeTake, setCompleteTake] = useState<StockTakeRec | null>(null)
+    56→    56→  const [cancelOpen, setCancelOpen] = useState(false)
+    57→    57→  const [cancelTake, setCancelTake] = useState<StockTakeRec | null>(null)
+    58→    58→  const [pauseOpen, setPauseOpen] = useState(false)
+    59→    59→  const [pauseTake, setPauseTake] = useState<StockTakeRec | null>(null)
+    60→    60→  const [detailOpen, setDetailOpen] = useState(false)
+    61→    61→  const [detailId, setDetailId] = useState<string | null>(null)
+    62→    62→
+    63→    63→  const load = useCallback(async () => {
+    64→    64→    try {
+    65→    65→      const res = await fetch('/api/stock-takes', { cache: 'no-store' })
+    66→    66→      const json = await res.json()
+    67→    67→      setTakes(json.takes ?? [])
+    68→    68→    } finally {
+    69→    69→      setLoading(false)
+    70→    70→    }
+    71→    71→  }, [])
+    72→    72→
+    73→    73→  useEffect(() => { load() }, [load])
+    74→    74→
+    75→    75→  const loadReport = useCallback(async (f = from, t = to) => {
+    76→    76→    setReportLoading(true)
+    77→    77→    try {
+    78→    78→      const res = await fetch(`/api/stock-takes/report?from=${f}&to=${t}`, { cache: 'no-store' })
+    79→    79→      if (res.ok) setReport(await res.json())
+    80→    80→    } finally {
+    81→    81→      setReportLoading(false)
+    82→    82→    }
+    83→    83→  }, [from, to])
+    84→    84→
+    85→    85→  useEffect(() => {
+    86→    86→    if (tab === 'report') loadReport()
+    87→    87→  }, [tab, loadReport])
+    88→    88→
+    89→    89→  const active = useMemo(() => takes.find((t) => t.status === 'in_progress') ?? null, [takes])
+    90→    90→  const paused = useMemo(() => takes.find((t) => t.status === 'paused') ?? null, [takes])
+    91→    91→  const open = active ?? paused
+    92→    92→  const isPaused = !!paused
+    93→    93→
+    94→    94→  const filteredHistory = useMemo(() => {
+    95→    95→    let list = takes
+    96→    96→    if (statusFilter !== 'all') list = list.filter((t) => t.status === statusFilter)
+    97→    97→    if (search.trim()) {
+    98→    98→      const q = search.trim().toLowerCase()
+    99→    99→      list = list.filter((t) =>
+   100→   100→        t.stockTakeNo.toLowerCase().includes(q) ||
+   101→   101→        t.title.toLowerCase().includes(q) ||
+   102→   102→        t.startedByName.toLowerCase().includes(q))
+   103→   103→    }
+   104→   104→    return list
+   105→   105→  }, [takes, statusFilter, search])
+   106→   106→
+   107→   107→  const historyStats = useMemo(() => {
+   108→   108→    const completed = takes.filter((t) => t.status === 'completed')
+   109→   109→    const netValue = completed.reduce((n, t) => n + t.varianceValue, 0)
+   110→   110→    const lines = completed.reduce((n, t) => n + t.countedItems, 0)
+   111→   111→    const matched = completed.reduce((n, t) => n + t.matchedLines, 0)
+   112→   112→    return {
+   113→   113→      completed: completed.length,
+   114→   114→      cancelled: takes.filter((t) => t.status === 'cancelled').length,
+   115→   115→      paused: takes.filter((t) => t.status === 'paused').length,
+   116→   116→      netValue,
+   117→   117→      accuracy: lines > 0 ? Math.round((matched / lines) * 1000) / 10 : 0,
+   118→   118→    }
+   119→   119→  }, [takes])
+   120→   120→
+   121→   121→  const openCountSheet = (t: StockTakeRec) => { setSheetTakeId(t.id); setSheetOpen(true) }
+   122→   122→  const openComplete = (t: StockTakeRec) => { setCompleteTake(t); setCompleteOpen(true) }
+   123→   123→  const openCancel = (t: StockTakeRec) => { setCancelTake(t); setCancelOpen(true) }
+   124→   124→  const openPause = (t: StockTakeRec) => { setPauseTake(t); setPauseOpen(true) }
+   125→   125→  const openDetail = (id: string) => { setDetailId(id); setDetailOpen(true) }
+   126→   126→
+   127→   127→  const resumeTake = async (t: StockTakeRec) => {
+   128→   128→    try {
+   129→   129→      const res = await fetch(`/api/stock-takes/${t.id}/resume`, { method: 'PUT' })
+   130→   130→      const json = await res.json()
+   131→   131→      if (!res.ok) {
+   132→   132→        toast({ title: 'Cannot resume count', description: json.error ?? 'Unknown error', variant: 'destructive' })
+   133→   133→        return
+   134→   134→      }
+   135→   135→      toast({
+   136→   136→        title: `Count ${json.take.stockTakeNo} resumed`,
+   137→   137→        description: `${json.rebaselined ?? 0} uncounted line(s) re-baselined to current stock${json.added ? ` · ${json.added} new product(s) added to the sheet` : ''} — counting continues where you left off.`,
+   138→   138→      })
+   139→   139→      load()
+   140→   140→    } catch {
+   141→   141→      toast({ title: 'Network error', description: 'Session not resumed — try again.', variant: 'destructive' })
+   142→   142→    }
+   143→   143→  }
+   144→   144→
+   145→   145→  const applyPreset = (days: number) => {
+   146→   146→    const f = new Date(Date.now() - (days - 1) * 86400000).toISOString().slice(0, 10)
+   147→   147→    const t = new Date().toISOString().slice(0, 10)
+   148→   148→    setFrom(f)
+   149→   149→    setTo(t)
+   150→   150→    loadReport(f, t)
+   151→   151→  }
+   152→   152→
+   153→   153→  const exportCsv = () => {
+   154→   154→    if (!report) return
+   155→   155→    const rows: (string | number)[][] = [
+   156→   156→      ['Report', 'Stock Take Variance Report'],
+   157→   157→      ['Period', `${report.from} to ${report.to}`],
+   158→   158→      ['Sessions Completed', report.summary.takes],
+   159→   159→      ['Lines Counted', report.summary.linesCounted],
+   160→   160→      ['Count Accuracy %', report.summary.accuracyPct],
+   161→   161→      ['Net Units Variance', signedQty(report.summary.varianceQty)],
+   162→   162→      ['Net Value Variance', report.summary.varianceValue],
+   163→   163→      ['Shortage Value', report.summary.shortageValue],
+   164→   164→      ['Surplus Value', report.summary.surplusValue],
+   165→   165→      [],
+   166→   166→      ['SESSIONS'],
+   167→   167→      ['Take No', 'Title', 'Scope', 'Started By', 'Started', 'Completed', 'Lines', 'System Units', 'Counted Units', 'Net Qty Variance', 'Net Value Variance', 'Applied To Stock'],
+   168→   168→      ...report.takes.map((t) => [
+   169→   169→        t.stockTakeNo, t.title, t.scope === 'category' ? t.scopeCategory ?? 'category' : 'all',
+   170→   170→        t.startedByName, new Date(t.startedAt).toISOString(), t.completedAt ? new Date(t.completedAt).toISOString() : '',
+   171→   171→        t.totalItems, t.systemQty, t.countedQty, signedQty(t.varianceQty), t.varianceValue, t.applyToStock ? 'yes' : 'no',
+   172→   172→      ]),
+   173→   173→      [],
+   174→   174→      ['PRODUCT VARIANCES'],
+   175→   175→      ['Product', 'SKU', 'Takes', 'System Units', 'Counted Units', 'Net Qty Variance', 'Value Impact'],
+   176→   176→      ...report.topVariances.map((p) => [p.name, p.sku, p.takes, p.systemTotal, p.countedTotal, signedQty(p.varianceQty), p.varianceValue]),
+   177→   177→    ]
+   178→   178→    const csv = rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+   179→   179→    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+   180→   180→    const a = document.createElement('a')
+   181→   181→    a.href = url
+   182→   182→    a.download = `stock-take-report-${report.from}-to-${report.to}.csv`
+   183→   183→    a.click()
+   184→   184→    URL.revokeObjectURL(url)
+   185→   185→    toast({ title: 'Exported', description: 'Variance report written to CSV.' })
+   186→   186→  }
+   187→   187→
+   188→   188→  const exportPDF = () => {
+   189→   189→    if (!report) return
+   190→   190→    const storeName = storeSettings?.storeName || 'MediPOS Pharmacy'
+   191→   191→    const currency = storeSettings?.currencyCode || 'USD'
+   192→   192→
+   193→   193→    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+   194→   194→    const pageW = doc.internal.pageSize.getWidth()
+   195→   195→
+   196→   196→    // Header band
+   197→   197→    doc.setFillColor(13, 148, 136)
+   198→   198→    doc.rect(0, 0, pageW, 26, 'F')
+   199→   199→    doc.setTextColor(255, 255, 255)
+   200→   200→    doc.setFontSize(15)
+   201→   201→    doc.text(storeName, 14, 11)
+   202→   202→    doc.setFontSize(10)
+   203→   203→    doc.text(`Stock Take Variance Report — ${report.from} to ${report.to} (${currency})`, 14, 19)
+   204→   204→    doc.setFontSize(8)
+   205→   205→    doc.text(`Generated ${new Date().toLocaleString()}`, pageW - 14, 11, { align: 'right' })
+   206→   206→    doc.text('MediPOS Pro', pageW - 14, 19, { align: 'right' })
+   207→   207→
+   208→   208→    // Summary block
+   209→   209→    doc.setTextColor(40)
+   210→   210→    doc.setFontSize(10)
+   211→   211→    const s = report.summary
+   212→   212→    const left = [
+   213→   213→      `Sessions completed: ${s.takes}`,
+   214→   214→      `Lines counted: ${s.linesCounted}`,
+   215→   215→      `Count accuracy: ${s.accuracyPct}% matched`,
+   216→   216→    ]
+   217→   217→    const right = [
+   218→   218→      `Net units variance: ${signedQty(s.varianceQty)}`,
+   219→   219→      `Net value variance: ${fmtMoney(s.varianceValue)}`,
+   220→   220→      `Shortage ${fmtMoney(Math.abs(s.shortageValue))} · Surplus ${fmtMoney(s.surplusValue)}`,
+   221→   221→    ]
+   222→   222→    left.forEach((line, i) => doc.text(line, 14, 36 + i * 6))
+   223→   223→    right.forEach((line, i) => doc.text(line, pageW / 2 + 10, 36 + i * 6))
+   224→   224→
+   225→   225→    autoTable(doc, {
+   226→   226→      head: [['Take No', 'Title', 'Scope', 'Started By', 'Completed', 'Lines', 'System', 'Counted', 'Net Qty', 'Net Value', 'Applied']],
+   227→   227→      body: report.takes.map((t) => [
+   228→   228→        t.stockTakeNo, t.title, t.scope === 'category' ? t.scopeCategory ?? 'category' : 'All products',
+   229→   229→        t.startedByName, t.completedAt ? fmtDateTime(t.completedAt) : '—',
+   230→   230→        t.totalItems, t.systemQty, t.countedQty, signedQty(t.varianceQty), fmtMoney(t.varianceValue), t.applyToStock ? 'Yes' : 'No',
+   231→   231→      ]),
+   232→   232→      startY: 58,
+   233→   233→      styles: { fontSize: 8, cellPadding: 2 },
+   234→   234→      headStyles: { fillColor: [13, 148, 136], textColor: 255, fontStyle: 'bold' },
+   235→   235→      alternateRowStyles: { fillColor: [245, 250, 250] },
+   236→   236→      margin: { left: 14, right: 14 },
+   237→   237→    })
+   238→   238→
+   239→   239→    const afterFirst = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? 80
+   240→   240→    autoTable(doc, {
+   241→   241→      head: [['Product', 'SKU', 'Takes', 'System Units', 'Counted Units', 'Net Qty Variance', 'Value Impact']],
+   242→   242→      body: report.topVariances.map((p) => [
+   243→   243→        p.name, p.sku, p.takes, p.systemTotal, p.countedTotal, signedQty(p.varianceQty), fmtMoney(p.varianceValue),
+   244→   244→      ]),
+   245→   245→      startY: afterFirst + 8,
+   246→   246→      styles: { fontSize: 8, cellPadding: 2 },
+   247→   247→      headStyles: { fillColor: [13, 148, 136], textColor: 255, fontStyle: 'bold' },
+   248→   248→      alternateRowStyles: { fillColor: [245, 250, 250] },
+   249→   249→      margin: { left: 14, right: 14 },
+   250→   250→    })
+   251→   251→
+   252→   252→    const pages = doc.getNumberOfPages()
+   253→   253→    for (let i = 1; i <= pages; i++) {
+   254→   254→      doc.setPage(i)
+   255→   255→      doc.setFontSize(8)
+   256→   256→      doc.setTextColor(120)
+   257→   257→      doc.text(`Page ${i} of ${pages}`, pageW / 2, doc.internal.pageSize.getHeight() - 6, { align: 'center' })
+   258→   258→    }
+   259→   259→
+   260→   260→    doc.save(`stock-take-report-${report.from}-to-${report.to}.pdf`)
+   261→   261→  }
+   262→   262→
+   263→   263→  return (
+   264→   264→    <div className="space-y-6">
+   265→   265→      <PageHeader
+   266→   266→        title="Stock Take"
+   267→   267→        breadcrumb="Stock Take"
+   268→   268→        actions={
+   269→   269→          <>
+   270→   270→            <Button variant="outline" size="icon" className="rounded-full" onClick={load} aria-label="Refresh stock takes">
+   271→   271→              <RefreshCcw className="h-4 w-4" />
+   272→   272→            </Button>
+   273→   273→            <Button className="rounded-full bg-teal-600 hover:bg-teal-700" disabled={!!open} onClick={() => setStartOpen(true)}>
+   274→   274→              <PlayCircle className="h-4 w-4" /> Start Stock Take
+   275→   275→            </Button>
+   276→   276→          </>
+   277→   277→        }
+   278→   278→      />
+   279→   279→
+   280→   280→      {/* ============ Active count session ============ */}
+   281→   281→      {loading ? (
+   282→   282→        <Skeleton className="h-56 rounded-2xl" />
+   283→   283→      ) : open ? (
+   284→   284→        <Card className={`overflow-hidden ${isPaused ? 'border-amber-500/30' : 'border-teal-600/20'}`}>
+   285→   285→          <div className={`flex flex-col gap-3 border-b px-5 py-4 sm:flex-row sm:items-center sm:justify-between ${isPaused ? 'bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-transparent' : 'bg-gradient-to-r from-teal-600/10 via-teal-500/5 to-transparent'}`}>
+   286→   286→            <div className="flex items-center gap-3">
+   287→   287→              <span className={`flex h-11 w-11 items-center justify-center rounded-xl text-white shadow-md ${isPaused ? 'bg-amber-500 shadow-amber-500/25' : 'bg-teal-600 shadow-teal-600/25'}`}>
+   288→   288→                {isPaused ? <PauseCircle className="h-5.5 w-5.5" /> : <ClipboardCheck className="h-5.5 w-5.5" />}
+   289→   289→              </span>
+   290→   290→              <div>
+   291→   291→                <div className="flex flex-wrap items-center gap-2">
+   292→   292→                  <h2 className="text-lg font-bold">{open.stockTakeNo}</h2>
+   293→   293→                  {isPaused ? <StatusBadge status="paused" /> : <StatusBadge status="active" />}
+   294→   294→                  {(open.resumeCount ?? 0) > 0 && (
+   295→   295→                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold">
+   296→   296→                      resumed {open.resumeCount}×{open.resumedAt ? ` · last ${fmtDateTime(open.resumedAt)}` : ''}
+   297→   297→                    </span>
+   298→   298→                  )}
+   299→   299→                  <span className="text-xs text-muted-foreground">
+   300→   300→                    {open.title} · {open.scope === 'category' ? open.scopeCategory : 'All products'} · by {open.startedByName} · {fmtDateTime(open.startedAt)}
+   301→   301→                  </span>
+   302→   302→                </div>
+   303→   303→                {isPaused ? (
+   304→   304→                  <p className="text-sm text-muted-foreground">
+   305→   305→                    Session paused{open.pausedAt ? ` ${fmtDateTime(open.pausedAt)}` : ''}{open.pausedByName ? ` by ${open.pausedByName}` : ''}{open.pauseNote ? ` — ${open.pauseNote}` : ''}.
+   306→   306→                    The shop keeps trading normally — resume any later day: uncounted lines re-baseline to current stock and products registered in the meantime join the sheet.
+   307→   307→                  </p>
+   308→   308→                ) : (
+   309→   309→                  <p className="text-sm text-muted-foreground">
+   310→   310→                    Physical count in progress — system stock was snapshotted when the session opened.
+   311→   311→                  </p>
+   312→   312→                )}
+   313→   313→              </div>
+   314→   314→            </div>
+   315→   315→            <div className="flex flex-wrap items-center gap-2">
+   316→   316→              {isPaused ? (
+   317→   317→                <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => resumeTake(open)}>
+   318→   318→                  <PlayCircle className="h-4 w-4" /> Resume Counting
+   319→   319→                </Button>
+   320→   320→              ) : (
+   321→   321→                <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => openCountSheet(open)}>
+   322→   322→                  <PackageSearch className="h-4 w-4" /> Count Products
+   323→   323→                </Button>
+   324→   324→              )}
+   325→   325→              {!isPaused && (
+   326→   326→                <Button variant="outline" size="sm" className="rounded-full text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:hover:bg-amber-500/10" onClick={() => openPause(open)}>
+   327→   327→                  <PauseCircle className="h-4 w-4" /> Pause
+   328→   328→                </Button>
+   329→   329→              )}
+   330→   330→              <Button variant="outline" size="sm" className="rounded-full" onClick={() => openComplete(open)}>
+   331→   331→                <ListChecks className="h-4 w-4" /> Review &amp; Complete
+   332→   332→              </Button>
+   333→   333→              <Button variant="outline" size="sm" className="rounded-full text-red-600 hover:bg-red-50 hover:text-red-700 dark:hover:bg-red-500/10" onClick={() => openCancel(open)}>
+   334→   334→                <XCircle className="h-4 w-4" /> Cancel
+   335→   335→              </Button>
+   336→   336→            </div>
+   337→   337→          </div>
+   338→   338→
+   339→   339→          <div className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
+   340→   340→            <div className="rounded-xl border bg-card p-4">
+   341→   341→              <p className="text-xs text-muted-foreground">Lines Counted</p>
+   342→   342→              <p className="text-xl font-bold tabular-nums">{open.countedItems}<span className="text-sm font-normal text-muted-foreground"> / {open.totalItems}</span></p>
+   343→   343→              <Progress value={open.totalItems > 0 ? (open.countedItems / open.totalItems) * 100 : 0} className="mt-2 h-1.5" aria-label="Count progress" />
+   344→   344→            </div>
+   345→   345→            <div className="rounded-xl border bg-card p-4">
+   346→   346→              <p className="text-xs text-muted-foreground">Units — System vs Counted</p>
+   347→   347→              <p className="text-xl font-bold tabular-nums">{open.systemQty} <span className="text-sm font-normal text-muted-foreground">→ {open.countedQty}</span></p>
+   348→   348→              <p className="mt-0.5 text-[11px] text-muted-foreground">{(open.resumeCount ?? 0) > 0 ? 're-baselined to current stock on resume' : 'snapshot at session start → physical'}</p>
+   349→   349→            </div>
+   350→   350→            <div className="rounded-xl border bg-card p-4">
+   351→   351→              <p className="text-xs text-muted-foreground">Net Quantity Variance</p>
+   352→   352→              <p className={`text-xl font-bold tabular-nums ${open.varianceQty > 0 ? 'text-emerald-600 dark:text-emerald-400' : open.varianceQty < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+   353→   353→                {signedQty(open.varianceQty)} <span className="text-xs font-normal text-muted-foreground">units</span>
+   354→   354→              </p>
+   355→   355→              <div className="mt-1.5 flex gap-1.5">
+   356→   356→                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400">+{open.positiveLines} lines</span>
+   357→   357→                <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-400">−{open.negativeLines} lines</span>
+   358→   358→              </div>
+   359→   359→            </div>
+   360→   360→            <div className="rounded-xl border bg-card p-4">
+   361→   361→              <p className="text-xs text-muted-foreground">Value Impact (at cost)</p>
+   362→   362→              <p className={`text-xl font-bold tabular-nums ${open.varianceValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+   363→   363→                {open.varianceValue >= 0 ? '+' : '−'}{fmtMoney(Math.abs(open.varianceValue))}
+   364→   364→              </p>
+   365→   365→              <p className="mt-0.5 text-[11px] text-muted-foreground">{open.matchedLines} lines matched exactly</p>
+   366→   366→            </div>
+   367→   367→          </div>
+   368→   368→        </Card>
+   369→   369→      ) : (
+   370→   370→        <Card className="flex flex-col items-center gap-4 border-dashed p-10 text-center">
+   371→   371→          <span className="flex h-16 w-16 items-center justify-center rounded-2xl bg-teal-600/10 text-teal-600 dark:text-teal-400">
+   372→   372→            <ClipboardCheck className="h-8 w-8" />
+   373→   373→          </span>
+   374→   374→          <div>
+   375→   375→            <h2 className="text-lg font-bold">No count session running</h2>
+   376→   376→            <p className="mx-auto mt-1 max-w-xl text-sm text-muted-foreground">
+   377→   377→              Start a stock take to compare physical shelf quantities against system stock. The session snapshots today&apos;s
+   378→   378→              system stock, you enter what you actually count, and every line shows its variance — positive (surplus) or
+   379→   379→              negative (shortage) — valued at cost. On completion variances can be applied to system stock with a full audit trail.
+   380→   380→            </p>
+   381→   381→          </div>
+   382→   382→          <Button className="rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={() => setStartOpen(true)}>
+   383→   383→            <PlayCircle className="h-5 w-5" /> Start Stock Take
+   384→   384→          </Button>
+   385→   385→        </Card>
+   386→   386→      )}
+   387→   387→
+   388→   388→      {/* ============ History / Report tabs ============ */}
+   389→   389→      <Tabs value={tab} onValueChange={(v) => setTab(v as 'history' | 'report')}>
+   390→   390→        <TabsList className="rounded-full">
+   391→   391→          <TabsTrigger value="history" className="gap-1.5 rounded-full"><History className="h-3.5 w-3.5" /> Count History</TabsTrigger>
+   392→   392→          <TabsTrigger value="report" className="gap-1.5 rounded-full"><BarChart3 className="h-3.5 w-3.5" /> Variance Report</TabsTrigger>
+   393→   393→        </TabsList>
+   394→   394→      </Tabs>
+   395→   395→
+   396→   396→      {tab === 'history' && (
+   397→   397→        <div className="space-y-3">
+   398→   398→          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+   399→   399→            <div className="flex items-center gap-2">
+   400→   400→              <History className="h-5 w-5 text-teal-600 dark:text-teal-400" />
+   401→   401→              <h2 className="text-lg font-bold">Count Sessions</h2>
+   402→   402→            </div>
+   403→   403→            <div className="flex flex-wrap items-center gap-2">
+   404→   404→              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search take no, title or counter…" className="w-full sm:w-56" aria-label="Search stock takes" />
+   405→   405→              <Select value={statusFilter} onValueChange={setStatusFilter}>
+   406→   406→                <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+   407→   407→                <SelectContent>
+   408→   408→                  <SelectItem value="all">All Status</SelectItem>
+   409→   409→                  <SelectItem value="in_progress">In Progress</SelectItem>
+   410→   410→                  <SelectItem value="paused">Paused</SelectItem>
+   411→   411→                  <SelectItem value="completed">Completed</SelectItem>
+   412→   412→                  <SelectItem value="cancelled">Cancelled</SelectItem>
+   413→   413→                </SelectContent>
+   414→   414→              </Select>
+   415→   415→            </div>
+   416→   416→          </div>
+   417→   417→
+   418→   418→          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+   419→   419→            {[
+   420→   420→              { label: 'Completed Counts', value: String(historyStats.completed), hint: `${historyStats.cancelled} cancelled · ${historyStats.paused} paused` },
+   421→   421→              { label: 'Net Variance Value', value: fmtMoney(historyStats.netValue), hint: 'across completed counts, at cost' },
+   422→   422→              { label: 'Count Accuracy', value: `${historyStats.accuracy}%`, hint: 'lines matched system exactly' },
+   423→   423→              { label: 'Sessions on Record', value: String(takes.length), hint: 'all time' },
+   424→   424→            ].map((s) => (
+   425→   425→              <Card key={s.label} className="p-4">
+   426→   426→                <p className="text-xs text-muted-foreground">{s.label}</p>
+   427→   427→                <p className="mt-1 text-xl font-bold tabular-nums">{s.value}</p>
+   428→   428→                <p className="mt-0.5 text-[11px] text-muted-foreground">{s.hint}</p>
+   429→   429→              </Card>
+   430→   430→            ))}
+   431→   431→          </div>
+   432→   432→
+   433→   433→          <div className="overflow-hidden rounded-xl border bg-card">
+   434→   434→            <Table>
+   435→   435→              <TableHeader>
+   436→   436→                <TableRow>
+   437→   437→                  <TableHead>Take</TableHead>
+   438→   438→                  <TableHead>Scope</TableHead>
+   439→   439→                  <TableHead>Counter</TableHead>
+   440→   440→                  <TableHead>Started</TableHead>
+   441→   441→                  <TableHead>Closed</TableHead>
+   442→   442→                  <TableHead className="text-center">Lines</TableHead>
+   443→   443→                  <TableHead className="text-center">Net Variance</TableHead>
+   444→   444→                  <TableHead className="text-right">Value Impact</TableHead>
+   445→   445→                  <TableHead>Status</TableHead>
+   446→   446→                  <TableHead className="text-right">Actions</TableHead>
+   447→   447→                </TableRow>
+   448→   448→              </TableHeader>
+   449→   449→              <TableBody>
+   450→   450→                {loading && (
+   451→   451→                  Array.from({ length: 4 }).map((_, i) => (
+   452→   452→                    <TableRow key={i}>{Array.from({ length: 10 }).map((_, c) => <TableCell key={c}><Skeleton className="h-5 w-full" /></TableCell>)}</TableRow>
+   453→   453→                  ))
+   454→   454→                )}
+   455→   455→                {!loading && filteredHistory.length === 0 && (
+   456→   456→                  <TableRow><TableCell colSpan={10} className="py-10 text-center text-muted-foreground">No stock takes found. Start your first count session above.</TableCell></TableRow>
+   457→   457→                )}
+   458→   458→                {!loading && filteredHistory.map((t) => (
+   459→   459→                  <TableRow key={t.id} className="hover:bg-muted/40">
+   460→   460→                    <TableCell>
+   461→   461→                      <p className="font-semibold">{t.stockTakeNo}</p>
+   462→   462→                      <p className="max-w-40 truncate text-xs text-muted-foreground">{t.title}</p>
+   463→   463→                    </TableCell>
+   464→   464→                    <TableCell className="text-sm">{t.scope === 'category' ? t.scopeCategory : <span className="text-muted-foreground">All products</span>}</TableCell>
+   465→   465→                    <TableCell className="text-sm">{t.startedByName}</TableCell>
+   466→   466→                    <TableCell className="whitespace-nowrap text-xs">{fmtDateTime(t.startedAt)}</TableCell>
+   467→   467→                    <TableCell className="whitespace-nowrap text-xs">{t.completedAt ? fmtDateTime(t.completedAt) : '—'}</TableCell>
+   468→   468→                    <TableCell className="text-center tabular-nums">{t.countedItems}/{t.totalItems}</TableCell>
+   469→   469→                    <TableCell className="text-center">
+   470→   470→                      {t.status === 'completed' ? <VarianceBadge variance={t.varianceQty} /> : <span className="text-xs text-muted-foreground">—</span>}
+   471→   471→                    </TableCell>
+   472→   472→                    <TableCell className="text-right">
+   473→   473→                      {t.status === 'completed' ? <VarianceValueBadge value={t.varianceValue} /> : <span className="text-xs text-muted-foreground">—</span>}
+   474→   474→                    </TableCell>
+   475→   475→                    <TableCell><TakeStatusBadge status={t.status} /></TableCell>
+   476→   476→                    <TableCell className="text-right">
+   477→   477→                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => openDetail(t.id)} aria-label={`View ${t.stockTakeNo}`}>
+   478→   478→                        <Eye className="h-4 w-4" />
+   479→   479→                      </Button>
+   480→   480→                    </TableCell>
+   481→   481→                  </TableRow>
+   482→   482→                ))}
+   483→   483→              </TableBody>
+   484→   484→            </Table>
+   485→   485→          </div>
+   486→   486→        </div>
+   487→   487→      )}
+   488→   488→
+   489→   489→      {tab === 'report' && (
+   490→   490→        <div className="space-y-4">
+   491→   491→          {/* Period controls */}
+   492→   492→          <div className="flex flex-wrap items-end gap-3">
+   493→   493→            <div className="space-y-1">
+   494→   494→              <FieldLabel text="From" />
+   495→   495→              <Input type="date" value={from} max={to} onChange={(e) => { setFrom(e.target.value); if (e.target.value) loadReport(e.target.value, to) }} className="w-40" aria-label="Report start date" />
+   496→   496→            </div>
+   497→   497→            <div className="space-y-1">
+   498→   498→              <FieldLabel text="To" />
+   499→   499→              <Input type="date" value={to} min={from} onChange={(e) => { setTo(e.target.value); if (e.target.value) loadReport(from, e.target.value) }} className="w-40" aria-label="Report end date" />
+   500→   500→            </div>
+   501→   501→            <div className="flex gap-1 pb-0.5">
+   502→   502→              {[30, 60, 90].map((d) => (
+   503→   503→                <Button key={d} size="sm" variant="outline" className="rounded-full text-xs" onClick={() => applyPreset(d)}>{d}d</Button>
+   504→   504→              ))}
+   505→   505→            </div>
+   506→   506→            <div className="ml-auto flex gap-2">
+   507→   507→              <Button variant="outline" size="sm" className="rounded-full" onClick={exportCsv} disabled={!report || reportLoading}><Download className="h-4 w-4" /> CSV</Button>
+   508→   508→              <Button size="sm" className="rounded-full bg-teal-600 hover:bg-teal-700" onClick={exportPDF} disabled={!report || reportLoading}><FileText className="h-4 w-4" /> Export PDF</Button>
+   509→   509→            </div>
+   510→   510→          </div>
+   511→   511→
+   512→   512→          {reportLoading || !report ? (
+   513→   513→            <div className="space-y-3">
+   514→   514→              <div className="grid gap-4 sm:grid-cols-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24 rounded-xl" />)}</div>
+   515→   515→              <Skeleton className="h-72 rounded-xl" />
+   516→   516→            </div>
+   517→   517→          ) : (
+   518→   518→            <>
+   519→   519→              {/* Summary cards */}
+   520→   520→              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+   521→   521→                {[
+   522→   522→                  { label: 'Sessions Completed', value: String(report.summary.takes), icon: ClipboardCheck, sub: `${report.summary.linesCounted} lines counted` },
+   523→   523→                  { label: 'Net Units Variance', value: signedQty(report.summary.varianceQty), icon: report.summary.varianceQty >= 0 ? TrendingUp : TrendingDown, sub: `${report.summary.systemQty} system → ${report.summary.countedQty} counted`, cls: report.summary.varianceQty > 0 ? 'text-emerald-600 dark:text-emerald-400' : report.summary.varianceQty < 0 ? 'text-red-600 dark:text-red-400' : '' },
+   524→   524→                  { label: 'Net Value Variance', value: `${report.summary.varianceValue >= 0 ? '+' : '−'}${fmtMoney(Math.abs(report.summary.varianceValue))}`, icon: Scale, sub: `Shortage ${fmtMoney(Math.abs(report.summary.shortageValue))} · Surplus ${fmtMoney(report.summary.surplusValue)}`, cls: report.summary.varianceValue >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400' },
+   525→   525→                  { label: 'Count Accuracy', value: `${report.summary.accuracyPct}%`, icon: PackageSearch, sub: `${report.summary.matchedLines} matched · ${report.summary.negativeLines} short · ${report.summary.positiveLines} surplus` },
+   526→   526→                ].map((c) => {
+   527→   527→                  const Icon = c.icon
+   528→   528→                  return (
+   529→   529→                    <Card key={c.label} className="p-5">
+   530→   530→                      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Icon className="h-5 w-5" /></span>
+   531→   531→                      <p className="mt-3 text-sm text-muted-foreground">{c.label}</p>
+   532→   532→                      <p className={`text-2xl font-bold tabular-nums ${c.cls ?? ''}`}>{c.value}</p>
+   533→   533→                      <p className="text-xs text-muted-foreground">{c.sub}</p>
+   534→   534→                    </Card>
+   535→   535→                  )
+   536→   536→                })}
+   537→   537→              </div>
+   538→   538→
+   539→   539→              {report.summary.takes === 0 ? (
+   540→   540→                <Card className="p-10 text-center">
+   541→   541→                  <CalendarRange className="mx-auto h-10 w-10 text-muted-foreground/50" />
+   542→   542→                  <p className="mt-3 font-semibold">No stock takes were completed in this period</p>
+   543→   543→                  <p className="mt-1 text-sm text-muted-foreground">Adjust the date range above or complete a count session to see variance reporting.</p>
+   544→   544→                </Card>
+   545→   545→              ) : (
+   546→   546→                <>
+   547→   547→                  <div className="grid gap-4 lg:grid-cols-2">
+   548→   548→                    {/* Variance per take */}
+   549→   549→                    <Card>
+   550→   550→                      <div className="flex items-center justify-between border-b p-4 pb-3">
+   551→   551→                        <h3 className="text-sm font-semibold">Value Variance per Count Session</h3>
+   552→   552→                        <span className="text-xs text-muted-foreground">{report.takes.length} sessions</span>
+   553→   553→                      </div>
+   554→   554→                      <div className="h-64 p-3">
+   555→   555→                        <ResponsiveContainer width="100%" height="100%">
+   556→   556→                          <BarChart data={[...report.takes].reverse().map((t) => ({ name: t.stockTakeNo.replace(/^ST-/, ''), value: t.varianceValue }))} margin={{ top: 5, right: 10, left: -8, bottom: 0 }}>
+   557→   557→                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.12} />
+   558→   558→                            <XAxis dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} />
+   559→   559→                            <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtCompact(v)} />
+   560→   560→                            <Tooltip formatter={(v: number) => [fmtMoney(v), 'Variance']} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+   561→   561→                            <Bar dataKey="value" radius={[4, 4, 0, 0]} barSize={26}>
+   562→   562→                              {report.takes.map((t, i) => (
+   563→   563→                                <Cell key={i} fill={t.varianceValue >= 0 ? '#10b981' : '#ef4444'} />
+   564→   564→                              ))}
+   565→   565→                            </Bar>
+   566→   566→                          </BarChart>
+   567→   567→                        </ResponsiveContainer>
+   568→   568→                      </div>
+   569→   569→                      <p className="border-t px-4 py-2 text-[11px] text-muted-foreground">Green = surplus (counted above system) · Red = shortage (shrinkage, damage, theft)</p>
+   570→   570→                    </Card>
+   571→   571→
+   572→   572→                    {/* Top variance products */}
+   573→   573→                    <Card>
+   574→   574→                      <div className="flex items-center justify-between border-b p-4 pb-3">
+   575→   575→                        <h3 className="text-sm font-semibold">Products with Highest Value Variance</h3>
+   576→   576→                        <span className="text-xs text-muted-foreground">aggregated across sessions</span>
+   577→   577→                      </div>
+   578→   578→                      <div className="h-64 p-3">
+   579→   579→                        <ResponsiveContainer width="100%" height="100%">
+   580→   580→                          <BarChart data={report.topVariances.slice(0, 7).map((p) => ({ name: p.name.length > 16 ? `${p.name.slice(0, 15)}…` : p.name, value: p.varianceValue }))} layout="vertical" margin={{ top: 0, right: 16, left: 8, bottom: 0 }}>
+   581→   581→                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="currentColor" opacity={0.12} />
+   582→   582→                            <XAxis type="number" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtCompact(v)} />
+   583→   583→                            <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={110} />
+   584→   584→                            <Tooltip formatter={(v: number) => [fmtMoney(v), 'Value Impact']} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+   585→   585→                            <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={14}>
+   586→   586→                              {report.topVariances.slice(0, 7).map((p, i) => (
+   587→   587→                                <Cell key={i} fill={p.varianceValue >= 0 ? '#10b981' : '#ef4444'} />
+   588→   588→                              ))}
+   589→   589→                            </Bar>
+   590→   590→                          </BarChart>
+   591→   591→                        </ResponsiveContainer>
+   592→   592→                      </div>
+   593→   593→                    </Card>
+   594→   594→                  </div>
+   595→   595→
+   596→   596→                  {/* Takes table */}
+   597→   597→                  <div className="overflow-hidden rounded-xl border bg-card">
+   598→   598→                    <div className="border-b p-3 text-sm font-semibold">Count Sessions in Period</div>
+   599→   599→                    <Table>
+   600→   600→                      <TableHeader>
+   601→   601→                        <TableRow>
+   602→   602→                          <TableHead>Take</TableHead>
+   603→   603→                          <TableHead>Counter</TableHead>
+   604→   604→                          <TableHead>Completed</TableHead>
+   605→   605→                          <TableHead className="text-center">Lines</TableHead>
+   606→   606→                          <TableHead className="text-center">System Units</TableHead>
+   607→   607→                          <TableHead className="text-center">Counted Units</TableHead>
+   608→   608→                          <TableHead className="text-center">Net Qty</TableHead>
+   609→   609→                          <TableHead className="text-right">Net Value</TableHead>
+   610→   610→                          <TableHead className="text-center">Applied</TableHead>
+   611→   611→                        </TableRow>
+   612→   612→                      </TableHeader>
+   613→   613→                      <TableBody>
+   614→   614→                        {report.takes.map((t) => (
+   615→   615→                          <TableRow key={t.id} className="hover:bg-muted/40">
+   616→   616→                            <TableCell>
+   617→   617→                              <button className="font-semibold text-teal-600 hover:underline dark:text-teal-400" onClick={() => openDetail(t.id)}>{t.stockTakeNo}</button>
+   618→   618→                              <p className="max-w-40 truncate text-xs text-muted-foreground">{t.title}</p>
+   619→   619→                            </TableCell>
+   620→   620→                            <TableCell className="text-sm">{t.startedByName}</TableCell>
+   621→   621→                            <TableCell className="whitespace-nowrap text-xs">{fmtDateTime(t.completedAt)}</TableCell>
+   622→   622→                            <TableCell className="text-center tabular-nums">{t.totalItems}</TableCell>
+   623→   623→                            <TableCell className="text-center tabular-nums">{t.systemQty}</TableCell>
+   624→   624→                            <TableCell className="text-center tabular-nums">{t.countedQty}</TableCell>
+   625→   625→                            <TableCell className="text-center"><VarianceBadge variance={t.varianceQty} /></TableCell>
+   626→   626→                            <TableCell className="text-right"><VarianceValueBadge value={t.varianceValue} /></TableCell>
+   627→   627→                            <TableCell className="text-center text-xs">{t.applyToStock ? <span className="font-medium text-teal-600 dark:text-teal-400">Yes</span> : <span className="text-muted-foreground">No</span>}</TableCell>
+   628→   628→                          </TableRow>
+   629→   629→                        ))}
+   630→   630→                      </TableBody>
+   631→   631→                    </Table>
+   632→   632→                  </div>
+   633→   633→
+   634→   634→                  {/* Top variances table */}
+   635→   635→                  <div className="overflow-hidden rounded-xl border bg-card">
+   636→   636→                    <div className="flex items-center justify-between border-b p-3">
+   637→   637→                      <span className="text-sm font-semibold">Product Variance Ranking — {fmtDate(report.from)} → {fmtDate(report.to)}</span>
+   638→   638→                      <span className="text-xs text-muted-foreground">sorted by absolute value impact</span>
+   639→   639→                    </div>
+   640→   640→                    <Table>
+   641→   641→                      <TableHeader>
+   642→   642→                        <TableRow>
+   643→   643→                          <TableHead>Product</TableHead>
+   644→   644→                          <TableHead className="text-center">Takes</TableHead>
+   645→   645→                          <TableHead className="text-center">System Units</TableHead>
+   646→   646→                          <TableHead className="text-center">Counted Units</TableHead>
+   647→   647→                          <TableHead className="text-center">Net Qty Variance</TableHead>
+   648→   648→                          <TableHead className="text-right">Value Impact</TableHead>
+   649→   649→                        </TableRow>
+   650→   650→                      </TableHeader>
+   651→   651→                      <TableBody>
+   652→   652→                        {report.topVariances.map((p) => (
+   653→   653→                          <TableRow key={p.medicineId} className="hover:bg-muted/40">
+   654→   654→                            <TableCell>
+   655→   655→                              <p className="max-w-56 truncate font-medium">{p.name}</p>
+   656→   656→                              <p className="text-xs text-muted-foreground">{p.sku} · {p.unit}</p>
+   657→   657→                            </TableCell>
+   658→   658→                            <TableCell className="text-center tabular-nums">{p.takes}</TableCell>
+   659→   659→                            <TableCell className="text-center tabular-nums">{p.systemTotal}</TableCell>
+   660→   660→                            <TableCell className="text-center tabular-nums">{p.countedTotal}</TableCell>
+   661→   661→                            <TableCell className="text-center font-semibold tabular-nums">{signedQty(p.varianceQty)}</TableCell>
+   662→   662→                            <TableCell className="text-right"><VarianceValueBadge value={p.varianceValue} /></TableCell>
+   663→   663→                          </TableRow>
+   664→   664→                        ))}
+   665→   665→                      </TableBody>
+   666→   666→                    </Table>
+   667→   667→                  </div>
+   668→   668→                </>
+   669→   669→              )}
+   670→   670→            </>
+   671→   671→          )}
+   672→   672→        </div>
+   673→   673→      )}
+   674→   674→
+   675→   675→      {/* ============ Dialogs ============ */}
+   676→   676→      <StartTakeDialog
+   677→   677→        open={startOpen}
+   678→   678→        onOpenChange={setStartOpen}
+   679→   679→        onStarted={(takeId) => { load(); setSheetTakeId(takeId); setSheetOpen(true) }}
+   680→   680→      />
+   681→   681→      {sheetTakeId && (
+   682→   682→        <CountSheetDialog
+   683→   683→          open={sheetOpen}
+   684→   684→          onOpenChange={setSheetOpen}
+   685→   685→          takeId={sheetTakeId}
+   686→   686→          onChanged={load}
+   687→   687→          onComplete={(t) => openComplete(t)}
+   688→   688→        />
+   689→   689→      )}
+   690→   690→      <CompleteTakeDialog
+   691→   691→        open={completeOpen}
+   692→   692→        onOpenChange={setCompleteOpen}
+   693→   693→        take={completeTake}
+   694→   694→        onCompleted={load}
+   695→   695→      />
+   696→   696→      <CancelTakeDialog
+   697→   697→        open={cancelOpen}
+   698→   698→        onOpenChange={setCancelOpen}
+   699→   699→        take={cancelTake}
+   700→   700→        onCancelled={load}
+   701→   701→      />
+   702→   702→      <PauseTakeDialog
+   703→   703→        open={pauseOpen}
+   704→   704→        onOpenChange={setPauseOpen}
+   705→   705→        take={pauseTake}
+   706→   706→        onPaused={load}
+   707→   707→      />
+   708→   708→      <TakeDetailDialog open={detailOpen} onOpenChange={setDetailOpen} takeId={detailId} />
+   709→   709→    </div>
+   710→   710→  )
+   711→   711→}
+   712→   712→
+   713→   713→// ---------------------------------------------------------------------------
+   714→   714→// Small local helpers
+   715→   715→// ---------------------------------------------------------------------------
+   716→   716→
+   717→   717→function TakeStatusBadge({ status }: { status: string }) {
+   718→   718→  if (status === 'in_progress') return <StatusBadge status="active" />
+   719→   719→  return <StatusBadge status={status} /> // paused / completed / cancelled map in shared styles
+   720→   720→}
+   721→   721→
+   722→   722→function FieldLabel({ text }: { text: string }) {
+   723→   723→  return <span className="text-xs font-medium text-muted-foreground">{text}</span>
+   724→   724→}
+   725→   725→
+   726→   726→interface StockTakeReportData {
+   727→   727→  from: string
+   728→   728→  to: string
+   729→   729→  summary: {
+   730→   730→    takes: number
+   731→   731→    linesCounted: number
+   732→   732→    systemQty: number
+   733→   733→    countedQty: number
+   734→   734→    varianceQty: number
+   735→   735→    varianceValue: number
+   736→   736→    positiveLines: number
+   737→   737→    negativeLines: number
+   738→   738→    matchedLines: number
+   739→   739→    accuracyPct: number
+   740→   740→    shortageValue: number
+   741→   741→    surplusValue: number
+   742→   742→  }
+   743→   743→  takes: Array<{
+   744→   744→    id: string
+   745→   745→    stockTakeNo: string
+   746→   746→    title: string
+   747→   747→    scope: string
+   748→   748→    scopeCategory: string | null
+   749→   749→    startedByName: string
+   750→   750→    startedAt: string
+   751→   751→    completedAt: string | null
+   752→   752→    totalItems: number
+   753→   753→    systemQty: number
+   754→   754→    countedQty: number
+   755→   755→    varianceQty: number
+   756→   756→    varianceValue: number
+   757→   757→    applyToStock: boolean
+   758→   758→  }>
+   759→   759→  topVariances: Array<{
+   760→   760→    medicineId: string
+   761→   761→    name: string
+   762→   762→    sku: string
+   763→   763→    unit: string
+   764→   764→    takes: number
+   765→   765→    systemTotal: number
+   766→   766→    countedTotal: number
+   767→   767→    varianceQty: number
+   768→   768→    varianceValue: number
+   769→   769→  }>
+   770→   770→}
+   771→   771→

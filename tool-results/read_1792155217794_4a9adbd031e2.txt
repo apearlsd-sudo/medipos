@@ -1,0 +1,897 @@
+     1→generator client {
+     2→  provider = "prisma-client-js"
+     3→}
+     4→
+     5→datasource db {
+     6→  provider = "sqlite"
+     7→  url      = env("DATABASE_URL")
+     8→}
+     9→
+    10→model User {
+    11→  id               String    @id @default(cuid())
+    12→  username         String    @unique
+    13→  passwordHash     String
+    14→  name             String
+    15→  email            String?
+    16→  phone            String?
+    17→  role             String    @default("cashier") // denormalized role slug (admin | pharmacist | cashier | custom)
+    18→  roleRef          Role?     @relation(fields: [roleId], references: [id])
+    19→  roleId           String?
+    20→  status           String    @default("active") // active | suspended
+    21→  branchRef        Branch?   @relation(fields: [branchId], references: [id])
+    22→  branchId         String?
+    23→  twoFactorEnabled Boolean   @default(false)
+    24→  twoFactorSecret  String? // base32 TOTP secret (stored while setup is in progress or enabled)
+    25→  recoveryCodes    String? // JSON array of hashed recovery codes
+    26→  lastLoginAt      DateTime?
+    27→  createdAt        DateTime  @default(now())
+    28→  updatedAt        DateTime  @updatedAt
+    29→}
+    30→
+    31→model Branch {
+    32→  id               String            @id @default(cuid())
+    33→  name             String
+    34→  code             String            @unique // MAIN, OSU …
+    35→  address          String?
+    36→  city             String?
+    37→  phone            String?
+    38→  isActive         Boolean           @default(true)
+    39→  isDefault        Boolean           @default(false) // the seeded primary branch
+    40→  users            User[]
+    41→  medicines        Medicine[]
+    42→  branchPrices     BranchPrice[]
+    43→  sales            Sale[]
+    44→  purchases        Purchase[]
+    45→  shifts           Shift[]
+    46→  stockTakes       StockTake[]
+    47→  discountRequests DiscountRequest[]
+    48→  expenses         Expense[]
+    49→  quotations       Quotation[]
+    50→  transfersOut     StockTransfer[]   @relation("TransfersOut")
+    51→  transfersIn      StockTransfer[]   @relation("TransfersIn")
+    52→  createdAt        DateTime          @default(now())
+    53→  updatedAt        DateTime          @updatedAt
+    54→}
+    55→
+    56→model BranchPrice {
+    57→  id            String   @id @default(cuid())
+    58→  branchId      String
+    59→  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+    60→  medicineId    String
+    61→  medicine      Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+    62→  sellingPrice  Float // branch-level override for the medicine's selling price
+    63→  updatedById   String?
+    64→  updatedByName String?
+    65→  createdAt     DateTime @default(now())
+    66→  updatedAt     DateTime @updatedAt
+    67→
+    68→  @@unique([branchId, medicineId])
+    69→  @@index([medicineId])
+    70→}
+    71→
+    72→model Role {
+    73→  id          String       @id @default(cuid())
+    74→  slug        String       @unique // admin | pharmacist | cashier | inventory-clerk …
+    75→  name        String
+    76→  description String?
+    77→  isSystem    Boolean      @default(false) // system roles cannot be deleted
+    78→  permissions Permission[]
+    79→  users       User[]
+    80→  createdAt   DateTime     @default(now())
+    81→  updatedAt   DateTime     @updatedAt
+    82→}
+    83→
+    84→model Permission {
+    85→  id     String @id @default(cuid())
+    86→  key    String @unique // "medicines:create"
+    87→  module String // medicines
+    88→  action String // create
+    89→  roles  Role[]
+    90→}
+    91→
+    92→model AuditLog {
+    93→  id         String   @id @default(cuid())
+    94→  action     String // role.created | role.updated | role.deleted | user.created | user.updated | user.deleted
+    95→  actorId    String?
+    96→  actorName  String
+    97→  actorRole  String? // actor's role name at the time
+    98→  targetType String // role | user
+    99→  targetId   String?
+   100→  targetName String?
+   101→  summary    String // human-readable one-liner
+   102→  changes    String? // JSON snapshot (permission diffs, role/status changes)
+   103→  createdAt  DateTime @default(now())
+   104→
+   105→  @@index([createdAt])
+   106→  @@index([action])
+   107→}
+   108→
+   109→model Category {
+   110→  id          String     @id @default(cuid())
+   111→  name        String     @unique
+   112→  description String?
+   113→  medicines   Medicine[]
+   114→  createdAt   DateTime   @default(now())
+   115→  updatedAt   DateTime   @updatedAt
+   116→}
+   117→
+   118→model Supplier {
+   119→  id            String     @id @default(cuid())
+   120→  name          String
+   121→  contactPerson String?
+   122→  email         String?
+   123→  phone         String?
+   124→  address       String?
+   125→  medicines     Medicine[]
+   126→  purchases     Purchase[]
+   127→  stockReturns  StockReturn[]
+   128→  createdAt     DateTime   @default(now())
+   129→  updatedAt     DateTime   @updatedAt
+   130→}
+   131→
+   132→// Task 71 — per-product batch prefixes: short codes (e.g. PCM) the pharmacy
+   133→// maintains in Settings → Batch Numbering and assigns to products. Generation
+   134→// resolves a product's prefix first, then the store default. Deleting a prefix
+   135→// returns its products to the default (SetNull) — batch numbers on file stay.
+   136→model BatchPrefix {
+   137→  id        String     @id @default(cuid())
+   138→  code      String     @unique
+   139→  label     String?
+   140→  createdAt DateTime   @default(now())
+   141→  medicines Medicine[]
+   142→}
+   143→
+   144→model Medicine {
+   145→  id                   String         @id @default(cuid())
+   146→  name                 String
+   147→  genericName          String?
+   148→  brand                String?
+   149→  branchRef            Branch?        @relation(fields: [branchId], references: [id])
+   150→  branchId             String?
+   151→  sku                  String         @unique
+   152→  barcode              String?
+   153→  categoryId           String
+   154→  category             Category       @relation(fields: [categoryId], references: [id])
+   155→  supplierId           String?
+   156→  supplier             Supplier?      @relation(fields: [supplierId], references: [id])
+   157→  unit                 String         @default("Box")
+   158→  batchNumber          String?
+   159→  batchPrefixId        String?
+   160→  batchPrefix          BatchPrefix?   @relation(fields: [batchPrefixId], references: [id], onDelete: SetNull)
+   161→  expiryDate           DateTime?
+   162→  stockQty             Int            @default(0)
+   163→  reorderLevel         Int            @default(20)
+   164→  costPrice            Float          @default(0)
+   165→  sellingPrice         Float          @default(0)
+   166→  prescriptionRequired Boolean        @default(false)
+   167→  insuranceCovered   Boolean        @default(false) // item is on the insurer's covered formulary
+   168→  innerUnit          String?        // sellable sub-unit, e.g. Tablet inside a Box
+   169→  innerQty           Int            @default(1)   // how many inner units per stock unit
+   170→  looseUnits         Int            @default(0)   // opened-pack loose inner units on hand
+   171→  quarantineQty      Int            @default(0)   // units held aside (expired/damaged, not sellable)
+   172→  location             String?
+   173→  status               String         @default("active")
+   174→  saleItems            SaleItem[]
+   175→  purchaseItems        PurchaseItem[]
+   176→  logs                 InventoryLog[]
+   177→  returnItems          StockReturnItem[]
+   178→  disposalDecision     DisposalDecision?
+   179→  branchPrices         BranchPrice[]
+   180→  quotationItems       QuotationItem[]
+   181→  createdAt            DateTime       @default(now())
+   182→  updatedAt            DateTime       @updatedAt
+   183→}
+   184→
+   185→model Customer {
+   186→  id          String    @id @default(cuid())
+   187→  name        String
+   188→  email       String?
+   189→  phone       String?
+   190→  address     String?
+   191→  note        String?
+   192→  birthday    DateTime? // month/day drives the loyalty birthday bonus
+   193→  creditLimit Float     @default(0) // 0 = credit sales not allowed
+   194→  points      Int      @default(0) // loyalty points balance
+   195→  insurerId   String?
+   196→  insurer     Insurer? @relation(fields: [insurerId], references: [id])
+   197→  insuranceNo String? // NHIS / private insurance membership number
+   198→  allergies   String? // comma-separated allergy flags matched at POS
+   199→  sales       Sale[]
+   200→  ledger      CustomerLedger[]
+   201→  loyaltyLogs LoyaltyLog[]
+   202→  claims      InsuranceClaim[]
+   203→  quotations  Quotation[]
+   204→  createdAt   DateTime @default(now())
+   205→  updatedAt   DateTime @updatedAt
+   206→}
+   207→
+   208→model Insurer {
+   209→  id              String   @id @default(cuid())
+   210→  name            String   @unique
+   211→  shortCode       String?
+   212→  phone           String?
+   213→  coveragePercent Float    @default(80) // % of a covered item's price the insurer pays
+   214→  coversAll       Boolean  @default(false) // true = no formulary: EVERY cart item is claimable (ignores the product flag)
+   215→  active          Boolean  @default(true)
+   216→  note            String?
+   217→  customers       Customer[]
+   218→  claims          InsuranceClaim[]
+   219→  createdAt       DateTime @default(now())
+   220→  updatedAt       DateTime @updatedAt
+   221→}
+   222→
+   223→model CustomerLedger {
+   224→  id            String   @id @default(cuid())
+   225→  customerId    String
+   226→  customer      Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+   227→  branchId      String?
+   228→  saleId        String? // set when the entry originates from a sale
+   229→  saleInvoice   String?
+   230→  type          String // charge | payment | adjustment
+   231→  amount        Float // positive; charge adds to what the customer owes, payment reduces it
+   232→  method        String? // payment method (cash | momo | card) for payments
+   233→  reference     String? // momo txn id / receipt reference
+   234→  note          String?
+   235→  createdById   String?
+   236→  createdByName String?
+   237→  createdAt     DateTime @default(now())
+   238→
+   239→  @@index([customerId, createdAt])
+   240→}
+   241→
+   242→model LoyaltyLog {
+   243→  id         String   @id @default(cuid())
+   244→  customerId String
+   245→  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+   246→  branchId   String?
+   247→  saleId     String?
+   248→  type       String // earn | redeem | adjust
+   249→  points     Int // signed delta applied to the customer's balance
+   250→  note       String?
+   251→  createdAt  DateTime @default(now())
+   252→
+   253→  @@index([customerId])
+   254→}
+   255→
+   256→model InsuranceClaim {
+   257→  id          String    @id @default(cuid())
+   258→  claimNo     String    @unique // CLM-2026-0001
+   259→  saleId      String
+   260→  saleInvoice String?
+   261→  customerId  String
+   262→  customer    Customer  @relation(fields: [customerId], references: [id])
+   263→  insurerId   String
+   264→  insurer     Insurer   @relation(fields: [insurerId], references: [id])
+   265→  branchId    String?
+   266→  claimAmount Float     @default(0)
+   267→  // Coverage % actually billed at booking time (may differ from the insurer's
+   268→  // current default after a settings edit) — receipts quote this figure.
+   269→  coveragePercent Float?
+   270→  status      String    @default("pending") // pending | submitted | paid | rejected
+   271→  submittedAt DateTime?
+   272→  paidAt      DateTime?
+   273→  note        String?
+   274→  createdAt   DateTime  @default(now())
+   275→  updatedAt   DateTime  @updatedAt
+   276→
+   277→  @@index([status])
+   278→}
+   279→
+   280→model Sale {
+   281→  id                String     @id @default(cuid())
+   282→  invoiceNo         String     @unique
+   283→  customerId        String?
+   284→  customer          Customer?  @relation(fields: [customerId], references: [id])
+   285→  shiftId           String?
+   286→  shift             Shift?     @relation(fields: [shiftId], references: [id])
+   287→  branchRef         Branch?    @relation(fields: [branchId], references: [id])
+   288→  branchId          String?
+   289→  approvedById      String? // manager who authorized a large-discount sale
+   290→  approvedByName    String?
+   291→  discountRequestId String?
+   292→  subtotal          Float      @default(0)
+   293→  discount          Float      @default(0)
+   294→  tax               Float      @default(0)
+   295→  taxBase           Float?     // taxable base the tax was computed on (null = tax-free sale)
+   296→  taxEraId          String?    // statutory rate era this sale was booked under (null = exempt or pre-era)
+   297→  taxEra            TaxEra?    @relation(fields: [taxEraId], references: [id])
+   298→  taxComponentsJson String?    // frozen [{label,pct}] structure actually charged (exact receipt attribution)
+   299→  total             Float      @default(0)
+   300→  roundingDelta     Float      @default(0) // cash rounding applied to the amount due (+ customer paid more, − in their favor; 0 = no rounding)
+   301→  paidAmount        Float      @default(0)
+   302→  changeAmount      Float      @default(0)
+   303→  paymentMethod     String     @default("cash")
+   304→  paymentProvider   String? // momo provider: mtn | telecel | airteltigo
+   305→  paymentReference  String? // momo / insurance txn reference
+   306→  tenders           String? // JSON split-tender list: [{method, amount, provider?, reference?}] — null = single tender
+   307→  returns           SaleReturn[]
+   308→  paymentStatus     String     @default("paid")
+   309→  pointsEarned      Int        @default(0) // loyalty points awarded for this sale
+   310→  pointsRedeemed    Int        @default(0) // loyalty points spent on this sale
+   311→  pointsValue       Float      @default(0) // currency value of redeemed points
+   312→  insuranceAmount   Float      @default(0) // portion billed to the insurer
+   313→  saleStatus        String     @default("completed")
+   314→  cashierName       String     @default("Admin User")
+   315→  note              String?
+   316→  clientRef         String?    @unique // offline idempotency key
+   317→  items             SaleItem[]
+   318→  createdAt         DateTime   @default(now())
+   319→  updatedAt         DateTime   @updatedAt
+   320→}
+   321→
+   322→model SaleItem {
+   323→  id         String    @id @default(cuid())
+   324→  saleId     String
+   325→  sale       Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+   326→  medicineId String?
+   327→  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+   328→  name       String
+   329→  sku        String?
+   330→  qty        Int
+   331→  unitPrice  Float
+   332→  discount   Float     @default(0)
+   333→  total      Float
+   334→  saleUnit   String    @default("pack") // pack | inner (loose-unit selling)
+   335→}
+   336→
+   337→model Purchase {
+   338→  id           String         @id @default(cuid())
+   339→  referenceNo  String         @unique
+   340→  branchRef    Branch?        @relation(fields: [branchId], references: [id])
+   341→  branchId     String?
+   342→  supplierId   String?
+   343→  supplier     Supplier?      @relation(fields: [supplierId], references: [id])
+   344→  purchaseDate DateTime       @default(now())
+   345→  subtotal     Float          @default(0)
+   346→  tax          Float          @default(0)
+   347→  totalAmount  Float          @default(0)
+   348→  paidAmount   Float          @default(0)
+   349→  status       String         @default("pending") // pending | pending_receipt | partial_receipt | partially_paid | paid
+   350→  supplierInvoiceNo String?  // supplier's own invoice number, captured at goods receipt
+   351→  receivedAt   DateTime?      // latest goods-receipt (GRN) time
+   352→  note         String?
+   353→  items        PurchaseItem[]
+   354→  createdAt    DateTime       @default(now())
+   355→  updatedAt    DateTime       @updatedAt
+   356→}
+   357→
+   358→model PurchaseItem {
+   359→  id          String    @id @default(cuid())
+   360→  purchaseId  String
+   361→  purchase    Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+   362→  medicineId  String?
+   363→  medicine    Medicine? @relation(fields: [medicineId], references: [id])
+   364→  name        String
+   365→  qty         Int
+   366→  receivedQty Int       @default(0) // GRN: how many of the ordered qty have arrived
+   367→  unitCost    Float
+   368→  batchNumber String?
+   369→  expiryDate  DateTime?
+   370→  total       Float
+   371→}
+   372→
+   373→model Prescription {
+   374→  id                 String    @id @default(cuid())
+   375→  code               String    @unique
+   376→  patientName        String
+   377→  doctorName         String?
+   378→  phone              String?
+   379→  itemsText          String?
+   380→  notes              String?
+   381→  status             String    @default("pending")
+   382→  refillIntervalDays Int? // null = no refill schedule; N = repeat every N days
+   383→  refillCount        Int       @default(0)
+   384→  lastRefillAt       DateTime?
+   385→  createdAt          DateTime  @default(now())
+   386→  updatedAt          DateTime  @updatedAt
+   387→}
+   388→
+   389→model InventoryLog {
+   390→  id         String    @id @default(cuid())
+   391→  medicineId String?
+   392→  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+   393→  type       String
+   394→  quantity   Int
+   395→  reason     String?
+   396→  reference  String?
+   397→  clientRef  String?   @unique // offline idempotency key
+   398→  createdAt  DateTime  @default(now())
+   399→}
+   400→
+   401→model StoreSetting {
+   402→  id    String @id @default(cuid())
+   403→  key   String @unique
+   404→  value String
+   405→}
+   406→
+   407→// --- multi-node sync (offline-first replication) -----------------------------
+   408→
+   409→model SyncOp {
+   410→  id        String   @id @default(cuid())
+   411→  nodeId    String // originating node (HQ or branch id)
+   412→  seq       Int // per-node monotonically increasing sequence
+   413→  op        String // sale.created | medicine.updated | inventory.adjusted | ledger.entry | ...
+   414→  targetKey String? // human key (invoice no, sku, ...) for logs
+   415→  payload   String // JSON snapshot of the operation
+   416→  appliedAt DateTime? // set once this op has been replicated out
+   417→  createdAt DateTime @default(now())
+   418→
+   419→  @@index([nodeId, seq])
+   420→}
+   421→
+   422→model SyncNode {
+   423→  id          String    @id // branch node id
+   424→  name        String
+   425→  lastSeenAt  DateTime?
+   426→  lastPushSeq Int       @default(0)
+   427→  opsApplied  Int       @default(0)
+   428→  createdAt   DateTime  @default(now())
+   429→}
+   430→
+   431→model SyncState {
+   432→  id            String    @id // HQ_NODE_ID - cursor row per branch<->HQ pair
+   433→  lastPulledSeq Int       @default(0)
+   434→  lastPushedSeq Int       @default(0)
+   435→  lastSyncAt    DateTime?
+   436→  lastError     String?
+   437→}
+   438→
+   439→model DiscoveredNode {
+   440→  id        String   @id @default(cuid())
+   441→  nodeId    String   @unique
+   442→  name      String
+   443→  role      String   @default("branch") // hq | branch
+   444→  source    String   @default("lan") // lan | internet | live | manual
+   445→  lanIp     String?
+   446→  httpUrl   String?
+   447→  tunnelUrl String?
+   448→  version   String?
+   449→  firstSeen DateTime @default(now())
+   450→  lastSeen  DateTime @default(now())
+   451→}
+   452→
+   453→model NodeSetting {
+   454→  key   String @id
+   455→  value String
+   456→}
+   457→
+   458→model StockReturn {
+   459→  id            String            @id @default(cuid())
+   460→  returnNo      String            @unique // RET-2026-0001
+   461→  type          String            @default("writeoff") // writeoff | supplier_return
+   462→  reason        String            @default("expired") // expired | damaged | recalled | other
+   463→  status        String            @default("completed") // completed | cancelled
+   464→  supplierId    String?
+   465→  supplier      Supplier?         @relation(fields: [supplierId], references: [id])
+   466→  branchId      String?
+   467→  totalValue    Float             @default(0) // cost value of the removed stock
+   468→  note          String?
+   469→  source        String? // 'pre_expiry' — booked via the pre-expiry disposal desk (null = manual note)
+   470→  createdById   String?
+   471→  createdByName String?
+   472→  items         StockReturnItem[]
+   473→  createdAt     DateTime          @default(now())
+   474→  updatedAt     DateTime          @updatedAt
+   475→
+   476→  @@index([createdAt])
+   477→}
+   478→
+   479→model StockReturnItem {
+   480→  id          String      @id @default(cuid())
+   481→  returnId    String
+   482→  return      StockReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+   483→  medicineId  String?
+   484→  medicine    Medicine?   @relation(fields: [medicineId], references: [id])
+   485→  name        String
+   486→  sku         String?
+   487→  batchNumber String?
+   488→  expiryDate  DateTime?
+   489→  qty         Int
+   490→  unitCost    Float       @default(0)
+   491→  value       Float       @default(0)
+   492→  action      String      @default("writeoff") // writeoff | return_supplier | quarantine
+   493→  fromQuarantine Boolean  @default(false) // qty came out of Medicine.quarantineQty
+   494→  daysBeforeExpiry Int? // pre-expiry desk snapshot: days between disposal and expiry
+   495→}
+   496→
+   497→// Pre-expiry disposal desk decisions — the triage layer between the desk's
+   498→// candidates and its two disposal actions. A 'keep' marker flags fast-moving
+   499→// near-expiry stock as deliberately sold through: no stock moves, nothing hits
+   500→// the P&L, the batch stays fully sellable — it just stops looking like an
+   501→// undecided problem every time the desk is reviewed. Cleared automatically
+   502→// when a real disposal (write-off / supplier return) supersedes it.
+   503→model DisposalDecision {
+   504→  id                 String   @id @default(cuid())
+   505→  medicineId         String   @unique
+   506→  medicine           Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+   507→  action             String   @default("keep") // keep — selling through (future: other dispositions)
+   508→  note               String?  // why the batch is kept — e.g. "fast mover, sells out in ~2 weeks"
+   509→  daysLeftAtDecision Int?     // days-to-expiry snapshot when the decision was made
+   510→  stockQtyAtDecision Int?     // on-hand snapshot when the decision was made
+   511→  decidedByName      String?  // who made the call (display snapshot)
+   512→  createdAt          DateTime @default(now())
+   513→  updatedAt          DateTime @updatedAt
+   514→}
+   515→
+   516→model Shift {
+   517→  id           String         @id @default(cuid())
+   518→  shiftNo      String         @unique
+   519→  branchRef    Branch?        @relation(fields: [branchId], references: [id])
+   520→  branchId     String?
+   521→  userId       String
+   522→  userName     String
+   523→  userRole     String         @default("cashier")
+   524→  openingCash  Float          @default(0)
+   525→  closingCash  Float?
+   526→  expectedCash Float?
+   527→  variance     Float?
+   528→  status       String         @default("open") // open | closed
+   529→  note         String? // opening note
+   530→  closeNote    String?
+   531→  startedAt    DateTime       @default(now())
+   532→  endedAt      DateTime?
+   533→  sales        Sale[]
+   534→  movements    CashMovement[]
+   535→  createdAt    DateTime       @default(now())
+   536→  updatedAt    DateTime       @updatedAt
+   537→}
+   538→
+   539→model CashMovement {
+   540→  id        String   @id @default(cuid())
+   541→  shiftId   String
+   542→  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+   543→  type      String // addition | payout | drop
+   544→  amount    Float
+   545→  reason    String?
+   546→  userName  String
+   547→  createdAt DateTime @default(now())
+   548→}
+   549→
+   550→model StockTake {
+   551→  id              String          @id @default(cuid())
+   552→  stockTakeNo     String          @unique // ST-2026-0001
+   553→  branchRef       Branch?         @relation(fields: [branchId], references: [id])
+   554→  branchId        String?
+   555→  title           String
+   556→  scope           String          @default("all") // all | category
+   557→  scopeCategory   String?
+   558→  status          String          @default("in_progress") // in_progress | paused | completed | cancelled
+   559→  startedById     String
+   560→  startedByName   String
+   561→  completedById   String?
+   562→  completedByName String?
+   563→  note            String?
+   564→  completeNote    String?
+   565→  applyToStock    Boolean         @default(false)
+   566→  // --- pause / resume lifecycle (multi-day counts) ---
+   567→  pausedAt        DateTime? // when the current (or last) pause started; null while active
+   568→  pausedById      String?
+   569→  pausedByName    String?
+   570→  pauseNote       String? // why the session was paused
+   571→  resumedAt       DateTime? // last resume timestamp
+   572→  resumeCount     Int         @default(0) // how many times this session was resumed
+   573→  totalItems      Int             @default(0) // count lines in session
+   574→  countedItems    Int             @default(0) // lines with a count entered
+   575→  systemQty       Int             @default(0) // snapshot units at session start
+   576→  countedQty      Int             @default(0) // total counted units (live)
+   577→  varianceQty     Int             @default(0) // counted - system (live/final)
+   578→  varianceValue   Float           @default(0) // sum(variance * unitCost)
+   579→  positiveLines   Int             @default(0) // surplus lines
+   580→  negativeLines   Int             @default(0) // shortage lines
+   581→  matchedLines    Int             @default(0)
+   582→  startedAt       DateTime        @default(now())
+   583→  completedAt     DateTime?
+   584→  items           StockTakeItem[]
+   585→  createdAt       DateTime        @default(now())
+   586→  updatedAt       DateTime        @updatedAt
+   587→}
+   588→
+   589→model StockTakeItem {
+   590→  id            String    @id @default(cuid())
+   591→  stockTakeId   String
+   592→  stockTake     StockTake @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+   593→  medicineId    String
+   594→  medicineName  String
+   595→  sku           String
+   596→  unit          String    @default("Box")
+   597→  category      String?
+   598→  location      String?
+   599→  systemQty     Int // snapshot at session start
+   600→  countedQty    Int? // null = not counted yet
+   601→  varianceQty   Int? // counted - system
+   602→  unitCost      Float     @default(0) // snapshot cost for valuation
+   603→  varianceValue Float?
+   604→  countedById   String?
+   605→  countedByName String?
+   606→  countedAt     DateTime?
+   607→  note          String?
+   608→  createdAt     DateTime  @default(now())
+   609→}
+   610→
+   611→// --- Tier 3: expenses & petty cash ------------------------------------------
+   612→
+   613→model ExpenseCategory {
+   614→  id          String    @id @default(cuid())
+   615→  name        String    @unique // Rent, Utilities, Salaries, Transport …
+   616→  description String?
+   617→  active      Boolean   @default(true)
+   618→  expenses    Expense[]
+   619→  createdAt   DateTime  @default(now())
+   620→  updatedAt   DateTime  @updatedAt
+   621→}
+   622→
+   623→model Expense {
+   624→  id             String          @id @default(cuid())
+   625→  expenseNo      String          @unique // EXP-2026-0001
+   626→  categoryId     String
+   627→  category       ExpenseCategory @relation(fields: [categoryId], references: [id])
+   628→  branchRef      Branch?         @relation(fields: [branchId], references: [id])
+   629→  branchId       String?
+   630→  description    String
+   631→  amount         Float
+   632→  paymentMethod  String          @default("cash") // cash | momo | card | bank
+   633→  provider       String?         // momo provider: mtn | telecel | airteltigo
+   634→  reference      String?         // momo txn id / cheque no
+   635→  status         String          @default("completed") // completed | voided
+   636→  note           String?
+   637→  recordedById   String?
+   638→  recordedByName String?
+   639→  voidedById     String?
+   640→  voidedByName   String?
+   641→  voidedAt       DateTime?
+   642→  clientRef      String?         @unique // offline idempotency key
+   643→  createdAt      DateTime        @default(now())
+   644→  updatedAt      DateTime        @updatedAt
+   645→
+   646→  @@index([createdAt])
+   647→  @@index([categoryId])
+   648→}
+   649→
+   650→// --- Tier 3: quotations ------------------------------------------------------
+   651→
+   652→model Quotation {
+   653→  id               String          @id @default(cuid())
+   654→  quoteNo          String          @unique // QTN-2026-0001
+   655→  customerId       String?
+   656→  customer         Customer?       @relation(fields: [customerId], references: [id])
+   657→  customerName     String? // snapshot for walk-in / prospect quotes
+   658→  branchRef        Branch?         @relation(fields: [branchId], references: [id])
+   659→  branchId         String?
+   660→  status           String          @default("draft") // draft | sent | accepted | declined | expired | converted | cancelled
+   661→  subtotal         Float           @default(0)
+   662→  discount         Float           @default(0)
+   663→  tax              Float           @default(0)
+   664→  total            Float           @default(0)
+   665→  validUntil       DateTime?
+   666→  note             String?
+   667→  convertedSaleId  String? // set when the quote becomes a sale
+   668→  convertedInvoice String?
+   669→  createdById      String?
+   670→  createdByName    String?
+   671→  clientRef        String?         @unique // offline idempotency key
+   672→  items            QuotationItem[]
+   673→  createdAt        DateTime        @default(now())
+   674→  updatedAt        DateTime        @updatedAt
+   675→
+   676→  @@index([status])
+   677→}
+   678→
+   679→model QuotationItem {
+   680→  id          String     @id @default(cuid())
+   681→  quotationId String
+   682→  quotation   Quotation  @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+   683→  medicineId  String?
+   684→  medicine    Medicine?  @relation(fields: [medicineId], references: [id])
+   685→  name        String
+   686→  sku         String?
+   687→  qty         Int
+   688→  unitPrice   Float
+   689→  discount    Float      @default(0)
+   690→  total       Float
+   691→}
+   692→
+   693→model DiscountRequest {
+   694→  id             String    @id @default(cuid())
+   695→  requestCode    String    @unique // DR-2026-0001
+   696→  status         String    @default("pending") // pending | approved | rejected | used | cancelled
+   697→  cashierId      String
+   698→  cashierName    String
+   699→  subtotal       Float     @default(0)
+   700→  discountValue  Float     @default(0)
+   701→  discountPct    Float     @default(0) // discount as % of subtotal, snapshot
+   702→  itemCount      Int       @default(0)
+   703→  itemsJson      String? // JSON snapshot of cart lines at request time
+   704→  customerId     String?
+   705→  reason         String?
+   706→  reviewedById   String?
+   707→  reviewedByName String?
+   708→  reviewedAt     DateTime?
+   709→  reviewNote     String?
+   710→  saleId         String? // set once the approved draft is completed as a sale
+   711→  branchRef      Branch?   @relation(fields: [branchId], references: [id])
+   712→  branchId       String?
+   713→  createdAt      DateTime  @default(now())
+   714→  updatedAt      DateTime  @updatedAt
+   715→
+   716→  @@index([status])
+   717→  @@index([cashierId])
+   718→}
+   719→
+   720→// ---------------------------------------------------------------------------
+   721→// Tier 4 — WhatsApp/SMS alerting. Node-local operational outbox (not synced):
+   722→// each node evaluates its own stock and queues provider messages here.
+   723→// ---------------------------------------------------------------------------
+   724→model NotificationOutbox {
+   725→  id          String    @id @default(cuid())
+   726→  channel     String // whatsapp | sms
+   727→  provider    String // whatsapp_cloud | webhook_sms | manual
+   728→  recipient   String // phone number or comma list
+   729→  template    String // low_stock | expiring | daily_summary | test | custom
+   730→  body        String
+   731→  status      String    @default("queued") // queued | sent | failed | skipped | cancelled
+   732→  error       String? // provider / validation error, or skip reason
+   733→  relatedType String? // medicine | sale | system
+   734→  relatedKey  String? // dedupe + cooldown key, e.g. low_stock:<branch>:<sku>
+   735→  meta        String? // JSON — item counts, evaluated ranges, provider message id
+   736→  sentAt      DateTime?
+   737→  createdAt   DateTime  @default(now())
+   738→
+   739→  @@index([status, createdAt])
+   740→  @@index([relatedKey, createdAt])
+   741→  @@index([template])
+   742→}
+   743→
+   744→model StockTransfer {
+   745→  id              String            @id @default(cuid())
+   746→  referenceNo     String            @unique // TRF-YYYYMMDD-####
+   747→  fromBranchId    String
+   748→  fromBranch      Branch            @relation("TransfersOut", fields: [fromBranchId], references: [id])
+   749→  toBranchId      String
+   750→  toBranch        Branch            @relation("TransfersIn", fields: [toBranchId], references: [id])
+   751→  note            String?
+   752→  status          String            @default("pending") // pending | completed | cancelled
+   753→  createdById     String?
+   754→  createdByName   String
+   755→  completedAt     DateTime?
+   756→  completedByName String?
+   757→  items           StockTransferItem[]
+   758→  createdAt       DateTime          @default(now())
+   759→
+   760→  @@index([fromBranchId])
+   761→  @@index([toBranchId])
+   762→  @@index([status, createdAt])
+   763→}
+   764→
+   765→model StockTransferItem {
+   766→  id             String        @id @default(cuid())
+   767→  transferId     String
+   768→  transfer       StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+   769→  medicineId     String? // source row at the origin branch
+   770→  name           String
+   771→  sku            String
+   772→  unit           String
+   773→  batchNumber    String?
+   774→  expiryDate     DateTime?
+   775→  qty            Int
+   776→  costPrice      Float
+   777→  sellingPrice   Float
+   778→  destMedicineId String? // row the stock was merged into on receive
+   779→
+   780→  @@index([transferId])
+   781→}
+   782→
+   783→// Held / parked sales (counter layaway) — a cart snapshot parked server-side
+   784→// so any staff member on the branch can resume it on any terminal.
+   785→// Intentionally node-local (no SyncOp): an ephemeral counter scratchpad.
+   786→model HeldSale {
+   787→  id           String   @id @default(cuid())
+   788→  holdNo       Int      // sequential park slip number (computed on create)
+   789→  branchId     String?
+   790→  userId       String   // staff who parked the cart
+   791→  userName     String
+   792→  customerId   String?
+   793→  customerName String?
+   794→  itemCount    Int      @default(0)
+   795→  total        Float    @default(0)
+   796→  items        String   // JSON snapshot of the cart lines at park time
+   797→  note         String?
+   798→  createdAt    DateTime @default(now())
+   799→
+   800→  @@index([branchId, createdAt])
+   801→}
+   802→
+   803→// ---------------------------------------------------------------------------
+   804→// Customer returns & refunds (RMA): take goods back, restock, refund.
+   805→// ---------------------------------------------------------------------------
+   806→model SaleReturn {
+   807→  id             String   @id @default(cuid())
+   808→  returnNo       String   @unique // RMA-2026-0001
+   809→  saleId         String
+   810→  sale           Sale     @relation(fields: [saleId], references: [id])
+   811→  saleInvoice    String
+   812→  branchId       String?
+   813→  userId         String // staff who processed the return
+   814→  userName       String
+   815→  customerId     String?
+   816→  reason         String   @default("other") // damaged | expired | wrong_item | changed_mind | other
+   817→  refundMethod   String   @default("cash") // cash | momo | card | store_credit
+   818→  refundProvider String? // momo provider for momo refunds
+   819→  refundReference String? // momo/card txn reference
+   820→  refundAmount   Float    @default(0)
+   821→  restockedCount Int      @default(0) // packs returned to shelf
+   822→  note           String?
+   823→  approvedById   String? // second approver when the processor lacks returns:approve
+   824→  approvedByName String?
+   825→  items          SaleReturnItem[]
+   826→  createdAt      DateTime @default(now())
+   827→  updatedAt      DateTime @updatedAt
+   828→
+   829→  @@index([saleId])
+   830→  @@index([branchId, createdAt])
+   831→}
+   832→
+   833→model SaleReturnItem {
+   834→  id         String     @id @default(cuid())
+   835→  returnId   String
+   836→  return     SaleReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+   837→  saleItemId String?
+   838→  medicineId String?
+   839→  name       String
+   840→  sku        String?
+   841→  qty        Int
+   842→  unitPrice  Float
+   843→  total      Float // proportional line amount refunded (incl. share of discount/tax)
+   844→  saleUnit   String     @default("pack")
+   845→  restocked  Boolean    @default(false)
+   846→  // Detailed restock: what physically happened to the returned goods.
+   847→  //   sellable   — back to the shelf (stockQty/looseUnits)
+   848→  //   quarantine — held aside for the quarantine desk (quarantineQty)
+   849→  //   dispose    — destroyed on arrival (no stock movement, write-off log)
+   850→  restockAction String @default("sellable")
+   851→  restockPacks  Int    @default(0) // whole packs/packs-equivalents moved
+   852→  restockLoose  Int    @default(0) // loose inner units moved (sellable only)
+   853→
+   854→  @@index([returnId])
+   855→}
+   856→
+   857→// Statutory rate era — the VAT structure (NHIL/GETFund/VAT mix) the store ran
+   858→// during a period. Ghana switches seasonally between e.g. 15% flat and 20% with
+   859→// levies; activating an era closes the previous one (effectiveTo = switch time)
+   860→// and flips the till's statutory components. Sales keep the era they were
+   861→// booked under so filings can attribute historical revenue exactly.
+   862→model TaxEra {
+   863→  id             String    @id @default(cuid())
+   864→  label          String
+   865→  componentsJson String // JSON [{label, pct}, ...] — the statutory structure
+   866→  effectiveFrom  DateTime
+   867→  effectiveTo    DateTime? // null = open-ended (current era)
+   868→  isCurrent      Boolean   @default(false)
+   869→  note           String?
+   870→  createdByName  String?
+   871→  createdAt      DateTime  @default(now())
+   872→  updatedAt      DateTime  @updatedAt
+   873→  sales          Sale[]
+   874→
+   875→  @@index([isCurrent])
+   876→}
+   877→
+   878→// Sales target — a revenue goal for one staff member (attributed by the
+   879→// cashier name the sale books under, the same convention the Staff Performance
+   880→// report uses) or for a whole branch, per period (daily / weekly / monthly).
+   881→// Progress is always computed over the target's CURRENT window.
+   882→model SalesTarget {
+   883→  id        String   @id @default(cuid())
+   884→  scope     String // 'user' | 'branch'
+   885→  userName  String? // user scope: the attribution key (sale.cashierName)
+   886→  branchId  String? // branch-scope target branch; optional home branch for user targets
+   887→  period    String // 'daily' | 'weekly' | 'monthly'
+   888→  amount    Float // revenue target for the period window
+   889→  active    Boolean  @default(true)
+   890→  note      String?
+   891→  createdByName String?
+   892→  createdAt DateTime @default(now())
+   893→  updatedAt DateTime @updatedAt
+   894→
+   895→  @@index([period, active])
+   896→}
+   897→
