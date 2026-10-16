@@ -40,9 +40,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }
       const lines = await db.purchaseItem.findMany({ where: { purchaseId: id } })
 
-      type ReqLine = { purchaseItemId: string; qty: number }
+      type ReqLine = { purchaseItemId: string; qty: number; batchNumber?: string }
       const reqLines: ReqLine[] | null = Array.isArray(body.items)
-        ? body.items.map((x: { purchaseItemId?: unknown; qty?: unknown }) => ({ purchaseItemId: String(x.purchaseItemId ?? ''), qty: Math.trunc(Number(x.qty ?? 0)) }))
+        ? body.items.map((x: { purchaseItemId?: unknown; qty?: unknown; batchNumber?: unknown }) => ({
+            purchaseItemId: String(x.purchaseItemId ?? ''),
+            qty: Math.trunc(Number(x.qty ?? 0)),
+            // Task 70 — optional per-line batch number, stamped onto the medicine on receive.
+            ...(typeof x.batchNumber === 'string' && x.batchNumber.trim() ? { batchNumber: x.batchNumber.trim().slice(0, 40) } : {}),
+          }))
         : null
       if (reqLines && reqLines.length > 0 && reqLines.some((l) => l.qty < 0)) {
         return NextResponse.json({ error: 'Received quantities cannot be negative.' }, { status: 400 })
@@ -51,10 +56,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       const plan = lines
         .map((line) => {
           const outstanding = line.qty - line.receivedQty
-          const wanted = reqLines
-            ? (reqLines.find((r) => r.purchaseItemId === line.id)?.qty ?? 0)
-            : outstanding // legacy full receive
-          return { line, receive: Math.min(Math.max(0, wanted), outstanding) }
+          const req = reqLines ? reqLines.find((r) => r.purchaseItemId === line.id) : undefined
+          const wanted = reqLines ? (req?.qty ?? 0) : outstanding // legacy full receive
+          return { line, receive: Math.min(Math.max(0, wanted), outstanding), batch: req?.batchNumber }
         })
         .filter((p) => p.receive > 0)
 
@@ -63,9 +67,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }
 
       const purchase = await db.$transaction(async (tx) => {
-        for (const { line, receive } of plan) {
+        for (const { line, receive, batch } of plan) {
           if (!line.medicineId) continue
-          await tx.medicine.update({ where: { id: line.medicineId }, data: { stockQty: { increment: receive } } })
+          await tx.medicine.update({ where: { id: line.medicineId }, data: { stockQty: { increment: receive }, ...(batch ? { batchNumber: batch } : {}) } })
           await tx.inventoryLog.create({
             data: { medicineId: line.medicineId, type: 'purchase_in', quantity: receive, reason: `GRN ${existing.referenceNo}${existing.receivedAt ? ' (balance)' : ''}`, reference: existing.referenceNo },
           })

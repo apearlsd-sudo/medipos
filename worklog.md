@@ -916,3 +916,20 @@ Work Log:
 
 Stage Summary:
 - The reports menubar now behaves like a proper hover menu: glide onto a category to reveal its reports, glide across to switch, move away and it tucks itself back in — while tap and keyboard keep working unchanged. 136/136 regression green, deployed on SW v11, DB backed up.
+---
+Task ID: 70
+Agent: main
+Task: "unique batch numbers created automatically, with an option for the user to prefix" — auto batch generation shipped per the approved recommendation (Scheme A + layers 1 & 2).
+
+Work Log:
+- DESIGN: batch numbers generate as PREFIX-YYYYMMDD-### (e.g. OSU-20261016-014). Prefix is user-settable in Settings (key `batchPrefix`, sanitized to uppercase alphanumerics ≤10, blank falls back to BAT); date is the generation day; ### is a per-stem daily sequence = max existing suffix across Medicine.batchNumber + PurchaseItem.batchNumber + StockTransferItem.batchNumber + 1 — scans saved rows, so generated numbers never collide with a batch already on file, survive deleted medicines via PO/transfer copies, and never touch hand-typed manufacturer lots (same real lot may legitimately exist on several branch rows). Generator is compute-only (read-only endpoint); a number becomes "used" when the user saves it — repeated reads are stable until then. Server UTC == Africa/Accra wall clock (GMT+0), so date stems match the shop's calendar.
+- API: new `src/lib/batch.ts` (sanitizeBatchPrefix + nextBatchNumbers with count ≤50) + GET /api/batches/next (requireUser; any signed-in staff; never mutates).
+- MEDICINES FORM: wand button (Wand2, aria-label "Generate batch number") beside the Batch Number input fills PREFIX-DATE-### using the Settings prefix; helper caption explains type-vs-generate.
+- GRN RECEIVING: each PO line in the goods-receipt dialog now has a "Batch (optional)" input (prefilled from the PO line's batchNumber); an "Auto-fill batches" button fills every still-empty receivable line with sequential generated numbers in ONE request (count param prevents same-dialog collisions); PUT /api/purchases/[id] receive action accepts optional per-line batchNumber (trimmed, ≤40 chars) and stamps Medicine.batchNumber inside the receive transaction (stock-only behavior unchanged when omitted — tier tests unaffected).
+- SETTINGS: "Batch Numbering" card (CommerceCards, after Cash Rounding) — prefix input (uppercase, maxLength 10), live example preview (prefix + today + 001), Save via existing PUT /api/settings + loadStoreSettings(true) refresh.
+- VERIFY: `scripts/verify-batch-gen.sh` 12/12 — 401 unauth; BAT-YYYYMMDD-### default; osu!@-x → OSUX; blank → BAT; repeat reads stable; count=5 sequential; planted ZZB-...-009 → next is 010, no overlap in count requests; GRN probe PO (PUR-2026-0059, holdStock) received 7 units with batch GRN-PROBE-77 → medicine stamped; cashier 200. Two initial FAILs were test-script bugs (bare GET calls don't advance by design; "010" vs 10 string compare), fixed in place. Browser E2E (SW medipos-v11→v12, zero page errors): Settings card saves OSU (DB confirmed) + live example; Medicines wand filled OSU-20261016-001 into an empty field; GRN dialog shows the batch column, Auto-fill filled the line, posting stamped the probe medicine (batchNumber = OSU-20261016-001, stock 0→10). All probe rows deleted, batchPrefix reset to ''.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v11→v12 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200). Full 136-test regression green in a single pass (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- backup-db.sh run.
+
+Stage Summary:
+- Batch numbers are now one tap away everywhere stock enters: a wand on the Medicines form, an auto-fill sweep across GRN lines, and a configurable default prefix in Settings — PREFIX-DATE-### sequences that never collide with any batch already on file while supplier-printed lots stay free-form. 12/12 verify + 136/136 regression green, deployed on SW v12, DB backed up.

@@ -13,7 +13,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
 import { fmtDate, fmtMoney } from '@/lib/format'
-import { ClipboardList, PackagePlus, Plus, Search, Trash2, Truck, Sparkles } from 'lucide-react'
+import { ClipboardList, PackagePlus, Plus, Search, Trash2, Truck, Sparkles, Wand2 } from 'lucide-react'
+import { useStoreSettings } from '@/lib/store-settings'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -133,24 +134,45 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
   }
 
   // B4 — goods receipt (GRN) dialog: receive per line, capped at outstanding
+  // Task 70 — each line can carry the batch number stamped onto the medicine on receive.
   const [grnTarget, setGrnTarget] = useState<Purchase | null>(null)
-  const [grnLines, setGrnLines] = useState<Array<{ id: string; name: string; qty: number; receivedQty: number; receive: string }>>([])
+  const [grnLines, setGrnLines] = useState<Array<{ id: string; name: string; qty: number; receivedQty: number; receive: string; batch: string }>>([])
   const [grnInvoice, setGrnInvoice] = useState('')
   const [grnBusy, setGrnBusy] = useState(false)
+  const [grnBatchBusy, setGrnBatchBusy] = useState(false)
+  const storeSettings = useStoreSettings()
 
   const openGRN = async (p: Purchase) => {
     setGrnTarget(p)
     setGrnInvoice(p.supplierInvoiceNo ?? '')
     const res = await fetch(`/api/purchases/${p.id}`, { cache: 'no-store' })
     const json = await res.json()
-    const items = (json.purchase?.items ?? []) as Array<{ id: string; name: string; qty: number; receivedQty: number }>
-    setGrnLines(items.map((l) => ({ id: l.id, name: l.name, qty: l.qty, receivedQty: l.receivedQty, receive: String(Math.max(0, l.qty - l.receivedQty)) })))
+    const items = (json.purchase?.items ?? []) as Array<{ id: string; name: string; qty: number; receivedQty: number; batchNumber: string | null }>
+    setGrnLines(items.map((l) => ({ id: l.id, name: l.name, qty: l.qty, receivedQty: l.receivedQty, receive: String(Math.max(0, l.qty - l.receivedQty)), batch: l.batchNumber ?? '' })))
+  }
+
+  // Task 70 — one request fills every still-empty batch line with sequential
+  // generated numbers (PREFIX-YYYYMMDD-###) so simultaneous lines never collide.
+  const autoFillBatches = async () => {
+    const empty = grnLines.filter((l) => l.qty - l.receivedQty > 0 && !l.batch.trim()).length
+    if (empty === 0) { toast({ title: 'Nothing to fill', description: 'Every receivable line already has a batch number.' }); return }
+    setGrnBatchBusy(true)
+    try {
+      const res = await fetch(`/api/batches/next?prefix=${encodeURIComponent(storeSettings?.batchPrefix ?? '')}&count=${empty}`, { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok || !Array.isArray(json.batches)) { toast({ title: 'Could not generate batch numbers', description: json.error, variant: 'destructive' }); return }
+      let i = 0
+      setGrnLines((prev) => prev.map((l) => (l.qty - l.receivedQty > 0 && !l.batch.trim() ? { ...l, batch: json.batches[i++] ?? l.batch } : l)))
+      toast({ title: `${json.batches.length} batch number(s) filled`, description: 'Edit any line before posting if the supplier printed different lots.' })
+    } finally {
+      setGrnBatchBusy(false)
+    }
   }
 
   const submitGRN = async () => {
     if (!grnTarget) return
     const items = grnLines
-      .map((l) => ({ purchaseItemId: l.id, qty: Math.trunc(Number(l.receive) || 0) }))
+      .map((l) => ({ purchaseItemId: l.id, qty: Math.trunc(Number(l.receive) || 0), batchNumber: l.batch.trim() || undefined }))
       .filter((x) => x.qty > 0)
     if (items.length === 0) { toast({ title: 'Nothing to receive', description: 'Enter a quantity on at least one line.', variant: 'destructive' }); return }
     setGrnBusy(true)
@@ -439,7 +461,7 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
 
       {/* B4 — goods received note (GRN) dialog */}
       <Dialog open={!!grnTarget} onOpenChange={(o) => !o && setGrnTarget(null)}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-xl">
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Goods received — #{grnTarget?.referenceNo}</DialogTitle>
             <DialogDescription>Enter what physically arrived. Quantities are capped at what is still outstanding; partial receipts stay open for the balance.</DialogDescription>
@@ -448,6 +470,20 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
             <div className="space-y-1.5">
               <Label>Supplier invoice number (optional)</Label>
               <Input value={grnInvoice} onChange={(e) => setGrnInvoice(e.target.value)} placeholder="e.g. SI-99123" />
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs text-muted-foreground">Batch numbers land on each product&rsquo;s stock record — leave blank to skip.</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={autoFillBatches}
+                disabled={grnBatchBusy}
+                className="h-8 shrink-0 rounded-full text-xs text-teal-700 dark:text-teal-300"
+                title="Generate batch numbers for every empty line (uses the default prefix from Settings)"
+              >
+                <Wand2 className="h-3.5 w-3.5" /> {grnBatchBusy ? 'Filling…' : 'Auto-fill batches'}
+              </Button>
             </div>
             <div className="rounded-xl border">
               {grnLines.map((l, i) => {
@@ -458,6 +494,14 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
                       <p className="truncate font-medium">{l.name}</p>
                       <p className="text-xs text-muted-foreground tabular-nums">ordered {l.qty} · received {l.receivedQty} · outstanding {outstanding}</p>
                     </div>
+                    <Input
+                      value={l.batch}
+                      disabled={outstanding <= 0}
+                      onChange={(e) => setGrnLines((prev) => prev.map((r, j) => (j === i ? { ...r, batch: e.target.value } : r)))}
+                      className="h-8 w-40 shrink-0"
+                      placeholder="Batch (optional)"
+                      aria-label={`Batch number for ${l.name}`}
+                    />
                     <Input
                       type="number"
                       min={0}

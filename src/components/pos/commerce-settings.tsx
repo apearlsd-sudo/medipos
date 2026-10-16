@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { fmtMoney } from '@/lib/format'
 import { loadStoreSettings } from '@/lib/store-settings'
-import { Coins, HandCoins, Loader2, Pencil, Plus, Save, ShieldCheck, Trash2 } from 'lucide-react'
+import { Boxes, Coins, HandCoins, Loader2, Pencil, Plus, Save, ShieldCheck, Trash2, Wand2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -65,6 +65,11 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   const [cashRounding, setCashRounding] = useState<'none' | '0.05' | '0.10'>('none')
   const [roundingSaving, setRoundingSaving] = useState(false)
 
+  // Task 70 — batch numbering: default prefix for generated batch numbers
+  // (PREFIX-YYYYMMDD-###) used by the Generate buttons on Medicines and GRN receiving.
+  const [batchPrefix, setBatchPrefix] = useState('')
+  const [batchPrefixSaving, setBatchPrefixSaving] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
@@ -85,6 +90,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       setBirthdayPoints(s.loyaltyBirthdayPoints ?? '20')
       setBirthdayWindowDays(s.loyaltyBirthdayWindowDays ?? '3')
       setCashRounding(s.cashRounding === '0.05' || s.cashRounding === '0.10' ? s.cashRounding : 'none')
+      setBatchPrefix(s.batchPrefix ?? '')
       try {
         const parsed = s.loyaltyTiers ? JSON.parse(s.loyaltyTiers) : null
         if (Array.isArray(parsed) && parsed.length) {
@@ -187,6 +193,22 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       toast({ title: 'Loyalty rules saved' })
     } finally {
       setLoyaltySaving(false)
+    }
+  }
+
+  const saveBatchPrefix = async () => {
+    setBatchPrefixSaving(true)
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchPrefix: batchPrefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) }),
+      })
+      if (!res.ok) { toast({ title: 'Save failed', variant: 'destructive' }); return }
+      await loadStoreSettings(true)
+      toast({ title: 'Batch numbering saved', description: 'Generate buttons on Medicines and goods receiving now use this prefix.' })
+    } finally {
+      setBatchPrefixSaving(false)
     }
   }
 
@@ -329,6 +351,41 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
           </div>
           <p className="text-xs text-muted-foreground">
             Example at 5p: a GHS 10.02 cash bill charges GHS 10.00 (customer&rsquo;s favor), a GHS 10.03 bill charges GHS 10.05. Receipts print the rounding line and the cash amount due.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Task 70 — batch numbering defaults */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base"><Boxes className="h-4 w-4 text-teal-500" /> Batch Numbering</CardTitle>
+          <CardDescription>
+            Default prefix for auto-generated batch numbers. The wand button on the Medicines form and the Auto-fill button on goods receiving generate <span className="font-medium text-foreground">PREFIX-DATE-###</span> numbers that never collide with a batch already on file. Leave blank to use the built-in <span className="font-medium text-foreground">BAT</span>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="batch-prefix">Default prefix</Label>
+              <Input
+                id="batch-prefix"
+                value={batchPrefix}
+                onChange={(e) => setBatchPrefix(e.target.value)}
+                disabled={!canEdit}
+                placeholder="e.g. OSU, PCM — letters &amp; numbers, max 10"
+                maxLength={10}
+                className="uppercase"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button onClick={saveBatchPrefix} disabled={!canEdit || batchPrefixSaving} className="rounded-full bg-teal-600 hover:bg-teal-700">
+                {batchPrefixSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Batch Prefix
+              </Button>
+            </div>
+          </div>
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Wand2 className="h-3.5 w-3.5 text-teal-500" />
+            Example: {(batchPrefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'BAT')}-{new Date().getFullYear()}{String(new Date().getMonth() + 1).padStart(2, '0')}{String(new Date().getDate()).padStart(2, '0')}-001 — the sequence advances with every generated batch. Supplier-printed lots can still be typed in by hand.
           </p>
         </CardContent>
       </Card>

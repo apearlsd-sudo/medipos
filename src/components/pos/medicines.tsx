@@ -21,7 +21,7 @@ import { useUser } from '@/components/pos/user-context'
 import { fmtDate, fmtMoney, currencySymbol, UNITS } from '@/lib/format'
 import { LABEL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import { useStoreSettings } from '@/lib/store-settings'
-import { Barcode, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, ShieldCheck, Tag, Trash2, Upload, X } from 'lucide-react'
+import { Barcode, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, ShieldCheck, Tag, Trash2, Upload, Wand2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -206,6 +206,23 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
   }
 
   const set = (k: keyof typeof emptyForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }))
+
+  // Task 70 — auto batch number (PREFIX-YYYYMMDD-###). Uses the store's default
+  // prefix from Settings → Batch numbering; blank prefix falls back to BAT server-side.
+  const [batchBusy, setBatchBusy] = useState(false)
+  const generateBatch = async () => {
+    setBatchBusy(true)
+    try {
+      const res = await fetch(`/api/batches/next?prefix=${encodeURIComponent(storeSettings?.batchPrefix ?? '')}`, { cache: 'no-store' })
+      const json = await res.json()
+      if (!res.ok || !json.batches?.[0]) { toast({ title: 'Could not generate a batch number', description: json.error, variant: 'destructive' }); return }
+      set('batchNumber', json.batches[0])
+    } catch {
+      toast({ title: 'Could not generate a batch number', description: 'Check your connection and try again.', variant: 'destructive' })
+    } finally {
+      setBatchBusy(false)
+    }
+  }
 
   // ---------- Barcode label printing ----------
   const openLabels = (med?: Med) => {
@@ -429,7 +446,22 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
             </div>
             <div className="space-y-1.5">
               <Label>Batch Number</Label>
-              <Input value={form.batchNumber} onChange={(e) => set('batchNumber', e.target.value)} placeholder="e.g. AMX-2405" />
+              <div className="flex gap-2">
+                <Input value={form.batchNumber} onChange={(e) => set('batchNumber', e.target.value)} placeholder="e.g. AMX-2405" />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={generateBatch}
+                  disabled={batchBusy}
+                  title="Generate the next batch number (uses the default prefix from Settings)"
+                  aria-label="Generate batch number"
+                  className="h-9 w-9 shrink-0 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-500/10"
+                >
+                  <Wand2 className="h-4 w-4" />
+                </Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground">Type the supplier&rsquo;s lot, or tap the wand to generate PREFIX-DATE-###.</p>
             </div>
             <div className="space-y-1.5">
               <Label>Expiry Date</Label>
