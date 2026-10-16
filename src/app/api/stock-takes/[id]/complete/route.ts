@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
-import { refreshTakeCounters } from '@/lib/stock-take'
+import { refreshTakeCounters, logTakeEvent } from '@/lib/stock-take'
 
 /**
  * PUT /api/stock-takes/[id]/complete — close the count session.
@@ -68,6 +68,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         completeNote: note,
       },
     })
+    await logTakeEvent(db, id, 'completed', { id: gate.user.id, name: gate.user.name }, note)
 
     return NextResponse.json({ take: completed, aggregates })
   } catch (e) {

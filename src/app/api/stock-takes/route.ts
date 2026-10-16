@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
-import { nextStockTakeNo, refreshTakeCounters } from '@/lib/stock-take'
+import { nextStockTakeNo, refreshTakeCounters, logTakeEvent } from '@/lib/stock-take'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
 
 /** GET /api/stock-takes?status=&search= — list count sessions with live aggregates. */
@@ -129,6 +129,7 @@ export async function POST(req: NextRequest) {
     })
 
     const agg = await refreshTakeCounters(take.id)
+    await logTakeEvent(db, take.id, 'started', { id: gate.user.id, name: gate.user.name }, note)
     const fresh = await db.stockTake.findUnique({ where: { id: take.id } })
 
     return NextResponse.json({ take: fresh, aggregates: agg }, { status: 201 })

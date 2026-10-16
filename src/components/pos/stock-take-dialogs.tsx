@@ -12,10 +12,11 @@ import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { VarianceBadge, VarianceValueBadge } from '@/components/pos/stock-take-badges'
+import { StatusBadge } from '@/components/pos/shared'
 import { BarcodeScannerDialog } from '@/components/pos/barcode-scanner'
 import { fmtDateTime, fmtMoney } from '@/lib/format'
 import {
-  AlertTriangle, Check, CheckCircle2, ClipboardCheck, Loader2, PackageSearch, PauseCircle, PlayCircle, ScanLine, ScrollText, Search, XCircle,
+  AlertTriangle, Check, CheckCircle2, ClipboardCheck, History, Loader2, PackageSearch, PauseCircle, PlayCircle, ScanLine, ScrollText, Search, XCircle,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -71,6 +72,22 @@ export interface StockTakeRec {
   resumedAt?: string | null
   resumeCount?: number
   items?: StockTakeItemRec[]
+}
+
+export interface StockTakeTimelineEntry {
+  type: 'started' | 'paused' | 'resumed' | 'completed' | 'cancelled'
+  at: string
+  byName: string | null
+  note: string | null
+}
+
+/** Icon + color + label per lifecycle event, shared by the timeline UIs. */
+export const TAKE_EVENT_META: Record<StockTakeTimelineEntry['type'], { label: string; cls: string }> = {
+  started: { label: 'Count session started', cls: 'bg-teal-600' },
+  paused: { label: 'Paused', cls: 'bg-amber-500' },
+  resumed: { label: 'Resumed counting', cls: 'bg-teal-500' },
+  completed: { label: 'Completed', cls: 'bg-emerald-500' },
+  cancelled: { label: 'Cancelled', cls: 'bg-red-500' },
 }
 
 // ---------------------------------------------------------------------------
@@ -603,17 +620,28 @@ export function CompleteTakeDialog({ open, onOpenChange, take, onCompleted }: {
   const [submitting, setSubmitting] = useState(false)
   const [varianceLines, setVarianceLines] = useState<StockTakeItemRec[]>([])
   const [loadingLines, setLoadingLines] = useState(false)
+  // Resume counter — auto-alerted before completion when the session spanned pauses
+  const [pauseInfo, setPauseInfo] = useState<{ pauses: number; resumes: number; lastResumedAt: string | null; currentlyPaused: boolean } | null>(null)
 
   useEffect(() => {
     if (!open || !take) return
     setApplyToStock(true)
     setNote('')
+    setPauseInfo(null)
     setLoadingLines(true)
     fetch(`/api/stock-takes/${take.id}`, { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
       .then((j) => {
         const lines: StockTakeItemRec[] = j?.take?.items ?? []
         setVarianceLines(lines.filter((i) => (i.varianceQty ?? 0) !== 0))
+        // Pause/resume history: prefer the live event timeline, fall back to
+        // the denormalized counters for takes without events.
+        const tl: StockTakeTimelineEntry[] = j?.timeline ?? []
+        const resumes = j?.take?.resumeCount ?? take.resumeCount ?? 0
+        const currentlyPaused = (j?.take?.status ?? take.status) === 'paused'
+        const pauses = tl.length ? tl.filter((e) => e.type === 'paused').length : resumes + (currentlyPaused ? 1 : 0)
+        const lastResumedAt = tl.filter((e) => e.type === 'resumed').map((e) => e.at).pop() ?? null
+        if (pauses > 0 || currentlyPaused) setPauseInfo({ pauses, resumes, lastResumedAt, currentlyPaused })
       })
       .finally(() => setLoadingLines(false))
   }, [open, take])
@@ -657,6 +685,24 @@ export function CompleteTakeDialog({ open, onOpenChange, take, onCompleted }: {
           </DialogTitle>
           <DialogDescription>Review the variances found during this count before closing the session.</DialogDescription>
         </DialogHeader>
+
+        {pauseInfo && (
+          <div className="flex items-start gap-2.5 rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="text-sm">
+              <p className="font-semibold text-amber-800 dark:text-amber-300">
+                Before you complete — this session was interrupted {pauseInfo.pauses} time{pauseInfo.pauses === 1 ? '' : 's'}{' '}
+                (paused {pauseInfo.pauses}× · resumed {pauseInfo.resumes}×{pauseInfo.currentlyPaused ? ' · still paused now' : ''})
+              </p>
+              <p className="mt-0.5 text-xs text-amber-800/85 dark:text-amber-300/85">
+                Each pause froze counting, and every resume re-baselined the not-yet-counted lines to that day&apos;s shelf stock — so part of this variance was measured on a different day than the rest. Skim the variance list below (or the full pause/resume timeline in the session detail view) before applying it to stock.
+              </p>
+              {pauseInfo.lastResumedAt && (
+                <p className="mt-1 text-[11px] font-medium text-amber-700 dark:text-amber-400/90">Last resume: {fmtDateTime(pauseInfo.lastResumedAt)}</p>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
@@ -809,6 +855,8 @@ export function TakeDetailDialog({ open, onOpenChange, takeId }: {
   takeId: string | null
 }) {
   const [take, setTake] = useState<StockTakeRec | null>(null)
+  const [timeline, setTimeline] = useState<StockTakeTimelineEntry[]>([])
+  const [timelineSynthetic, setTimelineSynthetic] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const load = useCallback(async () => {
@@ -819,6 +867,8 @@ export function TakeDetailDialog({ open, onOpenChange, takeId }: {
       const res = await fetch(`/api/stock-takes/${takeId}`, { cache: 'no-store' })
       const json = res.ok ? await res.json() : null
       setTake(json?.take ?? null)
+      setTimeline(json?.timeline ?? [])
+      setTimelineSynthetic(!!json?.timelineSynthetic)
     } finally {
       setLoading(false)
     }
@@ -850,14 +900,52 @@ export function TakeDetailDialog({ open, onOpenChange, takeId }: {
               </DialogDescription>
             </DialogHeader>
 
-            {(take.status === 'paused' || (take.resumeCount ?? 0) > 0) && (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-2.5 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-300">
-                <span className="flex items-center gap-1.5 font-semibold">
-                  <PauseCircle className="h-3.5 w-3.5" />
-                  {take.status === 'paused' ? `Paused${take.pausedAt ? ` since ${fmtDateTime(take.pausedAt)}` : ''}` : 'Multi-day session'}
-                </span>
-                {(take.resumeCount ?? 0) > 0 && <span>resumed {take.resumeCount}× · last {take.resumedAt ? fmtDateTime(take.resumedAt) : '—'}</span>}
-                {take.pausedByName && take.status === 'paused' && <span>by {take.pausedByName}</span>}
+            {(timeline.length > 0 || take.status === 'paused') && (
+              <div className="rounded-xl border p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="flex items-center gap-1.5 text-sm font-semibold">
+                    <History className="h-4 w-4 text-teal-600 dark:text-teal-400" /> Pause / Resume Timeline
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {timeline.filter((e) => e.type === 'paused').length > 0 && (
+                      <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                        paused {timeline.filter((e) => e.type === 'paused').length}×
+                      </span>
+                    )}
+                    {take.status === 'paused' && <StatusBadge status="paused" />}
+                  </div>
+                </div>
+                <ol className="mt-3 max-h-56 space-y-0 overflow-y-auto pr-1">
+                  {timeline.map((e, i) => {
+                    const meta = TAKE_EVENT_META[e.type] ?? TAKE_EVENT_META.started
+                    const Icon = e.type === 'paused' ? PauseCircle : e.type === 'completed' ? CheckCircle2 : e.type === 'cancelled' ? XCircle : PlayCircle
+                    return (
+                      <li key={i} className="relative flex gap-3 pb-3.5 last:pb-0">
+                        {i < timeline.length - 1 && (
+                          <span aria-hidden className="absolute left-[11px] top-6 h-[calc(100%-18px)] w-px bg-border" />
+                        )}
+                        <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-white shadow-sm ${meta.cls}`}>
+                          <Icon className="h-3.5 w-3.5" />
+                        </span>
+                        <div className="min-w-0 flex-1 pt-0.5">
+                          <p className="text-sm font-semibold leading-tight">
+                            {meta.label}
+                            {e.type === 'paused' && take.status === 'paused' && i === timeline.length - 1 && (
+                              <span className="ml-2 text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400">current</span>
+                            )}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{fmtDateTime(e.at)}{e.byName ? ` · by ${e.byName}` : ''}</p>
+                          {e.note && <p className="mt-0.5 text-xs italic text-muted-foreground">“{e.note}”</p>}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ol>
+                {timelineSynthetic && (
+                  <p className="mt-2 border-t pt-2 text-[11px] text-muted-foreground">
+                    Reconstructed from session fields — this take was counted before per-event logging existed, so only the last pause/resume is shown individually.
+                  </p>
+                )}
               </div>
             )}
 
@@ -896,9 +984,6 @@ export function TakeDetailDialog({ open, onOpenChange, takeId }: {
 
             {take.note && (
               <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold">Opening note:</span> {take.note}</p>
-            )}
-            {take.pauseNote && (
-              <p className="rounded-lg bg-amber-50/60 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300"><span className="font-semibold">Pause note:</span> {take.pauseNote}</p>
             )}
             {take.completeNote && (
               <p className="rounded-lg bg-muted/60 px-3 py-2 text-xs text-muted-foreground"><span className="font-semibold">Closing note:</span> {take.completeNote}</p>

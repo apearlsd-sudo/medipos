@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { logTakeEvent } from '@/lib/stock-take'
 
 /**
  * PUT /api/stock-takes/[id]/cancel — abort an open count session (active or
@@ -20,6 +21,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const body = await req.json().catch(() => ({}))
+    const cancelNote = body.note ? String(body.note).trim() : 'Count session cancelled — no stock changes applied'
     const cancelled = await db.stockTake.update({
       where: { id },
       data: {
@@ -27,9 +29,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         completedAt: new Date(),
         completedById: gate.user.id,
         completedByName: gate.user.name,
-        completeNote: body.note ? String(body.note).trim() : 'Count session cancelled — no stock changes applied',
+        completeNote: cancelNote,
       },
     })
+    await logTakeEvent(db, id, 'cancelled', { id: gate.user.id, name: gate.user.name }, cancelNote)
 
     return NextResponse.json({ take: cancelled })
   } catch (e) {

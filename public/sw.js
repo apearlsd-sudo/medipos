@@ -19,7 +19,7 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-const CACHE_VERSION = 'medipos-v17' // v17: stock-take pause/resume — park a count session, resume any later day with uncounted-line re-baselining
+const CACHE_VERSION = 'medipos-v18' // v17: stock-take pause/resume — park a count session, resume any later day with uncounted-line re-baselining
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

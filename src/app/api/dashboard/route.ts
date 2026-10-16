@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
   const canPurchases = can(user, 'purchases', 'view')
   const canInventory = can(user, 'inventory', 'view')
   const canReports = can(user, 'reports', 'view')
+  const canStockTake = can(user, 'stock_take', 'view')
   const scope = resolveBranchScope(user, new URL(req.url).searchParams)
   // Branch-scoped where fragments (null = all branches)
   const saleWhere = { saleStatus: { not: 'cancelled' }, ...(scope.branchId ? { branchId: scope.branchId } : {}) }
@@ -164,6 +165,22 @@ export async function GET(req: NextRequest) {
     if (canReports) {
       payload.topSelling = topSelling
       payload.categoryDistribution = categoryDistribution
+    }
+
+    if (canStockTake) {
+      // Operational prompt: an open (active or paused) count session blocks a
+      // new start — surface it on the dashboard so it gets finished first.
+      const openTake = await db.stockTake.findFirst({
+        where: { status: { in: ['in_progress', 'paused'] }, ...(scope.branchId ? { branchId: scope.branchId } : {}) },
+        orderBy: { startedAt: 'desc' },
+        select: {
+          id: true, stockTakeNo: true, title: true, status: true,
+          startedByName: true, startedAt: true,
+          pausedAt: true, pausedByName: true, pauseNote: true, resumeCount: true,
+          totalItems: true, countedItems: true,
+        },
+      })
+      if (openTake) payload.openStockTake = openTake
     }
 
     return NextResponse.json(payload)

@@ -582,6 +582,7 @@ model StockTake {
   startedAt       DateTime        @default(now())
   completedAt     DateTime?
   items           StockTakeItem[]
+  events          StockTakeEvent[] // pause/resume lifecycle timeline
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 }
@@ -606,6 +607,21 @@ model StockTakeItem {
   countedAt     DateTime?
   note          String?
   createdAt     DateTime  @default(now())
+}
+
+// Lifecycle event log backing the pause/resume timeline in the take detail
+// view: started → (paused → resumed)* → completed | cancelled. Every pause and
+// every resume is one row, so a multi-day count shows each interruption.
+model StockTakeEvent {
+  id          String    @id @default(cuid())
+  stockTakeId String
+  stockTake   StockTake @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+  type        String // started | paused | resumed | completed | cancelled
+  at          DateTime  @default(now())
+  byId        String?
+  byName      String?
+  note        String? // pause reason / completion note
+  createdAt   DateTime  @default(now())
 }
 
 // --- Tier 3: expenses & petty cash ------------------------------------------

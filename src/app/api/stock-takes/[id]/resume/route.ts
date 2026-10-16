@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
-import { refreshTakeCounters } from '@/lib/stock-take'
+import { refreshTakeCounters, logTakeEvent } from '@/lib/stock-take'
 
 /**
  * PUT /api/stock-takes/[id]/resume — continue a paused count session, days
@@ -102,6 +102,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           resumeCount: { increment: 1 },
         },
       })
+      await logTakeEvent(tx, id, 'resumed', { id: gate.user.id, name: gate.user.name }, null)
 
       return { updated, rebaselined, added: newMeds.length }
     })

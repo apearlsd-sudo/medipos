@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { nextDocNo } from '@/lib/doc-no'
+import type { Prisma } from '@prisma/client'
 
 // ---------------------------------------------------------------------------
 // Shared stock-take computation helpers (server-side)
@@ -91,6 +92,100 @@ export async function nextStockTakeNo(): Promise<string> {
     select: { stockTakeNo: true },
   })
   return nextDocNo(last?.stockTakeNo, prefix)
+}
+
+// ---------------------------------------------------------------------------
+// Pause/resume lifecycle timeline
+// ---------------------------------------------------------------------------
+
+export type StockTakeEventType = 'started' | 'paused' | 'resumed' | 'completed' | 'cancelled'
+
+export interface StockTakeTimelineEntry {
+  type: StockTakeEventType
+  at: string
+  byName: string | null
+  note: string | null
+}
+
+/** Client for event writes — works with both the bare client and a tx. */
+type TakeEventClient = Prisma.TransactionClient | Prisma.StockTakeEventDelegate
+
+/**
+ * Record one lifecycle event for the take's pause/resume timeline. Every
+ * pause and every resume gets its own row, so the detail view can show each
+ * interruption of a multi-day count.
+ */
+export async function logTakeEvent(
+  client: TakeEventClient,
+  stockTakeId: string,
+  type: StockTakeEventType,
+  by?: { id?: string | null; name?: string | null } | null,
+  note?: string | null,
+): Promise<void> {
+  await client.stockTakeEvent.create({
+    data: {
+      stockTakeId,
+      type,
+      byId: by?.id ?? null,
+      byName: by?.name ?? null,
+      note: note?.trim() || null,
+    },
+  })
+}
+
+/**
+ * Best-effort timeline for takes recorded BEFORE event logging existed
+ * (Task 75 rows): reconstructed from the denormalized pause/resume fields.
+ * Those fields only carry the LAST pause/resume cycle, so the synthesis is
+ * honest about it — middle entries are ordered by their real timestamps
+ * (the last resume can precede the last pause when the take was completed
+ * straight from paused) and the resumed entry notes when it is the last of
+ * several.
+ */
+export function synthesizeTakeTimeline(take: {
+  status: string
+  startedAt: Date
+  startedByName: string
+  note: string | null
+  pausedAt: Date | null
+  pausedByName: string | null
+  pauseNote: string | null
+  resumedAt: Date | null
+  resumeCount: number
+  completedAt: Date | null
+  completedByName: string | null
+  completeNote: string | null
+  updatedAt: Date
+}): StockTakeTimelineEntry[] {
+  const middle: StockTakeTimelineEntry[] = []
+  if (take.pausedAt) {
+    middle.push({ type: 'paused', at: take.pausedAt.toISOString(), byName: take.pausedByName, note: take.pauseNote })
+  }
+  if (take.resumedAt) {
+    middle.push({
+      type: 'resumed',
+      at: take.resumedAt.toISOString(),
+      byName: null,
+      note: take.resumeCount > 1 ? `last of ${take.resumeCount} resumes (earlier ones predate event logging)` : null,
+    })
+  }
+  middle.sort((a, b) => a.at.localeCompare(b.at))
+
+  const tl: StockTakeTimelineEntry[] = [
+    { type: 'started', at: take.startedAt.toISOString(), byName: take.startedByName, note: take.note },
+    ...middle,
+  ]
+  if (take.status === 'completed' && take.completedAt) {
+    tl.push({ type: 'completed', at: take.completedAt.toISOString(), byName: take.completedByName, note: take.completeNote })
+  } else if (take.status === 'cancelled') {
+    tl.push({
+      type: 'cancelled',
+      at: (take.completedAt ?? take.updatedAt).toISOString(),
+      byName: take.completedByName,
+      note: take.completeNote,
+    })
+  }
+  return tl
 }
 
 export interface StockTakeReportRow {

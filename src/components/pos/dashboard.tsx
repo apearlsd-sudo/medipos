@@ -5,7 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AvatarInitials, StatCard, StatusBadge } from '@/components/pos/shared'
 import { useUser } from '@/components/pos/user-context'
-import { fmtCompact, fmtMoney, fmtRelative, paymentMethodLabel } from '@/lib/format'
+import { fmtCompact, fmtDateTime, fmtMoney, fmtRelative, paymentMethodLabel } from '@/lib/format'
 import { DASHBOARD_WIDGETS, parseWidgetConfig, widgetDef, widgetsForRole } from '@/lib/dashboard-widgets'
 import { useStoreSettings } from '@/lib/store-settings'
 import { WidgetsPanel } from '@/components/pos/dashboard-widgets-dialog'
@@ -14,7 +14,7 @@ import {
   Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import {
-  AlertTriangle, Banknote, Boxes, CalendarClock, CreditCard, DollarSign, LayoutDashboard, LayoutPanelTop, Pill, RefreshCcw, ShoppingCart, TimerReset, TrendingUp, Users,
+  AlertTriangle, Banknote, Boxes, CalendarClock, ClipboardCheck, CreditCard, DollarSign, LayoutDashboard, LayoutPanelTop, PauseCircle, Pill, RefreshCcw, ShoppingCart, TimerReset, TrendingUp, Users,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
@@ -37,11 +37,25 @@ interface DashboardData {
   topSelling?: Array<{ id: string; name: string; category: string; qty: number; revenue: number }>
   categoryDistribution?: Array<{ name: string; value: number }>
   recentSales?: Array<{ id: string; invoiceNo: string; customer: string; total: number; paymentStatus: string; paymentMethod: string; itemCount: number; createdAt: string }>
+  openStockTake?: {
+    id: string
+    stockTakeNo: string
+    title: string
+    status: string
+    startedByName: string
+    startedAt: string
+    pausedAt: string | null
+    pausedByName: string | null
+    pauseNote: string | null
+    resumeCount: number
+    totalItems: number
+    countedItems: number
+  }
 }
 
 const DONUT_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6']
 
-export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' | 'inventory' | 'sales' | 'purchases' | 'customers') => void }) {
+export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' | 'inventory' | 'sales' | 'purchases' | 'customers' | 'stock-take') => void }) {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [customizeOpen, setCustomizeOpen] = useState(false)
@@ -136,6 +150,48 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
           </button>
         </div>
       </div>
+
+      {/* Continue-before-starting prompt — an open count session blocks a new start */}
+      {data.openStockTake && (() => {
+        const t = data.openStockTake
+        const isPaused = t.status === 'paused'
+        return (
+          <div className={`overflow-hidden rounded-2xl border shadow-sm ${isPaused ? 'border-amber-400/40' : 'border-teal-500/30'}`}>
+            <div className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${isPaused ? 'bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-transparent' : 'bg-gradient-to-r from-teal-600/10 via-teal-500/5 to-transparent'}`}>
+              <div className="flex min-w-0 items-start gap-3">
+                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-md ${isPaused ? 'bg-amber-500 shadow-amber-500/25' : 'bg-teal-600 shadow-teal-600/25'}`}>
+                  {isPaused ? <PauseCircle className="h-5.5 w-5.5" /> : <ClipboardCheck className="h-5.5 w-5.5" />}
+                </span>
+                <div className="min-w-0">
+                  <p className={`flex flex-wrap items-center gap-2 text-sm font-bold ${isPaused ? 'text-amber-800 dark:text-amber-300' : 'text-teal-800 dark:text-teal-300'}`}>
+                    {isPaused
+                      ? <>Count session {t.stockTakeNo} is paused — continue it before starting a new one</>
+                      : <>Count session {t.stockTakeNo} is in progress — continue it before starting a new one</>}
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isPaused ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' : 'bg-teal-100 text-teal-800 dark:bg-teal-500/15 dark:text-teal-300'}`}>
+                      {t.countedItems}/{t.totalItems} lines counted
+                    </span>
+                    {t.resumeCount > 0 && (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold">resumed {t.resumeCount}×</span>
+                    )}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    “{t.title}” · started by {t.startedByName} · {fmtDateTime(t.startedAt)}
+                    {isPaused && t.pausedAt ? <> · paused {fmtDateTime(t.pausedAt)}{t.pausedByName ? ` by ${t.pausedByName}` : ''}</> : null}
+                    {t.pauseNote ? <> — “{t.pauseNote}”</> : null}
+                    . Only one count session can be open at a time, so a new stock take can&apos;t start until this one is resumed and completed (or cancelled).
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => onNavigate('stock-take')}
+                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-md transition ${isPaused ? 'bg-amber-500 shadow-amber-500/25 hover:bg-amber-600' : 'bg-teal-600 shadow-teal-600/25 hover:bg-teal-700'}`}
+              >
+                <ClipboardCheck className="h-4 w-4" /> {isPaused ? 'Continue Stock Take' : 'Continue Counting'}
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       {widgetCount === 0 ? (
         <Card className="flex flex-col items-center justify-center gap-3 p-14 text-center">

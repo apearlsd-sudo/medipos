@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { logTakeEvent } from '@/lib/stock-take'
 
 /**
  * PUT /api/stock-takes/[id]/pause — park an active count session.
@@ -28,6 +29,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const body = await req.json().catch(() => ({}))
+    const pauseNote = body.note ? String(body.note).trim() : null
     const paused = await db.stockTake.update({
       where: { id },
       data: {
@@ -35,9 +37,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         pausedAt: new Date(),
         pausedById: gate.user.id,
         pausedByName: gate.user.name,
-        pauseNote: body.note ? String(body.note).trim() : null,
+        pauseNote,
       },
     })
+    await logTakeEvent(db, id, 'paused', { id: gate.user.id, name: gate.user.name }, pauseNote)
 
     return NextResponse.json({ take: paused })
   } catch (e) {
