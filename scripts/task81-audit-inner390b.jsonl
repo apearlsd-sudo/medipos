@@ -1,0 +1,22 @@
+{"view":"dashboard","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"pos","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"medicines","data":{"vw":390,"n":1,"scrollers":[{"hidden":12,"cw":356,"sw":368,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"MedicineCategoryBatch / ExpiryStockP"}]}}
+{"view":"categories","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"inventory","data":{"vw":390,"n":1,"scrollers":[{"hidden":109,"cw":358,"sw":467,"slot":"tabs-list","cls":"w-fit max-w-full overflow-x-auto","childCls":"data-[state=active]:bg-background dark:data-[state=active]:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 text-foreground","txt":"Low Stock (17)Expiry Tracking (7)Mov"}]}}
+{"view":"stock-take","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"transfers","data":{"vw":390,"n":1,"scrollers":[{"hidden":97,"cw":356,"sw":453,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"ReferenceRouteItemsUnitsStatusCreate"}]}}
+{"view":"shifts","data":{"vw":390,"n":1,"scrollers":[{"hidden":3,"cw":356,"sw":359,"slot":"table-container","cls":"w-full overflow-x-auto","childCls":"w-full caption-bottom text-sm","txt":"ShiftCashierStartedDurationSalesTxns"}]}}
+{"view":"sales","data":{"vw":390,"n":1,"scrollers":[{"hidden":15,"cw":356,"sw":371,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"InvoiceCustomerDateMethodItemsTotalS"}]}}
+{"view":"quotations","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"approvals","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"purchases","data":{"vw":390,"n":1,"scrollers":[{"hidden":174,"cw":356,"sw":530,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"ReferenceSupplierDateItemsTotalDueSt"}]}}
+{"view":"suppliers","data":{"vw":390,"n":2,"scrollers":[{"hidden":57,"cw":356,"sw":413,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"SupplierContact PersonPhone / EmailM"},{"hidden":32,"cw":356,"sw":388,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"SupplierOrdersFill rateAvg lead (day"}]}}
+{"view":"customers","data":{"vw":390,"n":1,"scrollers":[{"hidden":4,"cw":356,"sw":360,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"CustomerContactOrdersPointsCredit Ba"}]}}
+{"view":"expenses","data":{"vw":390,"n":1,"scrollers":[{"hidden":23,"cw":356,"sw":379,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"ExpenseCategoryMethodRecorded byAmou"}]}}
+{"view":"prescriptions","data":{"vw":390,"n":1,"scrollers":[{"hidden":113,"cw":356,"sw":469,"slot":"scroll-area-viewport","cls":"","childCls":"","txt":"CodePatientPrescriberMedicationsDate"}]}}
+{"view":"reports","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"branches","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"users","data":{"vw":390,"n":1,"scrollers":[{"hidden":112,"cw":358,"sw":470,"slot":"tabs-list","cls":"w-fit max-w-full overflow-x-auto","childCls":"data-[state=active]:bg-background dark:data-[state=active]:text-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:outline-ring dark:data-[state=active]:border-input dark:data-[state=active]:bg-input/30 text-foreground","txt":"Users5 Roles & Privileges4 Permissio"}]}}
+{"view":"audit","data":{"vw":390,"n":1,"scrollers":[{"hidden":10,"cw":356,"sw":366,"slot":"table-container","cls":"w-full overflow-x-auto","childCls":"w-full caption-bottom text-sm","txt":"WhenActionActorTargetSummary16 Oct 2"}]}}
+{"view":"notifications","data":{"vw":390,"n":0,"scrollers":[]}}
+{"view":"settings","data":{"vw":390,"n":1,"scrollers":[{"hidden":795,"cw":358,"sw":1153,"cls":"overflow-x-auto","childCls":"flex shrink-0 items-center gap-3 rounded-xl border p-2.5 text-left","txt":"Store & LocaleIdentity, contact deta"}]}}

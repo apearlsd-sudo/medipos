@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
 import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { fmtDate, fmtMoney } from '@/lib/format'
-import { ClipboardList, PackagePlus, Plus, Search, Trash2, Truck, Sparkles, Wand2 } from 'lucide-react'
+import { Banknote, ClipboardList, PackagePlus, Plus, Search, Trash2, Truck, Sparkles, Wand2 } from 'lucide-react'
 import { useStoreSettings } from '@/lib/store-settings'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -377,28 +377,33 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
           <TableSkeleton cols={7} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[860px]">
+            <div className="md:min-w-[780px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Reference</TableHead>
-                    <TableHead>Supplier</TableHead>
+                    <TableHead className="hidden sm:table-cell">Supplier</TableHead>
                     <TableHead className="hidden md:table-cell">Date</TableHead>
                     <TableHead className="hidden md:table-cell text-center">Items</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="text-right">Due</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
+                    <TableHead className="hidden text-right sm:table-cell">Due</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Status</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {purchases.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell><span className="font-medium text-teal-600 dark:text-teal-400">#{p.referenceNo}</span></TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-4 w-4" /></span>
-                          <span className="text-sm font-medium">{p.supplier}</span>
+                        <span className="font-medium text-teal-600 dark:text-teal-400">#{p.referenceNo}</span>
+                        {/* Meta stacks under the reference on phones to keep the ledger swipe-free */}
+                        <p className="mt-0.5 flex max-w-28 items-center gap-1 text-xs text-muted-foreground sm:hidden"><Truck className="h-3 w-3 shrink-0" /><span className="truncate">{p.supplier}</span></p>
+                        <span className="mt-1 inline-flex sm:hidden"><StatusBadge status={p.status} /></span>
+                      </TableCell>
+                      <TableCell className="hidden sm:table-cell">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-4 w-4" /></span>
+                          <span className="max-w-32 truncate text-sm font-medium sm:max-w-none">{p.supplier}</span>
                         </div>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{fmtDate(p.purchaseDate)}</TableCell>
@@ -412,17 +417,17 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
                         )}
                       </TableCell>
                       <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(p.totalAmount)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{p.dueAmount > 0 ? <span className="text-red-500">{fmtMoney(p.dueAmount)}</span> : '—'}</TableCell>
-                      <TableCell className="text-center"><StatusBadge status={p.status} /></TableCell>
+                      <TableCell className="hidden text-right tabular-nums sm:table-cell">{p.dueAmount > 0 ? <span className="text-red-500">{fmtMoney(p.dueAmount)}</span> : '—'}</TableCell>
+                      <TableCell className="hidden text-center sm:table-cell"><StatusBadge status={p.status} /></TableCell>
                       <TableCell className="text-right">
                         {(p.status === 'pending_receipt' || p.status === 'partial_receipt') && (
                           <Button variant="outline" size="sm" className="mr-1.5 h-8 rounded-full bg-teal-50 text-xs text-teal-700 dark:bg-teal-500/10 dark:text-teal-300" onClick={() => openGRN(p)}>
-                            <PackagePlus className="h-3.5 w-3.5" /> {p.status === 'partial_receipt' ? 'Receive balance' : 'Receive stock'}
+                            <PackagePlus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">{p.status === 'partial_receipt' ? 'Receive balance' : 'Receive stock'}</span>
                           </Button>
                         )}
                         {p.dueAmount > 0 && (
                           <Button variant="outline" size="sm" className="h-8 rounded-full text-xs" onClick={() => markPaid(p)}>
-                            <PackagePlus className="h-3.5 w-3.5" /> Settle
+                            <Banknote className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Settle</span>
                           </Button>
                         )}
                       </TableCell>

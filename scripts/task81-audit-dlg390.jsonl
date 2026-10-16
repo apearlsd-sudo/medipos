@@ -1,0 +1,20 @@
+{"dialog":"medicines-add","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"purchases-new","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"suppliers-add","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"customers-add","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"categories-add","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"transfers-new","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"prescriptions-new","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"expenses-record","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"quotations-new","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[{"tag":"div","slot":"dialog-header","cls":"flex flex-col gap-2 text-center sm:text-left","w":388,"right":429,"txt":"New quotationBuild a price offer. Stock "},{"tag":"div","cls":"grid gap-4 sm:grid-cols-2","w":388,"right":429,"txt":"CustomerWalk-in / prospectAdd productsGl"}]}}
+{"dialog":"shifts-start","data":{"error":"trigger not found (Start Shift)"}}
+}
+{"dialog":"users-add","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"inventory-adjust","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"stocktake-start","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[]}}
+{"dialog":"sales-invoice","data":{"vw":390,"overflowPx":0,"dialogW":358,"offenders":[{"tag":"div","slot":"dialog-header","cls":"flex flex-col gap-2 text-center sm:text-left","w":575,"right":616,"txt":"Invoice #INV-2026-0868Paid"},{"tag":"div","cls":"receipt-print-area space-y-4 text-sm","w":575,"right":616,"txt":"CustomerAma MensahLoyalty customerDate16"}]}}
+{"dialog":"users-role-editor","data":{"error":"trigger not found"}}
+}
+{"dialog":"pos-checkout","data":{"error":"trigger not found"}}
+}
+{"dialog":"mobile-drawer","data":{"vw":390,"overflowPx":0,"dialogW":0,"offenders":[]}}

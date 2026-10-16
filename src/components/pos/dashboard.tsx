@@ -399,7 +399,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
                       <TableHeader>
                         <TableRow className="hover:bg-transparent">
                           <TableHead>Invoice</TableHead>
-                          <TableHead>Customer</TableHead>
+                          <TableHead className="hidden sm:table-cell">Customer</TableHead>
                           <TableHead className="hidden sm:table-cell">Method</TableHead>
                           <TableHead className="text-right">Total</TableHead>
                           <TableHead className="text-right">Status</TableHead>
@@ -412,7 +412,7 @@ export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' 
                               <p className="font-medium text-teal-600 dark:text-teal-400">{s.invoiceNo}</p>
                               <p className="text-xs text-muted-foreground">{fmtRelative(s.createdAt)} · {s.itemCount} items</p>
                             </TableCell>
-                            <TableCell>
+                            <TableCell className="hidden sm:table-cell">
                               <div className="flex items-center gap-2">
                                 <AvatarInitials name={s.customer} className="h-7 w-7 text-xs" />
                                 <span className="max-w-28 truncate text-sm">{s.customer}</span>

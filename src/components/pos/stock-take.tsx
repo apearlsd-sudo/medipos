@@ -444,14 +444,14 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
               <TableHeader>
                 <TableRow>
                   <TableHead>Take</TableHead>
-                  <TableHead>Scope</TableHead>
-                  <TableHead>Counter</TableHead>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Closed</TableHead>
-                  <TableHead className="text-center">Lines</TableHead>
+                  <TableHead className="hidden sm:table-cell">Scope</TableHead>
+                  <TableHead className="hidden md:table-cell">Counter</TableHead>
+                  <TableHead className="hidden lg:table-cell">Started</TableHead>
+                  <TableHead className="hidden lg:table-cell">Closed</TableHead>
+                  <TableHead className="hidden text-center sm:table-cell">Lines</TableHead>
                   <TableHead className="text-center">Net Variance</TableHead>
-                  <TableHead className="text-right">Value Impact</TableHead>
-                  <TableHead>Status</TableHead>
+                  <TableHead className="hidden text-right md:table-cell">Value Impact</TableHead>
+                  <TableHead className="hidden sm:table-cell">Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -468,20 +468,20 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                   <TableRow key={t.id} className="hover:bg-muted/40">
                     <TableCell>
                       <p className="font-semibold">{t.stockTakeNo}</p>
-                      <p className="max-w-40 truncate text-xs text-muted-foreground">{t.title}</p>
+                      <p className="max-w-24 truncate text-xs text-muted-foreground sm:max-w-40">{t.title}</p>
                     </TableCell>
-                    <TableCell className="text-sm">{t.scope === 'category' ? t.scopeCategory : <span className="text-muted-foreground">All products</span>}</TableCell>
-                    <TableCell className="text-sm">{t.startedByName}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">{fmtDateTime(t.startedAt)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs">{t.completedAt ? fmtDateTime(t.completedAt) : '—'}</TableCell>
-                    <TableCell className="text-center tabular-nums">{t.countedItems}/{t.totalItems}</TableCell>
+                    <TableCell className="hidden text-sm sm:table-cell">{t.scope === 'category' ? t.scopeCategory : <span className="text-muted-foreground">All products</span>}</TableCell>
+                    <TableCell className="hidden text-sm md:table-cell">{t.startedByName}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-xs lg:table-cell">{fmtDateTime(t.startedAt)}</TableCell>
+                    <TableCell className="hidden whitespace-nowrap text-xs lg:table-cell">{t.completedAt ? fmtDateTime(t.completedAt) : '—'}</TableCell>
+                    <TableCell className="hidden text-center tabular-nums sm:table-cell">{t.countedItems}/{t.totalItems}</TableCell>
                     <TableCell className="text-center">
                       {t.status === 'completed' ? <VarianceBadge variance={t.varianceQty} /> : <span className="text-xs text-muted-foreground">—</span>}
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="hidden text-right md:table-cell">
                       {t.status === 'completed' ? <VarianceValueBadge value={t.varianceValue} /> : <span className="text-xs text-muted-foreground">—</span>}
                     </TableCell>
-                    <TableCell><TakeStatusBadge status={t.status} /></TableCell>
+                    <TableCell className="hidden sm:table-cell"><TakeStatusBadge status={t.status} /></TableCell>
                     <TableCell className="text-right">
                       <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => openDetail(t.id)} aria-label={`View ${t.stockTakeNo}`}>
                         <Eye className="h-4 w-4" />
@@ -609,14 +609,14 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                       <TableHeader>
                         <TableRow>
                           <TableHead>Take</TableHead>
-                          <TableHead>Counter</TableHead>
-                          <TableHead>Completed</TableHead>
-                          <TableHead className="text-center">Lines</TableHead>
-                          <TableHead className="text-center">System Units</TableHead>
-                          <TableHead className="text-center">Counted Units</TableHead>
+                          <TableHead className="hidden md:table-cell">Counter</TableHead>
+                          <TableHead className="hidden lg:table-cell">Completed</TableHead>
+                          <TableHead className="hidden text-center sm:table-cell">Lines</TableHead>
+                          <TableHead className="hidden text-center lg:table-cell">System Units</TableHead>
+                          <TableHead className="hidden text-center lg:table-cell">Counted Units</TableHead>
                           <TableHead className="text-center">Net Qty</TableHead>
                           <TableHead className="text-right">Net Value</TableHead>
-                          <TableHead className="text-center">Applied</TableHead>
+                          <TableHead className="hidden text-center md:table-cell">Applied</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -624,16 +624,16 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                           <TableRow key={t.id} className="hover:bg-muted/40">
                             <TableCell>
                               <button className="font-semibold text-teal-600 hover:underline dark:text-teal-400" onClick={() => openDetail(t.id)}>{t.stockTakeNo}</button>
-                              <p className="max-w-40 truncate text-xs text-muted-foreground">{t.title}</p>
+                              <p className="max-w-24 truncate text-xs text-muted-foreground sm:max-w-40">{t.title}</p>
                             </TableCell>
-                            <TableCell className="text-sm">{t.startedByName}</TableCell>
-                            <TableCell className="whitespace-nowrap text-xs">{fmtDateTime(t.completedAt)}</TableCell>
-                            <TableCell className="text-center tabular-nums">{t.totalItems}</TableCell>
-                            <TableCell className="text-center tabular-nums">{t.systemQty}</TableCell>
-                            <TableCell className="text-center tabular-nums">{t.countedQty}</TableCell>
+                            <TableCell className="hidden text-sm md:table-cell">{t.startedByName}</TableCell>
+                            <TableCell className="hidden whitespace-nowrap text-xs lg:table-cell">{fmtDateTime(t.completedAt)}</TableCell>
+                            <TableCell className="hidden text-center tabular-nums sm:table-cell">{t.totalItems}</TableCell>
+                            <TableCell className="hidden text-center tabular-nums lg:table-cell">{t.systemQty}</TableCell>
+                            <TableCell className="hidden text-center tabular-nums lg:table-cell">{t.countedQty}</TableCell>
                             <TableCell className="text-center"><VarianceBadge variance={t.varianceQty} /></TableCell>
                             <TableCell className="text-right"><VarianceValueBadge value={t.varianceValue} /></TableCell>
-                            <TableCell className="text-center text-xs">{t.applyToStock ? <span className="font-medium text-teal-600 dark:text-teal-400">Yes</span> : <span className="text-muted-foreground">No</span>}</TableCell>
+                            <TableCell className="hidden text-center text-xs md:table-cell">{t.applyToStock ? <span className="font-medium text-teal-600 dark:text-teal-400">Yes</span> : <span className="text-muted-foreground">No</span>}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -650,9 +650,9 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                       <TableHeader>
                         <TableRow>
                           <TableHead>Product</TableHead>
-                          <TableHead className="text-center">Takes</TableHead>
-                          <TableHead className="text-center">System Units</TableHead>
-                          <TableHead className="text-center">Counted Units</TableHead>
+                          <TableHead className="hidden text-center sm:table-cell">Takes</TableHead>
+                          <TableHead className="hidden text-center md:table-cell">System Units</TableHead>
+                          <TableHead className="hidden text-center md:table-cell">Counted Units</TableHead>
                           <TableHead className="text-center">Net Qty Variance</TableHead>
                           <TableHead className="text-right">Value Impact</TableHead>
                         </TableRow>
@@ -661,12 +661,12 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                         {report.topVariances.map((p) => (
                           <TableRow key={p.medicineId} className="hover:bg-muted/40">
                             <TableCell>
-                              <p className="max-w-56 truncate font-medium">{p.name}</p>
+                              <p className="max-w-32 truncate font-medium sm:max-w-56">{p.name}</p>
                               <p className="text-xs text-muted-foreground">{p.sku} · {p.unit}</p>
                             </TableCell>
-                            <TableCell className="text-center tabular-nums">{p.takes}</TableCell>
-                            <TableCell className="text-center tabular-nums">{p.systemTotal}</TableCell>
-                            <TableCell className="text-center tabular-nums">{p.countedTotal}</TableCell>
+                            <TableCell className="hidden text-center tabular-nums sm:table-cell">{p.takes}</TableCell>
+                            <TableCell className="hidden text-center tabular-nums md:table-cell">{p.systemTotal}</TableCell>
+                            <TableCell className="hidden text-center tabular-nums md:table-cell">{p.countedTotal}</TableCell>
                             <TableCell className="text-center font-semibold tabular-nums">{signedQty(p.varianceQty)}</TableCell>
                             <TableCell className="text-right"><VarianceValueBadge value={p.varianceValue} /></TableCell>
                           </TableRow>

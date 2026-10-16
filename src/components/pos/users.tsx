@@ -589,9 +589,9 @@ export function Users() {
                         <th className="px-4 py-3 font-medium">User</th>
                         <th className="px-4 py-3 font-medium">Role</th>
                         <th className="hidden lg:table-cell px-4 py-3 font-medium">Branch</th>
-                        <th className="px-4 py-3 font-medium">Contact</th>
-                        <th className="px-4 py-3 font-medium">Status</th>
-                        <th className="px-4 py-3 font-medium">Last Login</th>
+                        <th className="hidden px-4 py-3 font-medium sm:table-cell">Contact</th>
+                        <th className="hidden px-4 py-3 font-medium sm:table-cell">Status</th>
+                        <th className="hidden px-4 py-3 font-medium lg:table-cell">Last Login</th>
                         <th className="px-4 py-3 text-right font-medium">Actions</th>
                       </tr>
                     </thead>
@@ -602,10 +602,10 @@ export function Users() {
                           <tr key={u.id} className="hover:bg-muted/40">
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-3">
-                                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-600/10 text-xs font-bold text-teal-700 dark:text-teal-300">
+                                <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-600/10 text-xs font-bold text-teal-700 dark:text-teal-300 sm:flex">
                                   {u.name.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()}
                                 </span>
-                                <div className="min-w-0">
+                                <div className="min-w-0 max-w-24 sm:max-w-none">
                                   <p className="truncate font-medium">
                                     {u.name}
                                     {isSelf && <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">(you)</span>}
@@ -618,11 +618,11 @@ export function Users() {
                               <Badge className={`rounded-full border-transparent ${roleBadgeClass(u.role)}`}>{roleLabel(u.role, u.roleName)}</Badge>
                             </td>
                             <td className="hidden px-4 py-3 text-sm text-muted-foreground lg:table-cell">{u.branchName ?? 'All (HQ)'}</td>
-                            <td className="px-4 py-3 text-xs text-muted-foreground">
+                            <td className="hidden px-4 py-3 text-xs text-muted-foreground sm:table-cell">
                               <p>{u.email ?? '—'}</p>
                               <p>{u.phone ?? ''}</p>
                             </td>
-                            <td className="px-4 py-3">
+                            <td className="hidden px-4 py-3 sm:table-cell">
                               {u.status === 'active' ? (
                                 <Badge variant="outline" className="gap-1.5 rounded-full border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-400">
                                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Active
@@ -633,7 +633,7 @@ export function Users() {
                                 </Badge>
                               )}
                             </td>
-                            <td className="px-4 py-3 text-xs text-muted-foreground">{u.lastLoginAt ? fmtRelative(u.lastLoginAt) : 'Never'}</td>
+                            <td className="hidden px-4 py-3 text-xs text-muted-foreground lg:table-cell">{u.lastLoginAt ? fmtRelative(u.lastLoginAt) : 'Never'}</td>
                             <td className="px-4 py-3 text-right">
                               <DropdownMenu>
                                 <DropdownMenuTrigger asChild>

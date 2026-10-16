@@ -191,14 +191,14 @@ export function Customers() {
           <TableSkeleton cols={6} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[880px]">
+            <div className="md:min-w-[880px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Customer</TableHead>
                     <TableHead className="hidden md:table-cell">Contact</TableHead>
                     <TableHead className="text-center">Orders</TableHead>
-                    <TableHead className="text-center">Points</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Points</TableHead>
                     <TableHead className="text-right">Credit Balance</TableHead>
                     <TableHead className="hidden md:table-cell">Insurance</TableHead>
                     <TableHead className="w-12" />
@@ -222,7 +222,7 @@ export function Customers() {
                         <p className="text-xs text-muted-foreground">{c.email ?? ''}</p>
                       </TableCell>
                       <TableCell className="text-center font-medium tabular-nums">{c.totalOrders}</TableCell>
-                      <TableCell className="text-center">
+                      <TableCell className="hidden text-center sm:table-cell">
                         <div className="flex flex-col items-center gap-1">
                           <Badge variant="outline" className="tabular-nums">{c.points ?? 0} pts</Badge>
                           {c.tier && <Badge variant="outline" className="bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">{c.tier}</Badge>}

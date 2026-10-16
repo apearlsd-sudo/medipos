@@ -271,15 +271,15 @@ export function Transfers() {
       ) : (
         <Card className="overflow-hidden py-0">
           <ScrollArea className="w-full">
-            <div className="min-w-[760px]">
+            <div className="md:min-w-[760px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Reference</TableHead>
                     <TableHead>Route</TableHead>
-                    <TableHead className="text-center">Items</TableHead>
-                    <TableHead className="text-center">Units</TableHead>
-                    <TableHead>Status</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Items</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Units</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Status</TableHead>
                     <TableHead className="hidden md:table-cell">Created</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -289,18 +289,19 @@ export function Transfers() {
                     <TableRow key={t.id}>
                       <TableCell>
                         <p className="font-medium text-teal-600 dark:text-teal-400">{t.referenceNo}</p>
-                        {t.note && <p className="max-w-40 truncate text-xs text-muted-foreground">{t.note}</p>}
+                        {t.note && <p className="hidden max-w-40 truncate text-xs text-muted-foreground sm:block">{t.note}</p>}
+                        <span className="mt-1 inline-block sm:hidden"><Badge className={`rounded-full border-transparent ${statusBadge[t.status]}`}>{t.status}</Badge></span>
                       </TableCell>
                       <TableCell>
-                        <div className="flex items-center gap-1.5 text-sm">
-                          <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-muted-foreground" /> {t.fromBranch.name}</span>
-                          <ArrowRight className="h-3.5 w-3.5 text-teal-500" />
-                          <span className="inline-flex items-center gap-1"><Building2 className="h-3.5 w-3.5 text-muted-foreground" /> {t.toBranch.name}</span>
+                        <div className="flex min-w-0 flex-col items-start gap-0.5 text-sm sm:flex-row sm:items-center sm:gap-1.5">
+                          <span className="inline-flex max-w-24 min-w-0 items-center gap-1 truncate sm:max-w-40 lg:max-w-none"><Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> {t.fromBranch.name}</span>
+                          <ArrowRight className="hidden h-3.5 w-3.5 shrink-0 text-teal-500 sm:block" />
+                          <span className="inline-flex max-w-24 min-w-0 items-center gap-1 truncate sm:max-w-40 lg:max-w-none"><Building2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> {t.toBranch.name}</span>
                         </div>
                       </TableCell>
-                      <TableCell className="text-center text-sm tabular-nums">{t.itemCount}</TableCell>
-                      <TableCell className="text-center text-sm tabular-nums">{t.units}</TableCell>
-                      <TableCell>
+                      <TableCell className="hidden text-center text-sm tabular-nums sm:table-cell">{t.itemCount}</TableCell>
+                      <TableCell className="hidden text-center text-sm tabular-nums sm:table-cell">{t.units}</TableCell>
+                      <TableCell className="hidden text-center sm:table-cell">
                         <Badge className={`rounded-full border-transparent ${statusBadge[t.status]}`}>{t.status}</Badge>
                       </TableCell>
                       <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
@@ -311,7 +312,7 @@ export function Transfers() {
                         <div className="flex justify-end gap-1.5">
                           {t.status === 'pending' && canComplete && (
                             <Button size="sm" className="h-8 rounded-full bg-teal-600 hover:bg-teal-700" disabled={receivingId === t.id} onClick={() => receive(t)}>
-                              {receivingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} Receive
+                              {receivingId === t.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />} <span className="hidden sm:inline">Receive</span>
                             </Button>
                           )}
                           {t.status === 'pending' && canCancel && (
@@ -320,7 +321,7 @@ export function Transfers() {
                             </Button>
                           )}
                           {t.status !== 'pending' && (
-                            <span className="text-xs text-muted-foreground">
+                            <span className="hidden text-xs text-muted-foreground sm:inline">
                               {t.status === 'completed' ? `Received ${t.completedAt ? fmtDateTime(t.completedAt) : ''}` : '—'}
                             </span>
                           )}

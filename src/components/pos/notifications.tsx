@@ -513,9 +513,9 @@ export function Notifications() {
               <TableRow>
                 <TableHead className="w-8" />
                 <TableHead>When</TableHead>
-                <TableHead>Channel</TableHead>
-                <TableHead>Template</TableHead>
-                <TableHead>Recipient</TableHead>
+                <TableHead className="hidden sm:table-cell">Channel</TableHead>
+                <TableHead className="hidden lg:table-cell">Template</TableHead>
+                <TableHead className="hidden md:table-cell">Recipient</TableHead>
                 <TableHead>Status</TableHead>
                 {canManage && <TableHead className="text-right">Actions</TableHead>}
               </TableRow>
@@ -536,13 +536,13 @@ export function Notifications() {
                 <>
                   <TableRow key={m.id} className="cursor-pointer" onClick={() => setExpanded(expanded === m.id ? null : m.id)}>
                     <TableCell>{expanded === m.id ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}</TableCell>
-                    <TableCell className="whitespace-nowrap text-xs tabular-nums">{fmtWhen(m.createdAt)}</TableCell>
-                    <TableCell><Badge variant="outline" className="rounded-full text-[11px]">{m.channel}</Badge></TableCell>
-                    <TableCell className="font-mono text-xs">{m.template}</TableCell>
-                    <TableCell className="text-sm">{m.recipient}</TableCell>
+                    <TableCell className="text-xs tabular-nums">{fmtWhen(m.createdAt)}</TableCell>
+                    <TableCell className="hidden sm:table-cell"><Badge variant="outline" className="rounded-full text-[11px]">{m.channel}</Badge></TableCell>
+                    <TableCell className="hidden font-mono text-xs lg:table-cell">{m.template}</TableCell>
+                    <TableCell className="hidden text-sm md:table-cell">{m.recipient}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={`rounded-full text-[11px] capitalize ${statusBadge(m.status)}`}>{m.status}</Badge>
-                      {m.error && <span className="mt-0.5 block max-w-56 truncate text-[11px] text-muted-foreground" title={m.error}>{m.error}</span>}
+                      {m.error && <span className="mt-0.5 block max-w-24 truncate text-[11px] text-muted-foreground sm:max-w-56" title={m.error}>{m.error}</span>}
                     </TableCell>
                     {canManage && (
                       <TableCell className="text-right">

@@ -227,12 +227,12 @@ export function Expenses() {
           </div>
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[860px]">
+            <div className="md:min-w-[860px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Expense</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead className="hidden sm:table-cell">Category</TableHead>
                     <TableHead className="hidden md:table-cell">Method</TableHead>
                     <TableHead className="hidden lg:table-cell">Recorded by</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
@@ -247,7 +247,7 @@ export function Expenses() {
                         <p className="font-medium">{e.description}</p>
                         <p className="text-xs text-muted-foreground">{e.expenseNo} · {fmtDate(e.createdAt)}{e.reference ? ` · ref ${e.reference}` : ''}</p>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <span className="rounded-full bg-teal-600/10 px-2.5 py-1 text-xs font-medium text-teal-700 dark:text-teal-400">{e.category}</span>
                         <p className="mt-1 text-xs text-muted-foreground">{e.branch}</p>
                       </TableCell>

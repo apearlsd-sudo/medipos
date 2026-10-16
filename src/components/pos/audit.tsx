@@ -215,7 +215,7 @@ export function Audit() {
                 <TableHead className="w-8" />
                 <TableHead>When</TableHead>
                 <TableHead>Action</TableHead>
-                <TableHead>Actor</TableHead>
+                <TableHead className="hidden sm:table-cell">Actor</TableHead>
                 <TableHead>Target</TableHead>
                 <TableHead className="hidden lg:table-cell">Summary</TableHead>
               </TableRow>
@@ -249,17 +249,17 @@ export function Audit() {
                           expanded === r.id ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         ) : null}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs tabular-nums">{fmtWhen(r.createdAt)}</TableCell>
+                      <TableCell className="text-xs tabular-nums">{fmtWhen(r.createdAt)}</TableCell>
                       <TableCell>
-                        <Badge variant="outline" className={`rounded-full font-mono text-[11px] ${actionBadgeClass(r.action)}`}>{r.action}</Badge>
+                        <Badge variant="outline" className={`rounded-full font-mono text-[10px] sm:text-[11px] ${actionBadgeClass(r.action)}`}>{r.action}</Badge>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <span className="text-sm font-medium">{r.actorName}</span>
                         {r.actorRole && <span className="block text-xs text-muted-foreground">{r.actorRole}</span>}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="min-w-0">
                         <span className="text-xs uppercase tracking-wide text-muted-foreground">{r.targetType}</span>
-                        <span className="block text-sm">{r.targetName ?? '—'}</span>
+                        <span className="block max-w-20 truncate text-sm md:max-w-none" title={r.targetName ?? undefined}>{r.targetName ?? '—'}</span>
                       </TableCell>
                       <TableCell className="hidden max-w-sm lg:table-cell">
                         <p className="truncate text-sm text-muted-foreground" title={r.summary}>{r.summary}</p>

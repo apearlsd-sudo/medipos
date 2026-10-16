@@ -354,12 +354,12 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
           <TableSkeleton cols={7} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[880px]">
+            <div className="md:min-w-[880px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Invoice</TableHead>
-                    <TableHead>Customer</TableHead>
+                    <TableHead className="hidden sm:table-cell">Customer</TableHead>
                     <TableHead className="hidden md:table-cell">Date</TableHead>
                     <TableHead className="hidden md:table-cell">Method</TableHead>
                     <TableHead className="hidden lg:table-cell text-center">Items</TableHead>
@@ -375,7 +375,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                         <p className={`font-medium ${s.saleStatus === 'cancelled' ? '' : 'text-teal-600 dark:text-teal-400'}`}>#{s.invoiceNo}</p>
                         <p className="text-xs text-muted-foreground">{s.cashierName}</p>
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="hidden sm:table-cell">
                         <div className="flex items-center gap-2">
                           <AvatarInitials name={s.customer} className="h-7 w-7 text-xs" />
                           <span className="max-w-32 truncate text-sm">{s.customer}</span>
@@ -394,10 +394,10 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetail(s.id)} aria-label="View invoice"><Eye className="h-4 w-4" /></Button>
                           {canCancel && s.saleStatus !== 'cancelled' && (
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600" onClick={() => cancelSale(s)} aria-label="Cancel sale"><XCircle className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-red-400 hover:text-red-600 md:inline-flex" onClick={() => cancelSale(s)} aria-label="Cancel sale"><XCircle className="h-4 w-4" /></Button>
                           )}
                           {canReturn && s.saleStatus !== 'cancelled' && (
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-amber-500 hover:text-amber-600" onClick={() => openReturn(s)} aria-label="Process return"><RotateCcw className="h-4 w-4" /></Button>
+                            <Button variant="ghost" size="icon" className="hidden h-8 w-8 text-amber-500 hover:text-amber-600 md:inline-flex" onClick={() => openReturn(s)} aria-label="Process return"><RotateCcw className="h-4 w-4" /></Button>
                           )}
                         </div>
                       </TableCell>
@@ -480,6 +480,12 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
               <div className="flex gap-2 print:hidden">
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setPrintSale(detail)}><Printer className="h-4 w-4" /> Thermal Receipt</Button>
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setSendTo(detail)}><Send className="h-4 w-4" /> E-receipt</Button>
+                {canCancel && detail.saleStatus !== 'cancelled' && (
+                  <Button variant="outline" className="rounded-full text-red-500 hover:text-red-600" onClick={() => { setDetail(null); cancelSale(detail) }}><XCircle className="h-4 w-4" /> Cancel</Button>
+                )}
+                {canReturn && detail.saleStatus !== 'cancelled' && (
+                  <Button variant="outline" className="rounded-full text-amber-500 hover:text-amber-600" onClick={() => { setDetail(null); openReturn(detail) }}><RotateCcw className="h-4 w-4" /> Return</Button>
+                )}
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setDetail(null)}>Close</Button>
               </div>
             </div>

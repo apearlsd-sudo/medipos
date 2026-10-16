@@ -254,7 +254,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-1.5"><Label>Store Name</Label><Input disabled={!canEditSettings} value={settings.storeName} onChange={(e) => set('storeName', e.target.value)} /></div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5"><Label>Phone</Label><Input disabled={!canEditSettings} value={settings.storePhone} onChange={(e) => set('storePhone', e.target.value)} /></div>
                     <div className="space-y-1.5"><Label>Email</Label><Input disabled={!canEditSettings} value={settings.storeEmail} onChange={(e) => set('storeEmail', e.target.value)} /></div>
                   </div>
@@ -268,7 +268,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                   <CardDescription>Formats every price and date across the system.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label>Currency</Label>
                       <Select value={settings.currencyCode} onValueChange={(v) => { set('currencyCode', v); set('currency', v) }} disabled={!canEditSettings}>

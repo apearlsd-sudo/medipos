@@ -158,7 +158,7 @@ export function Suppliers() {
           <TableSkeleton cols={5} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[760px]">
+            <div className="md:min-w-[760px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -175,10 +175,10 @@ export function Suppliers() {
                     <TableRow key={s.id}>
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-4 w-4" /></span>
-                          <div>
-                            <p className="font-medium">{s.name}</p>
-                            {s.address && <p className="max-w-48 truncate text-xs text-muted-foreground">{s.address}</p>}
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-4 w-4" /></span>
+                          <div className="min-w-0">
+                            <p className="max-w-24 truncate font-medium sm:max-w-none">{s.name}</p>
+                            {s.address && <p className="max-w-32 truncate text-xs text-muted-foreground sm:max-w-48">{s.address}</p>}
                           </div>
                         </div>
                       </TableCell>
@@ -237,18 +237,18 @@ export function Suppliers() {
           <TableSkeleton cols={6} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[860px]">
+            <div className="md:min-w-[860px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Supplier</TableHead>
                     <TableHead className="text-center" title="Purchase orders placed in the window">Orders</TableHead>
                     <TableHead className="text-center" title="Received ÷ ordered quantity">Fill rate</TableHead>
-                    <TableHead className="text-center" title="Order → goods-received average, from GRN timestamps">Avg lead (days)</TableHead>
-                    <TableHead className="text-center" title="Fastest → slowest observed lead time">Range</TableHead>
+                    <TableHead className="hidden text-center md:table-cell" title="Order → goods-received average, from GRN timestamps">Avg lead (days)</TableHead>
+                    <TableHead className="hidden text-center md:table-cell" title="Fastest → slowest observed lead time">Range</TableHead>
                     <TableHead className="text-right" title="Total value of purchase orders">Spend</TableHead>
-                    <TableHead className="text-center" title="Completed supplier returns in the window">Returns</TableHead>
-                    <TableHead className="text-right">Last order</TableHead>
+                    <TableHead className="hidden text-center md:table-cell" title="Completed supplier returns in the window">Returns</TableHead>
+                    <TableHead className="hidden text-right lg:table-cell">Last order</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -256,8 +256,8 @@ export function Suppliers() {
                     <TableRow key={s.supplierId}>
                       <TableCell>
                         <div className="flex items-center gap-3">
-                          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-3.5 w-3.5" /></span>
-                          <p className="font-medium">{s.name}</p>
+                          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><Truck className="h-3.5 w-3.5" /></span>
+                          <p className="max-w-24 truncate font-medium sm:max-w-none">{s.name}</p>
                         </div>
                       </TableCell>
                       <TableCell className="text-center tabular-nums">{s.orders || '—'}</TableCell>
@@ -266,13 +266,13 @@ export function Suppliers() {
                           <span className={`font-medium ${s.fillRate >= 95 ? 'text-emerald-600 dark:text-emerald-400' : s.fillRate >= 70 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>{s.fillRate}%</span>
                         )}
                       </TableCell>
-                      <TableCell className="text-center tabular-nums">{s.avgLeadDays ?? <span className="text-muted-foreground">no GRNs</span>}</TableCell>
-                      <TableCell className="text-center tabular-nums text-xs text-muted-foreground">{s.minLeadDays != null ? `${s.minLeadDays}–${s.maxLeadDays}` : '—'}</TableCell>
+                      <TableCell className="hidden text-center tabular-nums md:table-cell">{s.avgLeadDays ?? <span className="text-muted-foreground">no GRNs</span>}</TableCell>
+                      <TableCell className="hidden text-center tabular-nums text-xs text-muted-foreground md:table-cell">{s.minLeadDays != null ? `${s.minLeadDays}–${s.maxLeadDays}` : '—'}</TableCell>
                       <TableCell className="text-right tabular-nums">{s.spend > 0 ? fmtMoney(s.spend) : '—'}</TableCell>
-                      <TableCell className="text-center tabular-nums">
+                      <TableCell className="hidden text-center tabular-nums md:table-cell">
                         {s.returnsCount > 0 ? <span className="font-medium text-amber-600 dark:text-amber-400">{s.returnsCount} · {fmtMoney(s.returnsValue)}</span> : '—'}
                       </TableCell>
-                      <TableCell className="text-right text-xs text-muted-foreground">{s.lastOrderAt ? s.lastOrderAt.slice(0, 10) : '—'}</TableCell>
+                      <TableCell className="hidden text-right text-xs text-muted-foreground lg:table-cell">{s.lastOrderAt ? s.lastOrderAt.slice(0, 10) : '—'}</TableCell>
                     </TableRow>
                   ))}
                   {scorecards.length === 0 && (

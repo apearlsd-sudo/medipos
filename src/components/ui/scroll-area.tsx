@@ -23,6 +23,11 @@ function ScrollArea({
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {/* Horizontal axis must be rendered or Radix clips horizontal overflow
+          (viewport gets overflow-x:hidden) — wide tables became unreachable on
+          touch devices with no way to scroll. The custom scrollbar only paints
+          when content actually overflows. */}
+      <ScrollBar orientation="horizontal" />
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )

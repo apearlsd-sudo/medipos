@@ -138,6 +138,22 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* Responsive resilience (Task 81): Cards often sit in CSS grids next to wide
+     content (tables, charts). A grid item's automatic min-width is its content
+     min-width, so a wide table would push the card (and the whole page) wider
+     than the viewport on phones. min-width:0 lets the card shrink; the table
+     primitive's own overflow-x-auto container then scrolls it internally. */
+  [data-slot='card'] {
+    min-width: 0;
+  }
+  /* Form controls carry an intrinsic min-content width (~size attr). Inside
+     flex/grid rows that min-width resists shrinking and pushes rows past the
+     viewport on phones; width comes from w-full/grid tracks anyway. */
+  input,
+  textarea,
+  select {
+    min-width: 0;
+  }
 }
 
 /* Slim elegant scrollbars */

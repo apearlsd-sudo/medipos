@@ -403,8 +403,8 @@ export function Branches() {
                     <TableHead>Product</TableHead>
                     <TableHead className="text-right">Catalog</TableHead>
                     <TableHead className="w-32 text-center">Branch price</TableHead>
-                    <TableHead className="text-right">Effective</TableHead>
-                    <TableHead className="text-right">Margin</TableHead>
+                    <TableHead className="hidden text-right sm:table-cell">Effective</TableHead>
+                    <TableHead className="hidden text-right md:table-cell">Margin</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -438,10 +438,10 @@ export function Branches() {
                             aria-label={`Branch price for ${m.name}`}
                           />
                         </TableCell>
-                        <TableCell className="text-right font-semibold tabular-nums">
+                        <TableCell className="hidden text-right font-semibold tabular-nums sm:table-cell">
                           {invalid ? <span className="text-red-500">—</span> : fmtMoney(effective)}
                         </TableCell>
-                        <TableCell className="text-right text-xs tabular-nums text-muted-foreground">{invalid ? '—' : `${margin}%`}</TableCell>
+                        <TableCell className="hidden text-right text-xs tabular-nums text-muted-foreground md:table-cell">{invalid ? '—' : `${margin}%`}</TableCell>
                       </TableRow>
                     )
                   })}

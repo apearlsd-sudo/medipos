@@ -1,0 +1,467 @@
+     1→'use client'
+     2→
+     3→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+     4→import { Skeleton } from '@/components/ui/skeleton'
+     5→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+     6→import { AvatarInitials, StatCard, StatusBadge } from '@/components/pos/shared'
+     7→import { useUser } from '@/components/pos/user-context'
+     8→import { fmtCompact, fmtDateTime, fmtMoney, fmtRelative, paymentMethodLabel } from '@/lib/format'
+     9→import { DASHBOARD_WIDGETS, parseWidgetConfig, widgetDef, widgetsForRole } from '@/lib/dashboard-widgets'
+    10→import { useStoreSettings } from '@/lib/store-settings'
+    11→import { WidgetsPanel } from '@/components/pos/dashboard-widgets-dialog'
+    12→import { NetworkOverview } from '@/components/pos/network-overview'
+    13→import {
+    14→  Area, AreaChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+    15→} from 'recharts'
+    16→import {
+    17→  AlertTriangle, Banknote, Boxes, CalendarClock, ClipboardCheck, CreditCard, DollarSign, LayoutDashboard, LayoutPanelTop, PauseCircle, Pill, RefreshCcw, ShoppingCart, TimerReset, TrendingUp, Users,
+    18→} from 'lucide-react'
+    19→import { useCallback, useEffect, useState } from 'react'
+    20→
+    21→interface DashboardData {
+    22→  stats: {
+    23→    salesThisMonth?: { total: number; count: number; growth: number }
+    24→    salesThisWeek?: { total: number; count: number; growth: number }
+    25→    medicines?: number
+    26→    customers?: number
+    27→    suppliers?: number
+    28→    lowStockCount?: number
+    29→    outOfStock?: number
+    30→    expiringSoonCount?: number
+    31→    inventoryValue?: number
+    32→    pendingPurchases?: { count: number; amount: number }
+    33→  }
+    34→  trend?: Array<{ date: string; label: string; sales: number; purchases: number | null }>
+    35→  lowStock?: Array<{ id: string; name: string; sku: string; stockQty: number; reorderLevel: number; unit: string; category: string }>
+    36→  expiringSoon?: Array<{ id: string; name: string; batchNumber: string | null; expiryDate: string; stockQty: number; daysLeft: number }>
+    37→  topSelling?: Array<{ id: string; name: string; category: string; qty: number; revenue: number }>
+    38→  categoryDistribution?: Array<{ name: string; value: number }>
+    39→  recentSales?: Array<{ id: string; invoiceNo: string; customer: string; total: number; paymentStatus: string; paymentMethod: string; itemCount: number; createdAt: string }>
+    40→  openStockTake?: {
+    41→    id: string
+    42→    stockTakeNo: string
+    43→    title: string
+    44→    status: string
+    45→    startedByName: string
+    46→    startedAt: string
+    47→    pausedAt: string | null
+    48→    pausedByName: string | null
+    49→    pauseNote: string | null
+    50→    resumeCount: number
+    51→    totalItems: number
+    52→    countedItems: number
+    53→  }
+    54→}
+    55→
+    56→const DONUT_COLORS = ['#0d9488', '#f59e0b', '#6366f1', '#10b981', '#ef4444', '#8b5cf6']
+    57→
+    58→export function Dashboard({ onNavigate }: { onNavigate: (v: 'pos' | 'medicines' | 'inventory' | 'sales' | 'purchases' | 'customers' | 'stock-take') => void }) {
+    59→  const [data, setData] = useState<DashboardData | null>(null)
+    60→  const [loading, setLoading] = useState(true)
+    61→  const [customizeOpen, setCustomizeOpen] = useState(false)
+    62→  const settings = useStoreSettings()
+    63→  const { user, can } = useUser()
+    64→
+    65→  const canSales = can('sales', 'view')
+    66→  const canPurchases = can('purchases', 'view')
+    67→  const canInventory = can('inventory', 'view')
+    68→  const canReports = can('reports', 'view')
+    69→  const canCustomize = can('roles', 'view')
+    70→
+    71→  // Role-configured, permission-filtered widget visibility
+    72→  const configured = widgetsForRole(user.role, parseWidgetConfig(settings?.dashboardWidgets))
+    73→  const show = useCallback(
+    74→    (widgetId: string) => {
+    75→      if (!configured.includes(widgetId)) return false
+    76→      const def = widgetDef(widgetId)
+    77→      if (!def) return false
+    78→      return can(def.permission[0], def.permission[1])
+    79→    },
+    80→    [configured, can],
+    81→  )
+    82→
+    83→  const load = useCallback(async () => {
+    84→    setLoading(true)
+    85→    try {
+    86→      const res = await fetch('/api/dashboard', { cache: 'no-store' })
+    87→      const json = await res.json()
+    88→      setData(json)
+    89→    } finally {
+    90→      setLoading(false)
+    91→    }
+    92→  }, [])
+    93→
+    94→  useEffect(() => {
+    95→    load()
+    96→  }, [load])
+    97→
+    98→  const widgetCount = DASHBOARD_WIDGETS.filter((w) => show(w.id)).length
+    99→
+   100→  if (loading || !data) {
+   101→    return (
+   102→      <div className="space-y-6">
+   103→        {widgetCount > 0 && (
+   104→          <>
+   105→            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+   106→              {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-36 rounded-xl" />)}
+   107→            </div>
+   108→            <div className="grid gap-4 lg:grid-cols-3">
+   109→              <Skeleton className="h-80 rounded-xl lg:col-span-2" />
+   110→              <Skeleton className="h-80 rounded-xl" />
+   111→            </div>
+   112→            <Skeleton className="h-72 rounded-xl" />
+   113→          </>
+   114→        )}
+   115→      </div>
+   116→    )
+   117→  }
+   118→
+   119→  const { stats } = data
+   120→  const firstName = user.name.split(' ')[0]
+   121→  const today = new Date().toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+   122→  const kpiCount = [
+   123→    show('kpi_sales_month'),
+   124→    show('kpi_sales_week'),
+   125→    show('kpi_inventory_value'),
+   126→    show('kpi_pending_purchases'),
+   127→  ].filter(Boolean).length
+   128→
+   129→  return (
+   130→    <div className="space-y-6">
+   131→      {/* Welcome */}
+   132→      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+   133→        <div>
+   134→          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome back, {firstName} 👋</h1>
+   135→          <p className="mt-1 text-sm text-muted-foreground">Here is your pharmacy performance summary · {today}{!user.isSuperAdmin && user.branchName ? ` · ${user.branchName}` : ''}</p>
+   136→        </div>
+   137→        <div className="flex flex-wrap gap-2">
+   138→          {can('pos', 'access') && (
+   139→            <button onClick={() => onNavigate('pos')} className="inline-flex items-center gap-2 rounded-full bg-orange-500 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-orange-500/25 transition hover:bg-orange-600">
+   140→              <ShoppingCart className="h-4 w-4" /> Open POS Terminal
+   141→            </button>
+   142→          )}
+   143→          {canCustomize && (
+   144→            <button onClick={() => setCustomizeOpen(true)} className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2.5 text-sm font-medium transition hover:bg-muted">
+   145→              <LayoutPanelTop className="h-4 w-4" /> Customize
+   146→            </button>
+   147→          )}
+   148→          <button onClick={load} className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2.5 text-sm font-medium transition hover:bg-muted">
+   149→            <RefreshCcw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+   150→          </button>
+   151→        </div>
+   152→      </div>
+   153→
+   154→      {/* Continue-before-starting prompt — an open count session blocks a new start */}
+   155→      {data.openStockTake && (() => {
+   156→        const t = data.openStockTake
+   157→        const isPaused = t.status === 'paused'
+   158→        return (
+   159→          <div className={`overflow-hidden rounded-2xl border shadow-sm ${isPaused ? 'border-amber-400/40' : 'border-teal-500/30'}`}>
+   160→            <div className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 ${isPaused ? 'bg-gradient-to-r from-amber-500/10 via-amber-400/5 to-transparent' : 'bg-gradient-to-r from-teal-600/10 via-teal-500/5 to-transparent'}`}>
+   161→              <div className="flex min-w-0 items-start gap-3">
+   162→                <span className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white shadow-md ${isPaused ? 'bg-amber-500 shadow-amber-500/25' : 'bg-teal-600 shadow-teal-600/25'}`}>
+   163→                  {isPaused ? <PauseCircle className="h-5.5 w-5.5" /> : <ClipboardCheck className="h-5.5 w-5.5" />}
+   164→                </span>
+   165→                <div className="min-w-0">
+   166→                  <p className={`flex flex-wrap items-center gap-2 text-sm font-bold ${isPaused ? 'text-amber-800 dark:text-amber-300' : 'text-teal-800 dark:text-teal-300'}`}>
+   167→                    {isPaused
+   168→                      ? <>Count session {t.stockTakeNo} is paused — continue it before starting a new one</>
+   169→                      : <>Count session {t.stockTakeNo} is in progress — continue it before starting a new one</>}
+   170→                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isPaused ? 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' : 'bg-teal-100 text-teal-800 dark:bg-teal-500/15 dark:text-teal-300'}`}>
+   171→                      {t.countedItems}/{t.totalItems} lines counted
+   172→                    </span>
+   173→                    {t.resumeCount > 0 && (
+   174→                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold">resumed {t.resumeCount}×</span>
+   175→                    )}
+   176→                  </p>
+   177→                  <p className="mt-0.5 text-xs text-muted-foreground">
+   178→                    “{t.title}” · started by {t.startedByName} · {fmtDateTime(t.startedAt)}
+   179→                    {isPaused && t.pausedAt ? <> · paused {fmtDateTime(t.pausedAt)}{t.pausedByName ? ` by ${t.pausedByName}` : ''}</> : null}
+   180→                    {t.pauseNote ? <> — “{t.pauseNote}”</> : null}
+   181→                    . Only one count session can be open at a time, so a new stock take can&apos;t start until this one is resumed and completed (or cancelled).
+   182→                  </p>
+   183→                </div>
+   184→              </div>
+   185→              <button
+   186→                onClick={() => onNavigate('stock-take')}
+   187→                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-md transition ${isPaused ? 'bg-amber-500 shadow-amber-500/25 hover:bg-amber-600' : 'bg-teal-600 shadow-teal-600/25 hover:bg-teal-700'}`}
+   188→              >
+   189→                <ClipboardCheck className="h-4 w-4" /> {isPaused ? 'Continue Stock Take' : 'Continue Counting'}
+   190→              </button>
+   191→            </div>
+   192→          </div>
+   193→        )
+   194→      })()}
+   195→
+   196→      {widgetCount === 0 ? (
+   197→        <Card className="flex flex-col items-center justify-center gap-3 p-14 text-center">
+   198→          <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-teal-600/10 text-teal-600 dark:text-teal-400">
+   199→            <LayoutDashboard className="h-7 w-7" />
+   200→          </span>
+   201→          <p className="text-lg font-semibold">A quiet dashboard, for now</p>
+   202→          <p className="max-w-md text-sm text-muted-foreground">
+   203→            Your role doesn&apos;t include any dashboard widgets yet. An administrator can grant permissions or enable widgets for your role on this page.
+   204→          </p>
+   205→        </Card>
+   206→      ) : (
+   207→        <>
+   208→          {/* KPI row — each card gated by its matching permission */}
+   209→          {kpiCount > 0 && (
+   210→            <div className={`grid gap-4 sm:grid-cols-2 ${kpiCount >= 4 ? 'xl:grid-cols-4' : kpiCount === 3 ? 'xl:grid-cols-3' : ''}`}>
+   211→              {show('kpi_sales_month') && stats.salesThisMonth && (
+   212→                <StatCard variant="solid" label="Sales This Month" value={fmtMoney(stats.salesThisMonth.total)} icon={<DollarSign className="h-5 w-5" />} trend={stats.salesThisMonth.growth} hint={`${stats.salesThisMonth.count} transactions`} />
+   213→              )}
+   214→              {show('kpi_sales_week') && stats.salesThisWeek && (
+   215→                <StatCard label="Weekly Sales" value={fmtMoney(stats.salesThisWeek.total)} icon={<Banknote className="h-5 w-5" />} trend={stats.salesThisWeek.growth} hint={`${stats.salesThisWeek.count} transactions this week`} />
+   216→              )}
+   217→              {show('kpi_inventory_value') && stats.inventoryValue !== undefined && (
+   218→                <StatCard label="Inventory Value" value={fmtMoney(stats.inventoryValue)} icon={<Boxes className="h-5 w-5" />} hint={`${stats.medicines ?? 0} medicine items tracked`} />
+   219→              )}
+   220→              {show('kpi_pending_purchases') && stats.pendingPurchases && (
+   221→                <StatCard label="Pending Purchases" value={String(stats.pendingPurchases.count)} icon={<TrendingUp className="h-5 w-5" />} hint={`${fmtMoney(stats.pendingPurchases.amount)} outstanding`} />
+   222→              )}
+   223→            </div>
+   224→          )}
+   225→
+   226→          {/* Charts row */}
+   227→          {(show('chart_trend') || show('chart_category')) && (
+   228→            <div className="grid gap-4 lg:grid-cols-3">
+   229→              {show('chart_trend') && data.trend && (
+   230→                <Card className="lg:col-span-2">
+   231→                  <CardHeader className="flex-row items-center justify-between space-y-0 pb-4">
+   232→                    <CardTitle className="text-base font-semibold">Sales{canPurchases ? ' & Purchases' : ''} — Last 14 Days</CardTitle>
+   233→                    <div className="flex items-center gap-4 text-xs text-muted-foreground">
+   234→                      <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-teal-500" /> Sales</span>
+   235→                      {canPurchases && <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full bg-amber-500" /> Purchases</span>}
+   236→                    </div>
+   237→                  </CardHeader>
+   238→                  <CardContent className="h-72 pr-4">
+   239→                    <ResponsiveContainer width="100%" height="100%">
+   240→                      <AreaChart data={data.trend} margin={{ top: 5, right: 5, left: -12, bottom: 0 }}>
+   241→                        <defs>
+   242→                          <linearGradient id="gSales" x1="0" y1="0" x2="0" y2="1">
+   243→                            <stop offset="0%" stopColor="#0d9488" stopOpacity={0.35} />
+   244→                            <stop offset="100%" stopColor="#0d9488" stopOpacity={0.02} />
+   245→                          </linearGradient>
+   246→                          <linearGradient id="gPurch" x1="0" y1="0" x2="0" y2="1">
+   247→                            <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.3} />
+   248→                            <stop offset="100%" stopColor="#f59e0b" stopOpacity={0.02} />
+   249→                          </linearGradient>
+   250→                        </defs>
+   251→                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="currentColor" opacity={0.12} />
+   252→                        <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+   253→                        <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v: number) => fmtCompact(v)} />
+   254→                        <Tooltip
+   255→                          formatter={(value: number, name: string) => [fmtMoney(value), name === 'sales' ? 'Sales' : 'Purchases']}
+   256→                          contentStyle={{ borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)', fontSize: 12 }}
+   257→                        />
+   258→                        <Area type="monotone" dataKey="sales" stroke="#0d9488" strokeWidth={2.5} fill="url(#gSales)" />
+   259→                        {canPurchases && <Area type="monotone" dataKey="purchases" stroke="#f59e0b" strokeWidth={2.5} fill="url(#gPurch)" connectNulls={false} />}
+   260→                      </AreaChart>
+   261→                    </ResponsiveContainer>
+   262→                  </CardContent>
+   263→                </Card>
+   264→              )}
+   265→
+   266→              {show('chart_category') && data.categoryDistribution && (
+   267→                <Card className={show('chart_trend') && data.trend ? '' : 'lg:col-span-3'}>
+   268→                  <CardHeader className="pb-2">
+   269→                    <CardTitle className="text-base font-semibold">Sales by Category</CardTitle>
+   270→                  </CardHeader>
+   271→                  <CardContent className="flex h-72 flex-col">
+   272→                    <div className="flex-1">
+   273→                      <ResponsiveContainer width="100%" height="100%">
+   274→                        <PieChart>
+   275→                          <Pie data={data.categoryDistribution} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="85%" paddingAngle={3} strokeWidth={0}>
+   276→                            {data.categoryDistribution.map((_, i) => (
+   277→                              <Cell key={i} fill={DONUT_COLORS[i % DONUT_COLORS.length]} />
+   278→                            ))}
+   279→                          </Pie>
+   280→                          <Tooltip formatter={(value: number, name: string) => [`${value} units`, name]} contentStyle={{ borderRadius: 12, fontSize: 12 }} />
+   281→                        </PieChart>
+   282→                      </ResponsiveContainer>
+   283→                    </div>
+   284→                    <div className="mt-2 flex flex-wrap justify-center gap-x-3 gap-y-1">
+   285→                      {data.categoryDistribution.map((c, i) => (
+   286→                        <span key={c.name} className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+   287→                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: DONUT_COLORS[i % DONUT_COLORS.length] }} />
+   288→                          <span className="max-w-28 truncate">{c.name}</span>
+   289→                        </span>
+   290→                      ))}
+   291→                    </div>
+   292→                  </CardContent>
+   293→                </Card>
+   294→              )}
+   295→            </div>
+   296→          )}
+   297→
+   298→          {/* Alerts row — inventory permission only */}
+   299→          {(show('panel_low_stock') || show('panel_expiring')) && (
+   300→            <div className="grid gap-4 lg:grid-cols-2">
+   301→              {show('panel_low_stock') && data.lowStock && (
+   302→                <Card>
+   303→                  <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+   304→                    <CardTitle className="flex items-center gap-2 text-base font-semibold">
+   305→                      <AlertTriangle className="h-4 w-4 text-amber-500" /> Low Stock
+   306→                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700 dark:bg-amber-500/15 dark:text-amber-400">{stats.lowStockCount ?? 0}</span>
+   307→                    </CardTitle>
+   308→                    <button onClick={() => onNavigate('inventory')} className="text-xs font-medium text-teal-600 hover:underline dark:text-teal-400">View all</button>
+   309→                  </CardHeader>
+   310→                  <CardContent className="space-y-2.5">
+   311→                    {data.lowStock.slice(0, 5).map((m) => (
+   312→                      <div key={m.id} className="flex items-center gap-3">
+   313→                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400">
+   314→                          <Pill className="h-4 w-4" />
+   315→                        </span>
+   316→                        <div className="min-w-0 flex-1">
+   317→                          <p className="truncate text-sm font-medium">{m.name}</p>
+   318→                          <p className="text-xs text-muted-foreground">{m.sku} · {m.category}</p>
+   319→                        </div>
+   320→                        <div className="text-right">
+   321→                          <p className={`text-sm font-bold ${m.stockQty === 0 ? 'text-red-500' : 'text-amber-600 dark:text-amber-400'}`}>{m.stockQty} {m.unit}</p>
+   322→                          <p className="text-[11px] text-muted-foreground">reorder @ {m.reorderLevel}</p>
+   323→                        </div>
+   324→                      </div>
+   325→                    ))}
+   326→                    {data.lowStock.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">All stock levels healthy.</p>}
+   327→                  </CardContent>
+   328→                </Card>
+   329→              )}
+   330→
+   331→              {show('panel_expiring') && data.expiringSoon && (
+   332→                <Card>
+   333→                  <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+   334→                    <CardTitle className="flex items-center gap-2 text-base font-semibold">
+   335→                      <TimerReset className="h-4 w-4 text-red-500" /> Expiring Soon
+   336→                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700 dark:bg-red-500/15 dark:text-red-400">{stats.expiringSoonCount ?? 0}</span>
+   337→                    </CardTitle>
+   338→                    <button onClick={() => onNavigate('inventory')} className="text-xs font-medium text-teal-600 hover:underline dark:text-teal-400">View all</button>
+   339→                  </CardHeader>
+   340→                  <CardContent className="space-y-2.5">
+   341→                    {data.expiringSoon.slice(0, 5).map((m) => (
+   342→                      <div key={m.id} className="flex items-center gap-3">
+   343→                        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${m.daysLeft <= 30 ? 'bg-red-100 text-red-600 dark:bg-red-500/15 dark:text-red-400' : 'bg-amber-100 text-amber-600 dark:bg-amber-500/15 dark:text-amber-400'}`}>
+   344→                          <CalendarClock className="h-4 w-4" />
+   345→                        </span>
+   346→                        <div className="min-w-0 flex-1">
+   347→                          <p className="truncate text-sm font-medium">{m.name}</p>
+   348→                          <p className="text-xs text-muted-foreground">Batch {m.batchNumber ?? '—'} · {m.stockQty} in stock</p>
+   349→                        </div>
+   350→                        <div className="text-right">
+   351→                          <p className={`text-sm font-bold ${m.daysLeft <= 30 ? 'text-red-500' : 'text-amber-600 dark:text-amber-400'}`}>{m.daysLeft <= 0 ? 'Expired' : `${m.daysLeft}d`}</p>
+   352→                          <p className="text-[11px] text-muted-foreground">{new Date(m.expiryDate).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+   353→                        </div>
+   354→                      </div>
+   355→                    ))}
+   356→                    {data.expiringSoon.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">No medicines expiring within 90 days.</p>}
+   357→                  </CardContent>
+   358→                </Card>
+   359→              )}
+   360→            </div>
+   361→          )}
+   362→
+   363→          {/* Top selling + recent sales */}
+   364→          {(show('table_top_selling') || show('table_recent_sales')) && (
+   365→            <div className={`grid gap-4 ${show('table_top_selling') && show('table_recent_sales') ? 'lg:grid-cols-5' : ''}`}>
+   366→              {show('table_top_selling') && data.topSelling && (
+   367→                <Card className={show('table_recent_sales') && data.recentSales ? 'lg:col-span-2' : ''}>
+   368→                  <CardHeader className="pb-3">
+   369→                    <CardTitle className="text-base font-semibold">Top Selling Medicines</CardTitle>
+   370→                  </CardHeader>
+   371→                  <CardContent className="space-y-3">
+   372→                    {data.topSelling.map((m, i) => (
+   373→                      <div key={m.id} className="flex items-center gap-3">
+   374→                        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold ${i === 0 ? 'bg-teal-600 text-white' : 'bg-muted text-muted-foreground'}`}>{i + 1}</span>
+   375→                        <div className="min-w-0 flex-1">
+   376→                          <p className="truncate text-sm font-medium">{m.name}</p>
+   377→                          <p className="text-xs text-muted-foreground">{m.category}</p>
+   378→                        </div>
+   379→                        <div className="text-right">
+   380→                          <p className="text-sm font-bold tabular-nums">{m.qty} units</p>
+   381→                          <p className="text-[11px] text-muted-foreground tabular-nums">{fmtMoney(m.revenue)}</p>
+   382→                        </div>
+   383→                      </div>
+   384→                    ))}
+   385→                  </CardContent>
+   386→                </Card>
+   387→              )}
+   388→
+   389→              {show('table_recent_sales') && data.recentSales && (
+   390→                <Card className={show('table_top_selling') && data.topSelling ? 'lg:col-span-3' : ''}>
+   391→                  <CardHeader className="flex-row items-center justify-between space-y-0 pb-3">
+   392→                    <CardTitle className="text-base font-semibold">Recent Transactions</CardTitle>
+   393→                    {canSales && (
+   394→                      <button onClick={() => onNavigate('sales')} className="text-xs font-medium text-teal-600 hover:underline dark:text-teal-400">View all sales</button>
+   395→                    )}
+   396→                  </CardHeader>
+   397→                  <CardContent>
+   398→                    <Table>
+   399→                      <TableHeader>
+   400→                        <TableRow className="hover:bg-transparent">
+   401→                          <TableHead>Invoice</TableHead>
+   402→                          <TableHead>Customer</TableHead>
+   403→                          <TableHead className="hidden sm:table-cell">Method</TableHead>
+   404→                          <TableHead className="text-right">Total</TableHead>
+   405→                          <TableHead className="text-right">Status</TableHead>
+   406→                        </TableRow>
+   407→                      </TableHeader>
+   408→                      <TableBody>
+   409→                        {data.recentSales.map((s) => (
+   410→                          <TableRow key={s.id}>
+   411→                            <TableCell>
+   412→                              <p className="font-medium text-teal-600 dark:text-teal-400">{s.invoiceNo}</p>
+   413→                              <p className="text-xs text-muted-foreground">{fmtRelative(s.createdAt)} · {s.itemCount} items</p>
+   414→                            </TableCell>
+   415→                            <TableCell>
+   416→                              <div className="flex items-center gap-2">
+   417→                                <AvatarInitials name={s.customer} className="h-7 w-7 text-xs" />
+   418→                                <span className="max-w-28 truncate text-sm">{s.customer}</span>
+   419→                              </div>
+   420→                            </TableCell>
+   421→                            <TableCell className="hidden sm:table-cell">
+   422→                              <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+   423→                                {s.paymentMethod === 'card' ? <CreditCard className="h-3.5 w-3.5" /> : <Banknote className="h-3.5 w-3.5" />}
+   424→                                {paymentMethodLabel(s.paymentMethod)}
+   425→                              </span>
+   426→                            </TableCell>
+   427→                            <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(s.total)}</TableCell>
+   428→                            <TableCell className="text-right"><StatusBadge status={s.paymentStatus} /></TableCell>
+   429→                          </TableRow>
+   430→                        ))}
+   431→                      </TableBody>
+   432→                    </Table>
+   433→                  </CardContent>
+   434→                </Card>
+   435→              )}
+   436→            </div>
+   437→          )}
+   438→        </>
+   439→      )}
+   440→
+   441→      {/* Quick actions */}
+   442→      <div className="grid gap-4 sm:grid-cols-3">
+   443→        {[
+   444→          { label: 'Add New Medicine', desc: 'Register a product with batch & expiry', icon: Pill, action: () => onNavigate('medicines'), perm: can('medicines', 'create') },
+   445→          { label: 'New Purchase Order', desc: 'Restock from suppliers', icon: Boxes, action: () => onNavigate('purchases'), perm: can('purchases', 'create') },
+   446→          { label: 'Register Customer', desc: 'Build loyalty & track history', icon: Users, action: () => onNavigate('customers'), perm: can('customers', 'create') },
+   447→        ].filter((a) => a.perm).map((a) => (
+   448→          <button key={a.label} onClick={a.action} className="group flex items-center gap-3 rounded-xl border bg-card p-4 text-left transition hover:border-teal-300 hover:shadow-md dark:hover:border-teal-700">
+   449→            <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 transition group-hover:bg-teal-600 group-hover:text-white dark:text-teal-400">
+   450→              <a.icon className="h-5 w-5" />
+   451→            </span>
+   452→            <span>
+   453→              <span className="block text-sm font-semibold">{a.label}</span>
+   454→              <span className="block text-xs text-muted-foreground">{a.desc}</span>
+   455→            </span>
+   456→          </button>
+   457→        ))}
+   458→      </div>
+   459→
+   460→      {/* Tier 3: HQ consolidated network view (branches:view holders only) */}
+   461→      <NetworkOverview />
+   462→
+   463→      <WidgetsPanel open={customizeOpen} onOpenChange={setCustomizeOpen} onSaved={load} />
+   464→    </div>
+   465→  )
+   466→}
+   467→

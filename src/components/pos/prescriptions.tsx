@@ -166,7 +166,7 @@ export function Prescriptions() {
           <TableSkeleton cols={6} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[820px]">
+            <div className="md:min-w-[820px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -175,7 +175,7 @@ export function Prescriptions() {
                     <TableHead className="hidden md:table-cell">Prescriber</TableHead>
                     <TableHead className="hidden lg:table-cell">Medications</TableHead>
                     <TableHead className="hidden sm:table-cell">Date</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -186,9 +186,10 @@ export function Prescriptions() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <AvatarInitials name={rx.patientName} className="h-8 w-8 text-xs" />
-                          <div>
-                            <p className="text-sm font-medium">{rx.patientName}</p>
-                            <p className="text-xs text-muted-foreground">{rx.phone ?? ''}</p>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium leading-snug">{rx.patientName}</p>
+                            <p className="max-w-28 truncate text-xs text-muted-foreground sm:max-w-none">{rx.phone ?? ''}</p>
+                            <span className="mt-1 inline-flex sm:hidden"><StatusBadge status={rx.status} /></span>
                             {rx.refillIntervalDays != null && (() => {
                               const due = nextRefillDue(rx)
                               if (!due) return null
@@ -205,26 +206,26 @@ export function Prescriptions() {
                       <TableCell className="hidden md:table-cell text-sm">{rx.doctorName ?? '—'}</TableCell>
                       <TableCell className="hidden lg:table-cell"><p className="max-w-64 truncate text-sm text-muted-foreground">{rx.itemsText ?? '—'}</p></TableCell>
                       <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">{fmtDate(rx.createdAt)}</TableCell>
-                      <TableCell className="text-center"><StatusBadge status={rx.status} /></TableCell>
+                      <TableCell className="hidden text-center sm:table-cell"><StatusBadge status={rx.status} /></TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1">
                           {rx.status === 'pending' && (
                             <>
                               <Button variant="outline" size="sm" className="h-7 rounded-full px-2.5 text-xs text-emerald-600 hover:text-emerald-700" onClick={() => setStatus(rx, 'verified')}>
-                                <CheckCircle2 className="h-3.5 w-3.5" /> Verify
+                                <CheckCircle2 className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Verify</span>
                               </Button>
                               <Button variant="outline" size="sm" className="h-7 rounded-full px-2.5 text-xs text-red-500 hover:text-red-600" onClick={() => setStatus(rx, 'rejected')}>
-                                <XCircle className="h-3.5 w-3.5" /> Reject
+                                <XCircle className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Reject</span>
                               </Button>
                             </>
                           )}
                           {rx.status === 'verified' && (
                             <Button variant="outline" size="sm" className="h-7 rounded-full px-2.5 text-xs text-teal-600 hover:text-teal-700" onClick={() => setStatus(rx, 'dispensed')}>
-                              <CheckCircle2 className="h-3.5 w-3.5" /> Dispense
+                              <CheckCircle2 className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Dispense</span>
                             </Button>
                           )}
                           {rx.refillIntervalDays != null && ['verified', 'dispensed'].includes(rx.status) && (
-                            <Button variant="outline" size="sm" className="h-7 rounded-full px-2.5 text-xs text-sky-600 hover:text-sky-700" onClick={() => markRefilled(rx)} title="Record a refill today — resets the reminder cycle">
+                            <Button variant="outline" size="sm" className="hidden h-7 rounded-full px-2.5 text-xs text-sky-600 hover:text-sky-700 md:inline-flex" onClick={() => markRefilled(rx)} title="Record a refill today — resets the reminder cycle">
                               <RefreshCcw className="h-3.5 w-3.5" /> Refilled
                             </Button>
                           )}

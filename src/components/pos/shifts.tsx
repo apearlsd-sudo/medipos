@@ -376,13 +376,13 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
             <TableHeader>
               <TableRow>
                 <TableHead>Shift</TableHead>
-                <TableHead>Cashier</TableHead>
-                <TableHead>Started</TableHead>
-                <TableHead>Duration</TableHead>
+                <TableHead className="hidden sm:table-cell">Cashier</TableHead>
+                <TableHead className="hidden md:table-cell">Started</TableHead>
+                <TableHead className="hidden md:table-cell">Duration</TableHead>
                 <TableHead className="text-right">Sales</TableHead>
-                <TableHead className="text-right">Txns</TableHead>
-                <TableHead className="text-right">Items</TableHead>
-                <TableHead className="text-right">Drawer</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Txns</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Items</TableHead>
+                <TableHead className="hidden md:table-cell text-right">Drawer</TableHead>
                 <TableHead>Reconciliation</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
@@ -399,13 +399,13 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
               {!loading && filteredHistory.map((s) => (
                 <TableRow key={s.id} className="hover:bg-muted/40">
                   <TableCell className="font-semibold">{s.shiftNo}</TableCell>
-                  <TableCell>{s.userName}</TableCell>
-                  <TableCell className="whitespace-nowrap text-xs">{fmtDateTime(s.startedAt)}</TableCell>
-                  <TableCell className="tabular-nums">{fmtDuration(s.startedAt, s.endedAt, now)}</TableCell>
+                  <TableCell className="hidden sm:table-cell">{s.userName}</TableCell>
+                  <TableCell className="hidden whitespace-nowrap text-xs md:table-cell">{fmtDateTime(s.startedAt)}</TableCell>
+                  <TableCell className="hidden tabular-nums md:table-cell">{fmtDuration(s.startedAt, s.endedAt, now)}</TableCell>
                   <TableCell className="text-right font-medium tabular-nums">{fmtMoney(s.totalSales)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{s.transactionCount}</TableCell>
-                  <TableCell className="text-right tabular-nums">{s.itemsSold}</TableCell>
-                  <TableCell className="text-right tabular-nums">{fmtMoney(s.status === 'open' ? s.cashInDrawer : s.expectedCash ?? 0)}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums lg:table-cell">{s.transactionCount}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums lg:table-cell">{s.itemsSold}</TableCell>
+                  <TableCell className="hidden text-right tabular-nums md:table-cell">{fmtMoney(s.status === 'open' ? s.cashInDrawer : s.expectedCash ?? 0)}</TableCell>
                   <TableCell>{s.status === 'open' ? <StatusBadge status="active" /> : <VarianceBadge shift={s} />}</TableCell>
                   <TableCell className="text-right">
                     <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={() => openDetail(s.id)} aria-label={`View ${s.shiftNo}`}>

@@ -37,10 +37,10 @@ export function StatusBadge({ status, className = '' }: { status: string; classN
   )
 }
 
-export function StockBadge({ stock, reorderLevel }: { stock: number; reorderLevel: number }) {
+export function StockBadge({ stock, reorderLevel, className = '' }: { stock: number; reorderLevel: number; className?: string }) {
   if (stock === 0) {
     return (
-      <Badge variant="outline" className="gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20">
+      <Badge variant="outline" className={`gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20 ${className}`}>
         <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
         Out of Stock
       </Badge>
@@ -48,14 +48,14 @@ export function StockBadge({ stock, reorderLevel }: { stock: number; reorderLeve
   }
   if (stock <= reorderLevel) {
     return (
-      <Badge variant="outline" className="gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20">
+      <Badge variant="outline" className={`gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 ${className}`}>
         <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
         Low Stock
       </Badge>
     )
   }
   return (
-    <Badge variant="outline" className="gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20">
+    <Badge variant="outline" className={`gap-1.5 rounded-full px-2.5 py-0.5 font-medium bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20 ${className}`}>
       <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
       In Stock
     </Badge>
@@ -161,5 +161,5 @@ export function AvatarInitials({ name, className = '' }: { name: string; classNa
 }
 
 export function MoneyCell({ amount, className = '' }: { amount: number; className?: string }) {
-  return <span className={`font-medium tabular-nums ${className}`}>{fmtMoney(amount)}</span>
+  return <span className={`whitespace-nowrap font-medium tabular-nums ${className}`}>{fmtMoney(amount)}</span>
 }

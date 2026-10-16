@@ -1,0 +1,22 @@
+{"view":"dashboard","expect":"Dashboard","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Dashboard","offenders":[]}}
+{"view":"pos","expect":"POS Terminal","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"POS Terminal","offenders":[]}}
+{"view":"medicines","expect":"Medicines","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Medicines","offenders":[]}}
+{"view":"categories","expect":"Categories","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Categories","offenders":[]}}
+{"view":"inventory","expect":"Stock Control","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Stock Control","offenders":[]}}
+{"view":"stock-take","expect":"Stock Take","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Stock Take","offenders":[]}}
+{"view":"transfers","expect":"Stock Transfers","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Stock Transfers","offenders":[]}}
+{"view":"shifts","expect":"Shift Management","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Shift Management","offenders":[]}}
+{"view":"sales","expect":"Sales & Invoices","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Sales & Invoices","offenders":[]}}
+{"view":"quotations","expect":"Quotations","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Quotations","offenders":[]}}
+{"view":"approvals","expect":"Discount Approvals","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Discount Approvals","offenders":[]}}
+{"view":"purchases","expect":"Purchases","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Purchases","offenders":[]}}
+{"view":"suppliers","expect":"Suppliers","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Suppliers","offenders":[]}}
+{"view":"customers","expect":"Customers","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Customers","offenders":[]}}
+{"view":"expenses","expect":"Expenses & Petty Cash","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Expenses & Petty Cash","offenders":[]}}
+{"view":"prescriptions","expect":"Prescriptions","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Prescriptions","offenders":[]}}
+{"view":"reports","expect":"Reports","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Reports","offenders":[]}}
+{"view":"branches","expect":"Branches","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Branches","offenders":[]}}
+{"view":"users","expect":"Users & Roles","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Users & Roles","offenders":[]}}
+{"view":"audit","expect":"Audit Trail","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Audit Trail","offenders":[]}}
+{"view":"notifications","expect":"Notifications","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Notifications & Alerts","offenders":[]}}
+{"view":"settings","expect":"Settings","data":{"vw":360,"clientW":360,"docSW":360,"bodySW":360,"overflowPx":0,"hdr":"Settings","offenders":[]}}

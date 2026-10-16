@@ -341,16 +341,16 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
           <TableSkeleton cols={7} />
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[900px]">
+            <div className="lg:min-w-[900px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
                     <TableHead>Medicine</TableHead>
-                    <TableHead>Category</TableHead>
+                    <TableHead className="hidden sm:table-cell">Category</TableHead>
                     <TableHead className="hidden lg:table-cell">Batch / Expiry</TableHead>
                     <TableHead className="text-right">Stock</TableHead>
                     <TableHead className="text-right">Price</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
+                    <TableHead className="hidden text-center md:table-cell">Status</TableHead>
                     <TableHead className="w-12" />
                   </TableRow>
                 </TableHeader>
@@ -360,9 +360,9 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
                       <TableCell>
                         <div className="flex items-center gap-3">
                           <AvatarInitials name={m.brand ?? m.name} className="h-9 w-9 rounded-lg" />
-                          <div className="min-w-0">
-                            <p className="flex items-center gap-1.5 truncate font-medium">
-                              {m.name}
+                          <div className="min-w-0 max-w-24 sm:max-w-none">
+                            <p className="flex min-w-0 items-center gap-1.5 font-medium">
+                              <span className="truncate">{m.name}</span>
                               {m.prescriptionRequired && <Badge variant="secondary" className="rounded-full bg-sky-100 px-1.5 text-[10px] font-bold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">Rx</Badge>}
                               {m.insuranceCovered && (
                                 <Badge variant="secondary" className="rounded-full bg-teal-100 px-1.5 text-[10px] font-bold text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">
@@ -374,20 +374,20 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{m.category.name}</TableCell>
+                      <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">{m.category.name}</TableCell>
                       <TableCell className="hidden lg:table-cell">
                         <p className="text-xs font-medium">{m.batchNumber ?? '—'}</p>
                         <ExpiryBadge expiryDate={m.expiryDate} />
                       </TableCell>
                       <TableCell className="text-right">
                         <p className={`font-bold tabular-nums ${m.stockQty === 0 ? 'text-red-500' : m.stockQty <= m.reorderLevel ? 'text-amber-600 dark:text-amber-400' : ''}`}>{m.stockQty} <span className="text-xs font-normal text-muted-foreground">{m.unit}</span></p>
-                        <StockBadge stock={m.stockQty} reorderLevel={m.reorderLevel} />
+                        <StockBadge stock={m.stockQty} reorderLevel={m.reorderLevel} className="hidden sm:inline-flex" />
                       </TableCell>
                       <TableCell className="text-right">
                         <p className="font-semibold tabular-nums">{fmtMoney(m.sellingPrice)}</p>
                         <p className="text-xs text-muted-foreground tabular-nums">cost {fmtMoney(m.costPrice)}</p>
                       </TableCell>
-                      <TableCell className="text-center"><Badge variant="outline" className="rounded-full capitalize">{m.status}</Badge></TableCell>
+                      <TableCell className="hidden text-center md:table-cell"><Badge variant="outline" className="rounded-full capitalize">{m.status}</Badge></TableCell>
                       <TableCell>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>

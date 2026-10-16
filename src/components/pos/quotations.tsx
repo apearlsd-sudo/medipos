@@ -305,7 +305,7 @@ export function Quotations() {
           </div>
         ) : (
           <ScrollArea className="w-full">
-            <div className="min-w-[880px]">
+            <div className="md:min-w-[880px]">
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
@@ -314,7 +314,7 @@ export function Quotations() {
                     <TableHead className="text-center">Items</TableHead>
                     <TableHead className="hidden md:table-cell">Valid until</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="text-center">Status</TableHead>
+                    <TableHead className="hidden text-center sm:table-cell">Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -331,7 +331,7 @@ export function Quotations() {
                       <TableCell className="text-center">{q.itemCount} <span className="text-xs text-muted-foreground">({q.lineCount} lines)</span></TableCell>
                       <TableCell className="hidden md:table-cell">{fmtDate(q.validUntil)}</TableCell>
                       <TableCell className="text-right font-semibold">{fmtMoney(q.total)}</TableCell>
-                      <TableCell className="text-center"><QuoteStatus status={q.status} /></TableCell>
+                      <TableCell className="hidden text-center sm:table-cell"><QuoteStatus status={q.status} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
