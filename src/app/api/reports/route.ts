@@ -137,7 +137,7 @@ export async function GET(req: NextRequest) {
         orderBy: { createdAt: 'asc' },
       }),
       db.purchase.aggregate({ _sum: { totalAmount: true }, where: { purchaseDate: { gte: since }, status: { not: 'cancelled' }, ...branchWhere } }),
-      db.medicine.findMany({ include: { category: true, branchRef: { select: { name: true, code: true } } }, where: scope.branchId ? { branchId: scope.branchId } : {} }),
+      db.medicine.findMany({ include: { category: true, branchRef: { select: { name: true, code: true } }, disposalDecision: true }, where: scope.branchId ? { branchId: scope.branchId } : {} }),
       db.saleItem.findMany({
         where: { sale: { createdAt: { gte: since }, saleStatus: { not: 'cancelled' }, ...branchWhere } },
         include: { medicine: { include: { category: true } } },
@@ -234,7 +234,9 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => b.stockValue - a.stockValue)
       .slice(0, 20)
 
-    // Expiry report (expired + expiring within 120 days) with cost value at risk
+    // Expiry report (expired + expiring within 120 days) with cost value at risk.
+    // keepMarked: the batch carries a "keep — selling through" decision from
+    // the pre-expiry desk — still at risk, but a deliberate fast-mover keep.
     const expiryReport = meds
       .filter((m) => m.expiryDate && m.status !== 'discontinued')
       .map((m) => ({
@@ -247,6 +249,8 @@ export async function GET(req: NextRequest) {
         unit: m.unit,
         unitCost: m.costPrice,
         valueAtRisk: +(m.stockQty * m.costPrice).toFixed(2),
+        keepMarked: m.disposalDecision?.action === 'keep',
+        keepNote: m.disposalDecision?.note ?? null,
       }))
       .filter((m) => m.daysLeft <= 120)
       .sort((a, b) => a.daysLeft - b.daysLeft)
@@ -262,6 +266,24 @@ export async function GET(req: NextRequest) {
       else if (dl <= 30) risk.d30 = +(risk.d30 + v).toFixed(2)
       else if (dl <= 60) risk.d60 = +(risk.d60 + v).toFixed(2)
       else if (dl <= 90) risk.d90 = +(risk.d90 + v).toFixed(2)
+    }
+
+    // Of the at-risk value, how much is deliberately kept ("keep — selling
+    // through" markers from the pre-expiry desk)? Informational only — it does
+    // NOT change the risk math; kept stock is still on the shelf until sold.
+    const keptMeds = meds.filter(
+      (m) =>
+        m.disposalDecision?.action === 'keep' &&
+        m.status === 'active' &&
+        m.stockQty > 0 &&
+        m.expiryDate &&
+        new Date(m.expiryDate).getTime() > Date.now() &&
+        new Date(m.expiryDate).getTime() <= Date.now() + 120 * DAY,
+    )
+    const expiryKept = {
+      count: keptMeds.length,
+      units: keptMeds.reduce((s, m) => s + m.stockQty, 0),
+      value: +keptMeds.reduce((s, m) => s + m.stockQty * m.costPrice, 0).toFixed(2),
     }
 
     // Write-offs & returns in the period (money that left the shelf).
@@ -417,6 +439,7 @@ export async function GET(req: NextRequest) {
       stockValuation,
       expiryReport,
       expiryRisk: risk,
+      expiryKept,
       writeOffs,
       writeOffTotal,
       netAfterWriteOffs,

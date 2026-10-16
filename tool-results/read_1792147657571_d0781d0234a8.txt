@@ -1,0 +1,543 @@
+     1→'use client'
+     2→
+     3→import { Badge } from '@/components/ui/badge'
+     4→import { Button } from '@/components/ui/button'
+     5→import { Card } from '@/components/ui/card'
+     6→import { Checkbox } from '@/components/ui/checkbox'
+     7→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+     8→import { Input } from '@/components/ui/input'
+     9→import { Label } from '@/components/ui/label'
+    10→import { ScrollArea } from '@/components/ui/scroll-area'
+    11→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+    12→import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+    13→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+    14→import { Textarea } from '@/components/ui/textarea'
+    15→import { fmtDate, fmtMoney, fmtRelative } from '@/lib/format'
+    16→import { ArchiveX, CalendarClock, Handshake, Plus, RotateCcw, ShieldAlert, Trash2 } from 'lucide-react'
+    17→import { useCallback, useEffect, useState } from 'react'
+    18→import { toast } from '@/hooks/use-toast'
+    19→
+    20→interface MedOption { id: string; name: string; sku: string; unit: string; stockQty: number; quarantineQty: number; costPrice: number }
+    21→interface SupplierOption { id: string; name: string }
+    22→interface ReturnRow { id: string; returnNo: string; type: string; reason: string; status: string; source?: string | null; supplier: string | null; totalValue: number; units: number; createdByName: string | null; createdAt: string }
+    23→interface QuarantineRow { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string | null; daysLeft: number | null; quarantineQty: number; stockQty: number; unitCost: number; value: number }
+    24→interface PreExpiryCandidate { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string; daysLeft: number; stockQty: number; costPrice: number; valueAtRisk: number; supplierId: string | null; supplierName: string | null }
+    25→
+    26→interface DraftLine { medicineId: string; qty: string; fromQuarantine: boolean }
+    27→
+    28→const emptyDraft = () => ({ medicineId: '', qty: '1', fromQuarantine: false })
+    29→
+    30→const PE_WINDOWS = ['30', '60', '90', '120'] as const
+    31→
+    32→/** Tier 2: write-offs, supplier returns, the quarantine desk and the pre-expiry disposal workflow. */
+    33→export function ReturnsAndQuarantine() {
+    34→  const [meds, setMeds] = useState<MedOption[]>([])
+    35→  const [suppliers, setSuppliers] = useState<SupplierOption[]>([])
+    36→  const [rows, setRows] = useState<ReturnRow[]>([])
+    37→  const [quar, setQuar] = useState<QuarantineRow[]>([])
+    38→  const [loading, setLoading] = useState(true)
+    39→
+    40→  const [noteOpen, setNoteOpen] = useState(false)
+    41→  const [type, setType] = useState('writeoff')
+    42→  const [reason, setReason] = useState('expired')
+    43→  const [supplierId, setSupplierId] = useState('none')
+    44→  const [note, setNote] = useState('')
+    45→  const [lines, setLines] = useState<DraftLine[]>([emptyDraft()])
+    46→  const [saving, setSaving] = useState(false)
+    47→  const [lastNote, setLastNote] = useState<{ returnNo: string; totalValue: number; itemCount: number } | null>(null)
+    48→
+    49→  // --- Pre-expiry disposal desk state ---
+    50→  const [cands, setCands] = useState<PreExpiryCandidate[]>([])
+    51→  const [peDays, setPeDays] = useState('60')
+    52→  const [peLoading, setPeLoading] = useState(true)
+    53→  const [peSel, setPeSel] = useState<Record<string, string>>({}) // medicineId -> dispose qty (string)
+    54→  const [peOpen, setPeOpen] = useState(false)
+    55→  const [peAction, setPeAction] = useState<'writeoff' | 'return_supplier'>('writeoff')
+    56→  const [peSupplier, setPeSupplier] = useState('none')
+    57→  const [peNote, setPeNote] = useState('')
+    58→  const [peSaving, setPeSaving] = useState(false)
+    59→
+    60→  const load = useCallback(async () => {
+    61→    setLoading(true)
+    62→    try {
+    63→      const [mRes, sRes, rRes, qRes] = await Promise.all([
+    64→        fetch('/api/medicines?status=active', { cache: 'no-store' }),
+    65→        fetch('/api/suppliers', { cache: 'no-store' }),
+    66→        fetch('/api/stock-returns', { cache: 'no-store' }),
+    67→        fetch('/api/quarantine', { cache: 'no-store' }),
+    68→      ])
+    69→      setMeds((await mRes.json()).medicines ?? [])
+    70→      setSuppliers((await sRes.json()).suppliers ?? [])
+    71→      setRows((await rRes.json()).returns ?? [])
+    72→      setQuar((await qRes.json()).items ?? [])
+    73→    } finally {
+    74→      setLoading(false)
+    75→    }
+    76→  }, [])
+    77→
+    78→  const loadCandidates = useCallback(async (days: string) => {
+    79→    setPeLoading(true)
+    80→    try {
+    81→      const res = await fetch(`/api/disposals/pre-expiry?days=${days}`, { cache: 'no-store' })
+    82→      const json = await res.json()
+    83→      setCands(res.ok ? (json.items ?? []) : [])
+    84→    } catch {
+    85→      setCands([])
+    86→    } finally {
+    87→      setPeLoading(false)
+    88→    }
+    89→  }, [])
+    90→
+    91→  useEffect(() => { load() }, [load])
+    92→  useEffect(() => { setPeSel({}); loadCandidates(peDays) }, [loadCandidates, peDays])
+    93→
+    94→  const openNote = () => {
+    95→    setType('writeoff'); setReason('expired'); setSupplierId('none'); setNote('')
+    96→    setLines([emptyDraft()]); setLastNote(null); setNoteOpen(true)
+    97→  }
+    98→
+    99→  const addLine = () => setLines((ls) => [...ls, emptyDraft()])
+   100→  const updateLine = (i: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)))
+   101→  const removeLine = (i: number) => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls))
+   102→
+   103→  const draftValue = lines.reduce((s, l) => {
+   104→    const m = meds.find((x) => x.id === l.medicineId)
+   105→    return m ? s + (Number(l.qty) || 0) * m.costPrice : s
+   106→  }, 0)
+   107→
+   108→  const submitNote = async () => {
+   109→    const items = lines
+   110→      .filter((l) => l.medicineId && Number(l.qty) > 0)
+   111→      .map((l) => ({ medicineId: l.medicineId, qty: Number(l.qty), action: type === 'supplier_return' ? 'return_supplier' : 'writeoff', fromQuarantine: l.fromQuarantine }))
+   112→    if (items.length === 0) { toast({ title: 'Add at least one item', variant: 'destructive' }); return }
+   113→    setSaving(true)
+   114→    try {
+   115→      const res = await fetch('/api/stock-returns', {
+   116→        method: 'POST',
+   117→        headers: { 'Content-Type': 'application/json' },
+   118→        body: JSON.stringify({ type, reason, supplierId: type === 'supplier_return' ? supplierId : undefined, note: note || undefined, items }),
+   119→      })
+   120→      const json = await res.json()
+   121→      if (!res.ok) { toast({ title: 'Could not create the note', description: json.error, variant: 'destructive' }); return }
+   122→      setLastNote({ returnNo: json.return.returnNo, totalValue: json.return.totalValue, itemCount: json.return.items.length })
+   123→      toast({ title: `${json.return.returnNo} recorded`, description: `${json.return.items.length} line(s) · ${fmtMoney(json.return.totalValue)} cost value removed.` })
+   124→      load()
+   125→    } finally {
+   126→      setSaving(false)
+   127→    }
+   128→  }
+   129→
+   130→  const cancelNote = async (r: ReturnRow) => {
+   131→    if (!confirm(`Cancel ${r.returnNo} and put the stock back?`)) return
+   132→    const res = await fetch(`/api/stock-returns/${r.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+   133→    const json = await res.json()
+   134→    if (!res.ok) { toast({ title: 'Cancel failed', description: json.error, variant: 'destructive' }); return }
+   135→    toast({ title: `${r.returnNo} cancelled — stock restored` })
+   136→    load()
+   137→  }
+   138→
+   139→  const resolveQuarantine = async (q: QuarantineRow, action: 'restore' | 'writeoff' | 'return_supplier', qty: number) => {
+   140→    const res = await fetch('/api/quarantine', {
+   141→      method: 'POST',
+   142→      headers: { 'Content-Type': 'application/json' },
+   143→      body: JSON.stringify({ medicineId: q.id, action, qty }),
+   144→    })
+   145→    const json = await res.json()
+   146→    if (!res.ok) { toast({ title: 'Action failed', description: json.error, variant: 'destructive' }); return }
+   147→    toast({ title: action === 'restore' ? 'Back on the shelf' : action === 'writeoff' ? 'Written off' : 'Marked for supplier return', description: `${q.name} × ${qty}` })
+   148→    load()
+   149→  }
+   150→
+   151→  // --- Pre-expiry disposal desk helpers ---
+   152→  const selectedIds = Object.keys(peSel).filter((id) => Number(peSel[id]) > 0 && cands.some((c) => c.id === id))
+   153→  const selectedRows = selectedIds.map((id) => cands.find((c) => c.id === id)!).filter(Boolean)
+   154→  const selUnits = selectedRows.reduce((s, c) => s + (Number(peSel[c.id]) || 0), 0)
+   155→  const selValue = selectedRows.reduce((s, c) => s + (Number(peSel[c.id]) || 0) * c.costPrice, 0)
+   156→  const allSelected = cands.length > 0 && cands.every((c) => Number(peSel[c.id]) > 0)
+   157→  const selSuppliers = [...new Set(selectedRows.map((c) => c.supplierId).filter(Boolean))]
+   158→  const candUnits = cands.reduce((s, c) => s + c.stockQty, 0)
+   159→  const candValue = cands.reduce((s, c) => s + c.valueAtRisk, 0)
+   160→
+   161→  const toggleRow = (c: PreExpiryCandidate, on: boolean) => {
+   162→    setPeSel((prev) => {
+   163→      const next = { ...prev }
+   164→      if (on) next[c.id] = String(c.stockQty)
+   165→      else delete next[c.id]
+   166→      return next
+   167→    })
+   168→  }
+   169→  const toggleAll = () => {
+   170→    if (allSelected) { setPeSel({}); return }
+   171→    const next: Record<string, string> = {}
+   172→    for (const c of cands) next[c.id] = String(c.stockQty)
+   173→    setPeSel(next)
+   174→  }
+   175→
+   176→  const openDisposal = (action: 'writeoff' | 'return_supplier') => {
+   177→    if (selectedIds.length === 0) { toast({ title: 'Select at least one product first', variant: 'destructive' }); return }
+   178→    setPeAction(action)
+   179→    setPeNote('')
+   180→    // Preselect the supplier when the whole selection comes from one source.
+   181→    setPeSupplier(action === 'return_supplier' && selSuppliers.length === 1 ? (selSuppliers[0] as string) : 'none')
+   182→    setPeOpen(true)
+   183→  }
+   184→
+   185→  const submitDisposal = async () => {
+   186→    const items = selectedIds.map((id) => ({ medicineId: id, qty: Number(peSel[id]) }))
+   187→    if (items.length === 0) { toast({ title: 'Select at least one product', variant: 'destructive' }); return }
+   188→    if (peAction === 'return_supplier' && peSupplier === 'none') { toast({ title: 'Choose a supplier for the return', variant: 'destructive' }); return }
+   189→    setPeSaving(true)
+   190→    try {
+   191→      const res = await fetch('/api/disposals/pre-expiry', {
+   192→        method: 'POST',
+   193→        headers: { 'Content-Type': 'application/json' },
+   194→        body: JSON.stringify({
+   195→          action: peAction,
+   196→          days: Number(peDays),
+   197→          items,
+   198→          supplierId: peAction === 'return_supplier' ? peSupplier : undefined,
+   199→          note: peNote || undefined,
+   200→        }),
+   201→      })
+   202→      const json = await res.json()
+   203→      if (!res.ok) { toast({ title: 'Disposal failed', description: json.error, variant: 'destructive' }); return }
+   204→      const destroyed = peAction === 'writeoff'
+   205→      toast({
+   206→        title: `${json.return.returnNo} recorded — disposed ${json.return.items.reduce((s: number, i: { qty: number }) => s + i.qty, 0)} unit(s) before expiry`,
+   207→        description: destroyed
+   208→          ? `${fmtMoney(json.return.totalValue)} written off and auto-booked as an Inventory Write-offs expense${json.expenseNo ? ` (${json.expenseNo})` : ''}.`
+   209→          : `${fmtMoney(json.return.totalValue)} left with the supplier return note — recoverable via credit, no P&L hit.`,
+   210→      })
+   211→      setPeOpen(false)
+   212→      setPeSel({})
+   213→      loadCandidates(peDays)
+   214→      load()
+   215→    } finally {
+   216→      setPeSaving(false)
+   217→    }
+   218→  }
+   219→
+   220→  const daysLeftChip = (d: number) => (
+   221→    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+   222→      d <= 14
+   223→        ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'
+   224→        : d <= 30
+   225→          ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
+   226→          : 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400'
+   227→    }`}>
+   228→      {d} d
+   229→    </span>
+   230→  )
+   231→
+   232→  return (
+   233→    <Tabs defaultValue="notes">
+   234→      <TabsList className="rounded-full">
+   235→        <TabsTrigger value="notes" className="rounded-full">Write-offs &amp; Returns</TabsTrigger>
+   236→        <TabsTrigger value="pre" className="rounded-full">Pre-Expiry Review ({cands.length})</TabsTrigger>
+   237→        <TabsTrigger value="quarantine" className="rounded-full">Quarantine ({quar.length})</TabsTrigger>
+   238→      </TabsList>
+   239→
+   240→      <TabsContent value="notes" className="mt-3 space-y-3">
+   241→        <div className="flex justify-end">
+   242→          <Button onClick={openNote} className="rounded-full bg-teal-600 hover:bg-teal-700"><Plus className="h-4 w-4" /> New Write-off / Return Note</Button>
+   243→        </div>
+   244→        {lastNote && (
+   245→          <Card className="border-teal-300 bg-teal-50/60 p-4 text-sm dark:border-teal-500/30 dark:bg-teal-500/10">
+   246→            <p className="font-semibold">{lastNote.returnNo} recorded — {lastNote.itemCount} line(s), {fmtMoney(lastNote.totalValue)} cost value removed from stock.</p>
+   247→            <p className="text-xs text-muted-foreground">The movement is in the audit log{type === 'supplier_return' ? '; print or send the note to the supplier for credit.' : '.'}</p>
+   248→          </Card>
+   249→        )}
+   250→        <Card>
+   251→          <Table>
+   252→            <TableHeader>
+   253→              <TableRow className="hover:bg-transparent">
+   254→                <TableHead>Note</TableHead><TableHead>Type</TableHead><TableHead>Reason</TableHead>
+   255→                <TableHead className="text-center">Units</TableHead><TableHead className="text-right">Cost Value</TableHead>
+   256→                <TableHead className="hidden md:table-cell">By</TableHead><TableHead className="hidden md:table-cell">When</TableHead><TableHead />
+   257→              </TableRow>
+   258→            </TableHeader>
+   259→            <TableBody>
+   260→              {rows.map((r) => (
+   261→                <TableRow key={r.id}>
+   262→                  <TableCell className="font-medium">{r.returnNo}</TableCell>
+   263→                  <TableCell><Badge variant="outline" className="rounded-full">{r.type === 'supplier_return' ? 'supplier return' : 'write-off'}</Badge></TableCell>
+   264→                  <TableCell className="capitalize">
+   265→                    {r.reason.replace(/_/g, '-')}{r.source === 'pre_expiry' && (
+   266→                      <Badge className="ml-1.5 rounded-full bg-teal-100 text-[10px] uppercase tracking-wide text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">pre-expiry desk</Badge>
+   267→                    )}
+   268→                    {r.supplier ? <span className="block text-xs text-muted-foreground">{r.supplier}</span> : null}
+   269→                  </TableCell>
+   270→                  <TableCell className="text-center tabular-nums">{r.units}</TableCell>
+   271→                  <TableCell className="text-right tabular-nums font-semibold">{fmtMoney(r.totalValue)}</TableCell>
+   272→                  <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{r.createdByName}</TableCell>
+   273→                  <TableCell className="hidden md:table-cell text-xs text-muted-foreground">{fmtRelative(r.createdAt)}</TableCell>
+   274→                  <TableCell>
+   275→                    {r.status === 'completed' ? (
+   276→                      <Button variant="ghost" size="icon" className="h-7 w-7 text-red-500" onClick={() => cancelNote(r)} aria-label="Cancel note"><RotateCcw className="h-3.5 w-3.5" /></Button>
+   277→                    ) : <Badge variant="outline" className="rounded-full">cancelled</Badge>}
+   278→                  </TableCell>
+   279→                </TableRow>
+   280→              ))}
+   281→              {!loading && rows.length === 0 && <TableRow><TableCell colSpan={8} className="py-10 text-center text-muted-foreground">No write-offs or returns yet — expired or damaged stock recorded here keeps the audit trail clean.</TableCell></TableRow>}
+   282→            </TableBody>
+   283→          </Table>
+   284→        </Card>
+   285→      </TabsContent>
+   286→
+   287→      <TabsContent value="pre" className="mt-3 space-y-3">
+   288→        <Card>
+   289→          <div className="flex flex-wrap items-center gap-2 border-b p-3 text-sm font-medium">
+   290→            <CalendarClock className="h-4 w-4 text-teal-600" />
+   291→            <span>Pre-expiry disposal desk — catch stock <em>before</em> the expiry date: return it to the supplier for credit, or write it off early</span>
+   292→            <div className="ml-auto flex items-center gap-2">
+   293→              <Select value={peDays} onValueChange={setPeDays}>
+   294→                <SelectTrigger className="h-8 w-[170px] rounded-full text-xs" aria-label="Expiry window"><SelectValue /></SelectTrigger>
+   295→                <SelectContent>
+   296→                  {PE_WINDOWS.map((w) => <SelectItem key={w} value={w}>Expiring within {w} days</SelectItem>)}
+   297→                </SelectContent>
+   298→              </Select>
+   299→              <Button variant="outline" size="icon" className="h-8 w-8 rounded-full" onClick={() => loadCandidates(peDays)} aria-label="Refresh candidates"><RotateCcw className="h-3.5 w-3.5" /></Button>
+   300→            </div>
+   301→          </div>
+   302→          {!peLoading && (
+   303→            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+   304→              <span><strong className="text-foreground tabular-nums">{cands.length}</strong> product(s)</span>
+   305→              <span><strong className="text-foreground tabular-nums">{candUnits}</strong> {cands[0]?.unit ?? 'unit'}(s) on hand</span>
+   306→              <span><strong className="text-foreground tabular-nums">{fmtMoney(candValue)}</strong> cost value at risk</span>
+   307→              {selectedIds.length > 0 && (
+   308→                <span className="rounded-full bg-teal-600 px-2.5 py-0.5 font-semibold text-white tabular-nums">
+   309→                  {selectedIds.length} selected · {selUnits} unit(s) · {fmtMoney(selValue)}
+   310→                </span>
+   311→              )}
+   312→            </div>
+   313→          )}
+   314→          {peLoading ? (
+   315→            <p className="py-10 text-center text-sm text-muted-foreground">Scanning the shelves…</p>
+   316→          ) : cands.length === 0 ? (
+   317→            <p className="py-10 text-center text-sm text-muted-foreground">Nothing expiring within {peDays} days — the desk is clear. Raise the window to look further ahead.</p>
+   318→          ) : (
+   319→            <Table>
+   320→              <TableHeader>
+   321→                <TableRow className="hover:bg-transparent">
+   322→                  <TableHead className="w-10">
+   323→                    <Checkbox checked={allSelected} onCheckedChange={() => toggleAll()} aria-label="Select all candidates" />
+   324→                  </TableHead>
+   325→                  <TableHead>Product</TableHead>
+   326→                  <TableHead className="hidden md:table-cell">Batch</TableHead>
+   327→                  <TableHead>Expiry</TableHead>
+   328→                  <TableHead className="text-center">On hand</TableHead>
+   329→                  <TableHead className="text-right hidden md:table-cell">Unit cost</TableHead>
+   330→                  <TableHead className="text-right">Value at risk</TableHead>
+   331→                  <TableHead className="hidden md:table-cell">Dispose qty</TableHead>
+   332→                  <TableHead className="hidden lg:table-cell">Supplier</TableHead>
+   333→                </TableRow>
+   334→              </TableHeader>
+   335→              <TableBody>
+   336→                {cands.map((c) => (
+   337→                  <TableRow key={c.id} className={peSel[c.id] ? 'bg-teal-50/50 dark:bg-teal-500/5' : undefined}>
+   338→                    <TableCell>
+   339→                      <Checkbox checked={Number(peSel[c.id]) > 0} onCheckedChange={(v) => toggleRow(c, v === true)} aria-label={`Select ${c.name}`} />
+   340→                    </TableCell>
+   341→                    <TableCell className="max-w-56">
+   342→                      <p className="truncate font-medium">{c.name}</p>
+   343→                      <p className="text-xs text-muted-foreground">{c.sku}</p>
+   344→                    </TableCell>
+   345→                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{c.batchNumber ?? '—'}</TableCell>
+   346→                    <TableCell>
+   347→                      <span className="tabular-nums">{fmtDate(c.expiryDate)}</span>
+   348→                      <span className="ml-2 inline-block align-middle">{daysLeftChip(c.daysLeft)}</span>
+   349→                    </TableCell>
+   350→                    <TableCell className="text-center tabular-nums">{c.stockQty} {c.unit}</TableCell>
+   351→                    <TableCell className="text-right tabular-nums hidden md:table-cell">{fmtMoney(c.costPrice)}</TableCell>
+   352→                    <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(c.valueAtRisk)}</TableCell>
+   353→                    <TableCell className="hidden md:table-cell">
+   354→                      <Input
+   355→                        type="number"
+   356→                        min={1}
+   357→                        max={c.stockQty}
+   358→                        value={peSel[c.id] ?? ''}
+   359→                        onChange={(e) => setPeSel((prev) => ({ ...prev, [c.id]: e.target.value }))}
+   360→                        placeholder="—"
+   361→                        className="h-8 w-20 tabular-nums"
+   362→                        aria-label={`Dispose quantity for ${c.name}`}
+   363→                      />
+   364→                    </TableCell>
+   365→                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{c.supplierName ?? '—'}</TableCell>
+   366→                  </TableRow>
+   367→                ))}
+   368→              </TableBody>
+   369→            </Table>
+   370→          )}
+   371→        </Card>
+   372→        {cands.length > 0 && (
+   373→          <div className="flex flex-wrap items-center justify-end gap-2">
+   374→            <Button variant="outline" className="rounded-full border-red-300 text-red-600 hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10" onClick={() => openDisposal('writeoff')} disabled={selectedIds.length === 0}>
+   375→              <Trash2 className="h-4 w-4" /> Write off selected ({selUnits})
+   376→            </Button>
+   377→            <Button variant="outline" className="rounded-full border-teal-300 text-teal-700 hover:bg-teal-50 dark:border-teal-500/40 dark:text-teal-300 dark:hover:bg-teal-500/10" onClick={() => openDisposal('return_supplier')} disabled={selectedIds.length === 0}>
+   378→              <Handshake className="h-4 w-4" /> Return to supplier
+   379→            </Button>
+   380→          </div>
+   381→        )}
+   382→      </TabsContent>
+   383→
+   384→      <TabsContent value="quarantine" className="mt-3">
+   385→        <Card>
+   386→          <div className="flex items-center gap-2 border-b p-3 text-sm font-medium"><ShieldAlert className="h-4 w-4 text-amber-500" /> Quarantine desk — stock held aside, not sellable, awaiting a decision</div>
+   387→          {quar.length === 0 ? (
+   388→            <p className="py-10 text-center text-sm text-muted-foreground">Nothing in quarantine. Quarantine suspect stock from a write-off note (&ldquo;hold in quarantine&rdquo; action).</p>
+   389→          ) : (
+   390→            <div>
+   391→              {quar.map((q) => (
+   392→                <div key={q.id} className="flex flex-wrap items-center gap-3 border-b px-4 py-3 last:border-0">
+   393→                  <div className="min-w-0 flex-1">
+   394→                    <p className="truncate text-sm font-medium">{q.name} <span className="text-xs text-muted-foreground">({q.sku})</span></p>
+   395→                    <p className="text-xs text-muted-foreground">Batch {q.batchNumber ?? '—'}{q.expiryDate ? ` · exp ${fmtDate(q.expiryDate)}${q.daysLeft !== null && q.daysLeft <= 0 ? ' (EXPIRED)' : ''}` : ''} · {fmtMoney(q.value)} held at cost</p>
+   396→                  </div>
+   397→                  <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">{q.quarantineQty} {q.unit}</Badge>
+   398→                  <div className="flex items-center gap-1.5">
+   399→                    <Input type="number" min={1} max={q.quarantineQty} defaultValue={1} id={`q-${q.id}`} className="h-8 w-16 tabular-nums" aria-label="Quantity" />
+   400→                    <Button size="sm" variant="outline" className="h-8 rounded-full text-xs" onClick={() => resolveQuarantine(q, 'restore', Number((document.getElementById(`q-${q.id}`) as HTMLInputElement)?.value || 0))}><RotateCcw className="h-3 w-3" /> Restore</Button>
+   401→                    <Button size="sm" variant="outline" className="h-8 rounded-full text-xs text-red-600" onClick={() => resolveQuarantine(q, 'writeoff', Number((document.getElementById(`q-${q.id}`) as HTMLInputElement)?.value || 0))}><Trash2 className="h-3 w-3" /> Write off</Button>
+   402→                    <Button size="sm" variant="outline" className="h-8 rounded-full text-xs" onClick={() => resolveQuarantine(q, 'return_supplier', Number((document.getElementById(`q-${q.id}`) as HTMLInputElement)?.value || 0))}><Handshake className="h-3 w-3" /> Return</Button>
+   403→                  </div>
+   404→                </div>
+   405→              ))}
+   406→            </div>
+   407→          )}
+   408→        </Card>
+   409→      </TabsContent>
+   410→
+   411→      {/* New note dialog */}
+   412→      <Dialog open={noteOpen} onOpenChange={setNoteOpen}>
+   413→        <DialogContent className="sm:max-w-lg">
+   414→          <DialogHeader>
+   415→            <DialogTitle className="flex items-center gap-2"><ArchiveX className="h-4 w-4 text-teal-600" /> Write-off / Return Note</DialogTitle>
+   416→            <DialogDescription>Remove expired or damaged stock with a full audit trail. Use quarantine to hold suspect stock before deciding.</DialogDescription>
+   417→          </DialogHeader>
+   418→          <div className="space-y-3">
+   419→            <div className="grid grid-cols-2 gap-3">
+   420→              <div className="space-y-1.5">
+   421→                <Label>Type</Label>
+   422→                <Select value={type} onValueChange={setType}>
+   423→                  <SelectTrigger><SelectValue /></SelectTrigger>
+   424→                  <SelectContent>
+   425→                    <SelectItem value="writeoff">Write-off (destroy / discard)</SelectItem>
+   426→                    <SelectItem value="supplier_return">Supplier return (credit note)</SelectItem>
+   427→                  </SelectContent>
+   428→                </Select>
+   429→              </div>
+   430→              <div className="space-y-1.5">
+   431→                <Label>Reason</Label>
+   432→                <Select value={reason} onValueChange={setReason}>
+   433→                  <SelectTrigger><SelectValue /></SelectTrigger>
+   434→                  <SelectContent>
+   435→                    <SelectItem value="expired">Expired</SelectItem>
+   436→                    <SelectItem value="damaged">Damaged</SelectItem>
+   437→                    <SelectItem value="recalled">Recalled</SelectItem>
+   438→                    <SelectItem value="other">Other</SelectItem>
+   439→                  </SelectContent>
+   440→                </Select>
+   441→              </div>
+   442→            </div>
+   443→            {type === 'supplier_return' && (
+   444→              <div className="space-y-1.5">
+   445→                <Label>Supplier *</Label>
+   446→                <Select value={supplierId} onValueChange={setSupplierId}>
+   447→                  <SelectTrigger><SelectValue placeholder="Select supplier…" /></SelectTrigger>
+   448→                  <SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+   449→                </Select>
+   450→              </div>
+   451→            )}
+   452→            <div className="space-y-2">
+   453→              <Label>Items</Label>
+   454→              {lines.map((l, i) => (
+   455→                <div key={i} className="grid grid-cols-[1fr_76px_auto] items-center gap-2">
+   456→                  <Select value={l.medicineId} onValueChange={(v) => updateLine(i, { medicineId: v })}>
+   457→                    <SelectTrigger className="h-9"><SelectValue placeholder="Medicine…" /></SelectTrigger>
+   458→                    <SelectContent>
+   459→                      {meds.map((m) => (
+   460→                        <SelectItem key={m.id} value={m.id}>
+   461→                          {m.name} — {m.stockQty} {m.unit}{m.quarantineQty > 0 ? ` (+${m.quarantineQty} quarantined)` : ''} · {fmtMoney(m.costPrice)}
+   462→                        </SelectItem>
+   463→                      ))}
+   464→                    </SelectContent>
+   465→                  </Select>
+   466→                  <Input type="number" min={1} value={l.qty} onChange={(e) => updateLine(i, { qty: e.target.value })} className="h-9 tabular-nums" aria-label="Quantity" />
+   467→                  <div className="flex items-center gap-2">
+   468→                    <label className="flex items-center gap-1 text-xs text-muted-foreground"><Checkbox checked={l.fromQuarantine} onCheckedChange={(v) => updateLine(i, { fromQuarantine: v === true })} /> from quarantine</label>
+   469→                    <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500" onClick={() => removeLine(i)} aria-label="Remove line">−</Button>
+   470→                  </div>
+   471→                </div>
+   472→              ))}
+   473→              <Button variant="outline" size="sm" className="rounded-full text-xs" onClick={addLine}><Plus className="h-3 w-3" /> Add line</Button>
+   474→            </div>
+   475→            <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (optional) — e.g. batch recall ref" />
+   476→            <div className="flex items-center justify-between">
+   477→              <p className="text-sm text-muted-foreground">Cost value removed: <strong className="text-foreground tabular-nums">{fmtMoney(draftValue)}</strong></p>
+   478→              <div className="flex gap-2">
+   479→                <Button variant="outline" onClick={() => setNoteOpen(false)}>Close</Button>
+   480→                <Button onClick={submitNote} disabled={saving} className="bg-teal-600 hover:bg-teal-700">{saving ? 'Recording…' : 'Record Note'}</Button>
+   481→              </div>
+   482→            </div>
+   483→          </div>
+   484→        </DialogContent>
+   485→      </Dialog>
+   486→
+   487→      {/* Pre-expiry disposal confirm dialog */}
+   488→      <Dialog open={peOpen} onOpenChange={setPeOpen}>
+   489→        <DialogContent className="sm:max-w-lg">
+   490→          <DialogHeader>
+   491→            <DialogTitle className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-teal-600" /> {peAction === 'writeoff' ? 'Write off before expiry' : 'Return to supplier before expiry'}</DialogTitle>
+   492→            <DialogDescription>
+   493→              {selectedRows.length} product(s) · {selUnits} unit(s) · {fmtMoney(selValue)} cost value. Acting before expiry keeps this off the expired-loss pile.
+   494→            </DialogDescription>
+   495→          </DialogHeader>
+   496→          <div className="space-y-3">
+   497→            <div className="max-h-44 rounded-lg border bg-muted/30 p-2 text-sm">
+   498→              <ScrollArea className="max-h-40">
+   499→                <ul className="space-y-1">
+   500→                  {selectedRows.map((c) => (
+   501→                    <li key={c.id} className="flex items-center justify-between gap-2">
+   502→                      <span className="truncate">{c.name} <span className="text-xs text-muted-foreground">· exp {fmtDate(c.expiryDate)} ({c.daysLeft} d left)</span></span>
+   503→                      <span className="shrink-0 tabular-nums">{peSel[c.id]} × {fmtMoney(c.costPrice)} = <strong>{fmtMoney((Number(peSel[c.id]) || 0) * c.costPrice)}</strong></span>
+   504→                    </li>
+   505→                  ))}
+   506→                </ul>
+   507→              </ScrollArea>
+   508→            </div>
+   509→            {peAction === 'writeoff' ? (
+   510→              <p className="rounded-lg border border-red-200 bg-red-50/60 p-2.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+   511→                This destroys the stock now. The {fmtMoney(selValue)} cost value is auto-booked as an <strong>Inventory Write-offs</strong> expense so the P&amp;L reflects the loss immediately — booked days (or weeks) before the units actually expire.
+   512→              </p>
+   513→            ) : (
+   514→              <>
+   515→                <div className="space-y-1.5">
+   516→                  <Label>Supplier *</Label>
+   517→                  <Select value={peSupplier} onValueChange={setPeSupplier}>
+   518→                    <SelectTrigger><SelectValue placeholder="Select supplier…" /></SelectTrigger>
+   519→                    <SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+   520→                  </Select>
+   521→                  {selSuppliers.length > 1 && (
+   522→                    <p className="text-xs text-amber-600 dark:text-amber-400">Selection spans {selSuppliers.length} suppliers — the note books them all under the one chosen here. Consider disposing per supplier for clean credit notes.</p>
+   523→                  )}
+   524→                </div>
+   525→                <p className="rounded-lg border border-teal-200 bg-teal-50/60 p-2.5 text-xs text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+   526→                  Stock leaves with a supplier return note — recoverable via credit, so nothing hits the P&amp;L until the supplier refuses and it is actually destroyed.
+   527→                </p>
+   528→              </>
+   529→            )}
+   530→            <Textarea rows={2} value={peNote} onChange={(e) => setPeNote(e.target.value)} placeholder="Note (optional) — e.g. supplier authorization ref" />
+   531→            <div className="flex justify-end gap-2">
+   532→              <Button variant="outline" onClick={() => setPeOpen(false)}>Close</Button>
+   533→              <Button onClick={submitDisposal} disabled={peSaving} className={peAction === 'writeoff' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-600 hover:bg-teal-700'}>
+   534→                {peSaving ? 'Recording…' : peAction === 'writeoff' ? `Destroy ${selUnits} unit(s)` : 'Create return note'}
+   535→              </Button>
+   536→            </div>
+   537→          </div>
+   538→        </DialogContent>
+   539→      </Dialog>
+   540→    </Tabs>
+   541→  )
+   542→}
+   543→

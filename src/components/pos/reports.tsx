@@ -37,7 +37,8 @@ interface ReportData {
   cashierStats: Array<{ name: string; transactions: number; revenue: number; avg: number }>
   productStats: Array<{ name: string; category: string; qtySold: number; revenue: number; profit: number }>
   stockValuation: Array<{ name: string; category: string; branch?: string; qty: number; unit: string; unitCost: number; unitPrice: number; stockValue: number; retailValue: number }>
-  expiryReport: Array<{ name: string; branch?: string; batch: string; expiryDate: string; daysLeft: number; qty: number }>
+  expiryReport: Array<{ name: string; branch?: string; batch: string; expiryDate: string; daysLeft: number; qty: number; keepMarked?: boolean; keepNote?: string | null }>
+  expiryKept?: { count: number; units: number; value: number }
   writeOffTotal?: number
   netAfterWriteOffs?: number
   preExpiryDisposals?: { notes: number; units: number; destroyedValue: number; returnedValue: number; avgDaysEarly: number | null }
@@ -964,6 +965,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
     const risk = (data as { expiryRisk?: { expired: number; d30: number; d60: number; d90: number } }).expiryRisk
     const writeOffTotal = (data as { writeOffTotal?: number }).writeOffTotal
     const pre = data.preExpiryDisposals
+    const kept = data.expiryKept
     return (
       <div className="space-y-3">
       {risk && (
@@ -985,6 +987,8 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
       )}
       <p className="px-1 text-xs text-muted-foreground">Cost value at risk (stock on hand × cost price) by expiry horizon. Write off or return dead stock from Inventory → Returns &amp; Quarantine to clear it — every write-off is auto-booked as an “Inventory Write-offs” expense so the P&amp;L reflects the loss.{pre && pre.notes > 0 && (
         <> The pre-expiry disposal desk caught <strong className="font-semibold text-teal-600 dark:text-teal-400">{pre.units} unit(s)</strong> across {pre.notes} note(s) before expiry — {fmtMoney(pre.destroyedValue)} destroyed, {fmtMoney(pre.returnedValue)} sent back for supplier credit{pre.avgDaysEarly !== null ? `, on average ${pre.avgDaysEarly} days early` : ''}.</>
+      )}{kept && kept.count > 0 && (
+        <> Another <strong className="font-semibold text-emerald-600 dark:text-emerald-400">{kept.units} unit(s)</strong> across {kept.count} product(s) ({fmtMoney(kept.value)}) are marked <em>keep — selling through</em> on the desk: still at risk here, but deliberate fast movers being sold down before expiry.</>
       )}</p>
       <Card>
         <CardContent className="p-0">
@@ -1021,6 +1025,14 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
                     }`}>
                       {m.daysLeft <= 0 ? 'Expired' : m.daysLeft <= 30 ? 'Critical' : 'Upcoming'}
                     </span>
+                    {m.keepMarked && m.daysLeft > 0 && (
+                      <span
+                        className="ml-1.5 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                        title={m.keepNote ? `Keep — selling through: ${m.keepNote}` : 'Marked keep — selling through on the pre-expiry desk'}
+                      >
+                        Keep
+                      </span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

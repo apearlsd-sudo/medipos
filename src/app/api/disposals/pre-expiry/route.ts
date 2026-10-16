@@ -20,14 +20,17 @@ function clampDays(raw: string | number | undefined | null, fallback = 60): numb
  * Pre-expiry disposal desk.
  *
  * GET  — candidates: active products with a FUTURE expiry inside the window
- *        (default 60 days) that still have sellable stock. These are the units
- *        a pharmacy should return to the supplier (credit note) or write off
- *        proactively, BEFORE they expire and become a full loss.
- * POST — bulk-dispose selected products ahead of expiry via a real return
- *        note (source='pre_expiry', reason='pre_expiry', per-line
- *        daysBeforeExpiry snapshot): writeoff destroys the stock (auto-books
- *        the Inventory Write-offs expense) or return_supplier books a
- *        supplier return (recoverable, no P&L hit until actually destroyed).
+ *        (default 60 days) that still have sellable stock, each carrying its
+ *        "keep — selling through" marker if one is set. These are the units a
+ *        pharmacy should return to the supplier (credit note), write off
+ *        proactively, or deliberately KEEP as fast movers, BEFORE they expire
+ *        and become a full loss.
+ * POST — bulk decision on selected products:
+ *        writeoff / return_supplier create a REAL return note
+ *        (source='pre_expiry', per-line daysBeforeExpiry snapshot; writeoff
+ *        auto-books the Inventory Write-offs expense) and clear any keep
+ *        markers; keep marks the batch as "selling through" (no stock
+ *        movement, no P&L hit); unmark_keep removes the marker again.
  */
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'inventory', 'view')
@@ -46,13 +49,17 @@ export async function GET(req: NextRequest) {
         stockQty: { gt: 0 },
         ...(scope.branchId ? { branchId: scope.branchId } : {}),
       },
-      include: { supplier: { select: { name: true } } },
+      include: {
+        supplier: { select: { name: true } },
+        disposalDecision: true,
+      },
       orderBy: { expiryDate: 'asc' },
       take: 200,
     })
 
     const items = meds.map((m) => {
       const daysLeft = Math.ceil(((m.expiryDate as Date).getTime() - now.getTime()) / DAY)
+      const d = m.disposalDecision
       return {
         id: m.id,
         name: m.name,
@@ -66,12 +73,27 @@ export async function GET(req: NextRequest) {
         valueAtRisk: +(m.stockQty * m.costPrice).toFixed(2),
         supplierId: m.supplierId,
         supplierName: m.supplier?.name ?? null,
+        keep: d
+          ? {
+              note: d.note,
+              daysLeftAtDecision: d.daysLeftAtDecision,
+              stockQtyAtDecision: d.stockQtyAtDecision,
+              decidedByName: d.decidedByName,
+              markedAt: d.updatedAt,
+            }
+          : null,
       }
     })
+    const keptItems = items.filter((i) => i.keep)
     const summary = {
       count: items.length,
       units: items.reduce((s, i) => s + i.stockQty, 0),
       value: +items.reduce((s, i) => s + i.valueAtRisk, 0).toFixed(2),
+      kept: {
+        count: keptItems.length,
+        units: keptItems.reduce((s, i) => s + i.stockQty, 0),
+        value: +keptItems.reduce((s, i) => s + i.valueAtRisk, 0).toFixed(2),
+      },
     }
     return NextResponse.json({ days, items, summary })
   } catch (e) {
@@ -90,10 +112,18 @@ export async function POST(req: NextRequest) {
   if (gate.response) return gate.response
   try {
     const body = await req.json()
-    const action: 'writeoff' | 'return_supplier' | null =
-      body.action === 'writeoff' ? 'writeoff' : body.action === 'return_supplier' ? 'return_supplier' : null
+    const action: 'writeoff' | 'return_supplier' | 'keep' | 'unmark_keep' | null =
+      body.action === 'writeoff'
+        ? 'writeoff'
+        : body.action === 'return_supplier'
+          ? 'return_supplier'
+          : body.action === 'keep'
+            ? 'keep'
+            : body.action === 'unmark_keep'
+              ? 'unmark_keep'
+              : null
     if (!action) {
-      return NextResponse.json({ error: 'action must be "writeoff" or "return_supplier".' }, { status: 400 })
+      return NextResponse.json({ error: 'action must be "writeoff", "return_supplier", "keep" or "unmark_keep".' }, { status: 400 })
     }
     if (action === 'return_supplier' && !body.supplierId) {
       return NextResponse.json({ error: 'Supplier returns need a supplier.' }, { status: 400 })
@@ -103,6 +133,56 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Select at least one product to dispose.' }, { status: 400 })
     }
     const days = clampDays(body.days)
+
+    // --- keep / unmark_keep: the triage layer, no stock moves ---
+    if (action === 'keep' || action === 'unmark_keep') {
+      // Marker ops take bare ids; ignore any qty the client sends along.
+      const ids = [...new Set(rawItems.map((i) => String(i.medicineId)).filter(Boolean))]
+      if (ids.length === 0) {
+        return NextResponse.json({ error: 'Select at least one product.' }, { status: 400 })
+      }
+      if (action === 'unmark_keep') {
+        const removed = await db.disposalDecision.deleteMany({ where: { medicineId: { in: ids } } })
+        return NextResponse.json({ unmarked: removed.count })
+      }
+      const now = new Date()
+      const until = new Date(now.getTime() + days * DAY)
+      const meds = await db.medicine.findMany({ where: { id: { in: ids } } })
+      const medMap = new Map(meds.map((m) => [m.id, m]))
+      for (const id of ids) {
+        const med = medMap.get(id)
+        if (!med) return NextResponse.json({ error: `Medicine not found: ${id}` }, { status: 404 })
+        const expiry = med.expiryDate
+        if (!expiry || expiry.getTime() <= now.getTime()) {
+          return NextResponse.json({ error: `"${med.name}" is already expired — dispose it from the quarantine desk or a normal write-off note instead.` }, { status: 409 })
+        }
+        if (expiry.getTime() > until.getTime()) {
+          return NextResponse.json({ error: `"${med.name}" expires in ${Math.ceil((expiry.getTime() - now.getTime()) / DAY)} days — outside the ${days}-day pre-expiry window. Raise the window to include it.` }, { status: 400 })
+        }
+      }
+      const markedAt = new Date()
+      await db.$transaction(async (tx) => {
+        for (const id of ids) {
+          const med = medMap.get(id)! // existence verified above
+          const daysLeft = Math.ceil(((med.expiryDate as Date).getTime() - now.getTime()) / DAY)
+          const data = {
+            action: 'keep',
+            note: body.note || null,
+            daysLeftAtDecision: daysLeft,
+            stockQtyAtDecision: med.stockQty,
+            decidedByName: gate.user.name,
+          }
+          await tx.disposalDecision.upsert({
+            where: { medicineId: id },
+            update: data,
+            create: { medicineId: id, ...data },
+          })
+        }
+      })
+      return NextResponse.json({ marked: ids.length, markedAt })
+    }
+
+    // --- writeoff / return_supplier: a real return note ---
 
     // Aggregate duplicate lines per medicine so validation sees the TOTAL qty.
     const qtyById = new Map<string, number>()

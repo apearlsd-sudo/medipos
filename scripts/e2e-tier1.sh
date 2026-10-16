@@ -173,6 +173,11 @@ done
 [ -n "$FOUND" ] && ok "branch sale replicated to HQ as T1:$BINV (≤${i}s)" || bad "branch sale never reached HQ"
 [ "$i" -le 15 ] && ok "replication arrived within 15s (live-link fast path)" || bad "replication slow (${i}s)"
 
+# Restore the pushed price so repeated runs don't drift the fixture past the
+# affordability guard (Kofi credit limit 200 → price×2 ≤ 190) — same hermetic
+# idea as the Kofi loyalty-points reset at the top of this suite.
+curl -s -b $H -X PUT "http://localhost:3000/api/medicines/$MEDID" -H 'Content-Type: application/json' -d "{\"sellingPrice\": $MEDP}" -o /dev/null
+
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
 [ "$FAIL" = "0" ]

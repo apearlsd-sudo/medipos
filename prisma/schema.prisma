@@ -175,6 +175,7 @@ model Medicine {
   purchaseItems        PurchaseItem[]
   logs                 InventoryLog[]
   returnItems          StockReturnItem[]
+  disposalDecision     DisposalDecision?
   branchPrices         BranchPrice[]
   quotationItems       QuotationItem[]
   createdAt            DateTime       @default(now())
@@ -491,6 +492,25 @@ model StockReturnItem {
   action      String      @default("writeoff") // writeoff | return_supplier | quarantine
   fromQuarantine Boolean  @default(false) // qty came out of Medicine.quarantineQty
   daysBeforeExpiry Int? // pre-expiry desk snapshot: days between disposal and expiry
+}
+
+// Pre-expiry disposal desk decisions — the triage layer between the desk's
+// candidates and its two disposal actions. A 'keep' marker flags fast-moving
+// near-expiry stock as deliberately sold through: no stock moves, nothing hits
+// the P&L, the batch stays fully sellable — it just stops looking like an
+// undecided problem every time the desk is reviewed. Cleared automatically
+// when a real disposal (write-off / supplier return) supersedes it.
+model DisposalDecision {
+  id                 String   @id @default(cuid())
+  medicineId         String   @unique
+  medicine           Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  action             String   @default("keep") // keep — selling through (future: other dispositions)
+  note               String?  // why the batch is kept — e.g. "fast mover, sells out in ~2 weeks"
+  daysLeftAtDecision Int?     // days-to-expiry snapshot when the decision was made
+  stockQtyAtDecision Int?     // on-hand snapshot when the decision was made
+  decidedByName      String?  // who made the call (display snapshot)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }
 
 model Shift {

@@ -174,6 +174,13 @@ export async function createReturnNote(input: CreateReturnNoteInput): Promise<Cr
       }
     }
 
+    // A real disposal supersedes any "keep — selling through" decision the
+    // pre-expiry desk recorded for these products — clear the markers in the
+    // same transaction so a disposed batch never lingers as deliberately kept.
+    await tx.disposalDecision.deleteMany({
+      where: { medicineId: { in: items.map((i) => i.medicineId) } },
+    })
+
     // Auto-book the destroyed value as an "Inventory Write-offs" expense so
     // the loss hits the P&L (owner digest netPosition, expenses report).
     let bookedExpense: BookedExpense | null = null

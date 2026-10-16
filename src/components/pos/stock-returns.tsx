@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { fmtDate, fmtMoney, fmtRelative } from '@/lib/format'
-import { ArchiveX, CalendarClock, Handshake, Plus, RotateCcw, ShieldAlert, Trash2 } from 'lucide-react'
+import { ArchiveX, CalendarClock, CircleCheck, Handshake, Plus, RotateCcw, ShieldAlert, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -21,7 +21,8 @@ interface MedOption { id: string; name: string; sku: string; unit: string; stock
 interface SupplierOption { id: string; name: string }
 interface ReturnRow { id: string; returnNo: string; type: string; reason: string; status: string; source?: string | null; supplier: string | null; totalValue: number; units: number; createdByName: string | null; createdAt: string }
 interface QuarantineRow { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string | null; daysLeft: number | null; quarantineQty: number; stockQty: number; unitCost: number; value: number }
-interface PreExpiryCandidate { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string; daysLeft: number; stockQty: number; costPrice: number; valueAtRisk: number; supplierId: string | null; supplierName: string | null }
+interface PreExpiryKeepInfo { note: string | null; daysLeftAtDecision: number | null; stockQtyAtDecision: number | null; decidedByName: string | null; markedAt: string }
+interface PreExpiryCandidate { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string; daysLeft: number; stockQty: number; costPrice: number; valueAtRisk: number; supplierId: string | null; supplierName: string | null; keep: PreExpiryKeepInfo | null }
 
 interface DraftLine { medicineId: string; qty: string; fromQuarantine: boolean }
 
@@ -56,6 +57,11 @@ export function ReturnsAndQuarantine() {
   const [peSupplier, setPeSupplier] = useState('none')
   const [peNote, setPeNote] = useState('')
   const [peSaving, setPeSaving] = useState(false)
+  const [peShow, setPeShow] = useState<'all' | 'open' | 'kept'>('all')
+  const [keepOpen, setKeepOpen] = useState(false)
+  const [keepTargets, setKeepTargets] = useState<PreExpiryCandidate[]>([])
+  const [keepNote, setKeepNote] = useState('')
+  const [keepSaving, setKeepSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -149,14 +155,18 @@ export function ReturnsAndQuarantine() {
   }
 
   // --- Pre-expiry disposal desk helpers ---
+  const visibleCands = cands.filter((c) => (peShow === 'all' ? true : peShow === 'kept' ? !!c.keep : !c.keep))
   const selectedIds = Object.keys(peSel).filter((id) => Number(peSel[id]) > 0 && cands.some((c) => c.id === id))
   const selectedRows = selectedIds.map((id) => cands.find((c) => c.id === id)!).filter(Boolean)
   const selUnits = selectedRows.reduce((s, c) => s + (Number(peSel[c.id]) || 0), 0)
   const selValue = selectedRows.reduce((s, c) => s + (Number(peSel[c.id]) || 0) * c.costPrice, 0)
-  const allSelected = cands.length > 0 && cands.every((c) => Number(peSel[c.id]) > 0)
+  const allSelected = visibleCands.length > 0 && visibleCands.every((c) => Number(peSel[c.id]) > 0)
   const selSuppliers = [...new Set(selectedRows.map((c) => c.supplierId).filter(Boolean))]
   const candUnits = cands.reduce((s, c) => s + c.stockQty, 0)
   const candValue = cands.reduce((s, c) => s + c.valueAtRisk, 0)
+  const keptRows = cands.filter((c) => c.keep)
+  const keptUnits = keptRows.reduce((s, c) => s + c.stockQty, 0)
+  const keptValue = keptRows.reduce((s, c) => s + c.valueAtRisk, 0)
 
   const toggleRow = (c: PreExpiryCandidate, on: boolean) => {
     setPeSel((prev) => {
@@ -169,7 +179,7 @@ export function ReturnsAndQuarantine() {
   const toggleAll = () => {
     if (allSelected) { setPeSel({}); return }
     const next: Record<string, string> = {}
-    for (const c of cands) next[c.id] = String(c.stockQty)
+    for (const c of visibleCands) next[c.id] = String(c.stockQty)
     setPeSel(next)
   }
 
@@ -180,6 +190,47 @@ export function ReturnsAndQuarantine() {
     // Preselect the supplier when the whole selection comes from one source.
     setPeSupplier(action === 'return_supplier' && selSuppliers.length === 1 ? (selSuppliers[0] as string) : 'none')
     setPeOpen(true)
+  }
+
+  const openKeep = (targets: PreExpiryCandidate[]) => {
+    if (targets.length === 0) { toast({ title: 'Select at least one product first', variant: 'destructive' }); return }
+    setKeepTargets(targets)
+    setKeepNote(targets.length === 1 && targets[0].keep ? (targets[0].keep.note ?? '') : '')
+    setKeepOpen(true)
+  }
+
+  const submitKeep = async () => {
+    if (keepTargets.length === 0) { toast({ title: 'Nothing to mark', variant: 'destructive' }); return }
+    setKeepSaving(true)
+    try {
+      const res = await fetch('/api/disposals/pre-expiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'keep', days: Number(peDays), items: keepTargets.map((t) => ({ medicineId: t.id })), note: keepNote || undefined }),
+      })
+      const json = await res.json()
+      if (!res.ok) { toast({ title: 'Could not mark the selection', description: json.error, variant: 'destructive' }); return }
+      toast({ title: `Marked keep — selling through (${json.marked} product(s))`, description: 'No stock moved and nothing hit the P&L — the desk now shows them as deliberate fast movers.' })
+      setKeepOpen(false)
+      setKeepTargets([])
+      setPeSel({})
+      loadCandidates(peDays)
+    } finally {
+      setKeepSaving(false)
+    }
+  }
+
+  const unmarkKeep = async (ids: string[]) => {
+    if (ids.length === 0) return
+    const res = await fetch('/api/disposals/pre-expiry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'unmark_keep', days: Number(peDays), items: ids.map((id) => ({ medicineId: id })) }),
+    })
+    const json = await res.json()
+    if (!res.ok) { toast({ title: 'Could not remove the marker', description: json.error, variant: 'destructive' }); return }
+    toast({ title: `Keep marker removed (${json.unmarked})`, description: 'The batch is back on the desk as an open decision.' })
+    loadCandidates(peDays)
   }
 
   const submitDisposal = async () => {
@@ -288,8 +339,16 @@ export function ReturnsAndQuarantine() {
         <Card>
           <div className="flex flex-wrap items-center gap-2 border-b p-3 text-sm font-medium">
             <CalendarClock className="h-4 w-4 text-teal-600" />
-            <span>Pre-expiry disposal desk — catch stock <em>before</em> the expiry date: return it to the supplier for credit, or write it off early</span>
+            <span>Pre-expiry disposal desk — catch stock <em>before</em> the expiry date: return it to the supplier for credit, write it off early, or mark fast movers as <em>keep — selling through</em></span>
             <div className="ml-auto flex items-center gap-2">
+              <Select value={peShow} onValueChange={(v) => setPeShow(v as 'all' | 'open' | 'kept')}>
+                <SelectTrigger className="h-8 w-[168px] rounded-full text-xs" aria-label="Show candidates"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All candidates</SelectItem>
+                  <SelectItem value="open">Needs a decision</SelectItem>
+                  <SelectItem value="kept">Marked keep</SelectItem>
+                </SelectContent>
+              </Select>
               <Select value={peDays} onValueChange={setPeDays}>
                 <SelectTrigger className="h-8 w-[170px] rounded-full text-xs" aria-label="Expiry window"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -304,6 +363,11 @@ export function ReturnsAndQuarantine() {
               <span><strong className="text-foreground tabular-nums">{cands.length}</strong> product(s)</span>
               <span><strong className="text-foreground tabular-nums">{candUnits}</strong> {cands[0]?.unit ?? 'unit'}(s) on hand</span>
               <span><strong className="text-foreground tabular-nums">{fmtMoney(candValue)}</strong> cost value at risk</span>
+              {keptRows.length > 0 && (
+                <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 font-semibold text-emerald-700 tabular-nums dark:bg-emerald-500/15 dark:text-emerald-300">
+                  {keptRows.length} marked keep · {keptUnits} unit(s) · {fmtMoney(keptValue)}
+                </span>
+              )}
               {selectedIds.length > 0 && (
                 <span className="rounded-full bg-teal-600 px-2.5 py-0.5 font-semibold text-white tabular-nums">
                   {selectedIds.length} selected · {selUnits} unit(s) · {fmtMoney(selValue)}
@@ -313,8 +377,8 @@ export function ReturnsAndQuarantine() {
           )}
           {peLoading ? (
             <p className="py-10 text-center text-sm text-muted-foreground">Scanning the shelves…</p>
-          ) : cands.length === 0 ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Nothing expiring within {peDays} days — the desk is clear. Raise the window to look further ahead.</p>
+          ) : visibleCands.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">{peShow === 'kept' ? 'No keep markers yet — mark fast movers with the Keep button so nobody disposes them by mistake.' : peShow === 'open' ? `Every candidate within ${peDays} days already has a decision. The desk is fully triaged.` : `Nothing expiring within ${peDays} days — the desk is clear. Raise the window to look further ahead.`}</p>
           ) : (
             <Table>
               <TableHeader>
@@ -330,10 +394,11 @@ export function ReturnsAndQuarantine() {
                   <TableHead className="text-right">Value at risk</TableHead>
                   <TableHead className="hidden md:table-cell">Dispose qty</TableHead>
                   <TableHead className="hidden lg:table-cell">Supplier</TableHead>
+                  <TableHead className="text-center">Decision</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {cands.map((c) => (
+                {visibleCands.map((c) => (
                   <TableRow key={c.id} className={peSel[c.id] ? 'bg-teal-50/50 dark:bg-teal-500/5' : undefined}>
                     <TableCell>
                       <Checkbox checked={Number(peSel[c.id]) > 0} onCheckedChange={(v) => toggleRow(c, v === true)} aria-label={`Select ${c.name}`} />
@@ -341,6 +406,11 @@ export function ReturnsAndQuarantine() {
                     <TableCell className="max-w-56">
                       <p className="truncate font-medium">{c.name}</p>
                       <p className="text-xs text-muted-foreground">{c.sku}</p>
+                      {c.keep && (
+                        <p className="mt-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400" title={c.keep.note ?? undefined}>
+                          Keep — selling through{c.keep.daysLeftAtDecision !== null ? ` · marked at ${c.keep.daysLeftAtDecision} d left` : ''}
+                        </p>
+                      )}
                     </TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{c.batchNumber ?? '—'}</TableCell>
                     <TableCell>
@@ -363,6 +433,17 @@ export function ReturnsAndQuarantine() {
                       />
                     </TableCell>
                     <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{c.supplierName ?? '—'}</TableCell>
+                    <TableCell className="text-center">
+                      {c.keep ? (
+                        <Button variant="ghost" size="sm" className="h-7 rounded-full px-2 text-xs text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-500/10" onClick={() => unmarkKeep([c.id])} aria-label={`Unmark keep for ${c.name}`}>
+                          <Undo2 className="h-3.5 w-3.5" /><span className="hidden sm:inline">Unmark</span>
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" className="h-7 rounded-full px-2 text-xs text-teal-600 hover:bg-teal-50 dark:text-teal-300 dark:hover:bg-teal-500/10" onClick={() => openKeep([c])} aria-label={`Mark keep — selling through for ${c.name}`}>
+                          <CircleCheck className="h-3.5 w-3.5" /><span className="hidden sm:inline">Keep</span>
+                        </Button>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -376,6 +457,9 @@ export function ReturnsAndQuarantine() {
             </Button>
             <Button variant="outline" className="rounded-full border-teal-300 text-teal-700 hover:bg-teal-50 dark:border-teal-500/40 dark:text-teal-300 dark:hover:bg-teal-500/10" onClick={() => openDisposal('return_supplier')} disabled={selectedIds.length === 0}>
               <Handshake className="h-4 w-4" /> Return to supplier
+            </Button>
+            <Button variant="outline" className="rounded-full border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-500/40 dark:text-emerald-300 dark:hover:bg-emerald-500/10" onClick={() => openKeep(selectedRows)} disabled={selectedIds.length === 0}>
+              <CircleCheck className="h-4 w-4" /> Keep — selling through
             </Button>
           </div>
         )}
@@ -532,6 +616,41 @@ export function ReturnsAndQuarantine() {
               <Button variant="outline" onClick={() => setPeOpen(false)}>Close</Button>
               <Button onClick={submitDisposal} disabled={peSaving} className={peAction === 'writeoff' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-600 hover:bg-teal-700'}>
                 {peSaving ? 'Recording…' : peAction === 'writeoff' ? `Destroy ${selUnits} unit(s)` : 'Create return note'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Keep — selling through dialog */}
+      <Dialog open={keepOpen} onOpenChange={setKeepOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CircleCheck className="h-4 w-4 text-emerald-600" /> Keep — selling through</DialogTitle>
+            <DialogDescription>
+              {keepTargets.length} product(s) · {keepTargets.reduce((s, c) => s + c.stockQty, 0)} unit(s) · {fmtMoney(keepTargets.reduce((s, c) => s + c.valueAtRisk, 0))} cost value stays on the shelf.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="max-h-44 rounded-lg border bg-muted/30 p-2 text-sm">
+              <ScrollArea className="max-h-40">
+                <ul className="space-y-1">
+                  {keepTargets.map((c) => (
+                    <li key={c.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{c.name} <span className="text-xs text-muted-foreground">· exp {fmtDate(c.expiryDate)} ({c.daysLeft} d left)</span></span>
+                      <span className="shrink-0 tabular-nums">{c.stockQty} × {fmtMoney(c.costPrice)} = <strong>{fmtMoney(c.valueAtRisk)}</strong></span>
+                    </li>
+                  ))}
+                </ul>
+              </ScrollArea>
+            </div>
+            <p className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5 text-xs text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300">
+              No stock moves and nothing hits the P&amp;L. These batches are flagged as deliberate fast movers being sold down before expiry — so nobody write-offs or returns them by mistake. Unmark any time the velocity changes; a real disposal clears the marker automatically.
+            </p>
+            <Textarea rows={2} value={keepNote} onChange={(e) => setKeepNote(e.target.value)} placeholder="Why keep? (optional) — e.g. fast mover, sells out within 2 weeks" />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setKeepOpen(false)}>Close</Button>
+              <Button onClick={submitKeep} disabled={keepSaving} className="bg-emerald-600 hover:bg-emerald-700">
+                {keepSaving ? 'Marking…' : `Mark ${keepTargets.length} product(s)`}
               </Button>
             </div>
           </div>
