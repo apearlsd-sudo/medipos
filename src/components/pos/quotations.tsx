@@ -11,6 +11,7 @@ import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader, StatCard, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { useUser } from '@/components/pos/user-context'
 import { currencyCode, fmtDate, fmtDateTime, fmtMoney } from '@/lib/format'
 import { CheckCircle2, FileText, Percent, Plus, Printer, Search, Send, ShoppingBag, Trash2, XCircle } from 'lucide-react'
@@ -106,6 +107,8 @@ export function Quotations() {
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState('all')
   const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   // builder state
   const [builderOpen, setBuilderOpen] = useState(false)
@@ -135,12 +138,14 @@ export function Quotations() {
       const params = new URLSearchParams()
       if (status !== 'all') params.set('status', status)
       if (search.trim()) params.set('search', search.trim())
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
       const res = await fetch(`/api/quotations?${params.toString()}`, { cache: 'no-store' })
       setData(await res.json())
     } finally {
       setLoading(false)
     }
-  }, [status, search])
+  }, [status, search, dateFrom, dateTo])
 
   useEffect(() => {
     const t = setTimeout(load, 250)
@@ -287,6 +292,7 @@ export function Quotations() {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
+          <DateRangeFilter label="Quote" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
         </div>
 
         {loading ? (

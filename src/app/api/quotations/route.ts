@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth'
 import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
 import { recordSyncOp } from '@/lib/sync'
+import { parseDateRange } from '@/lib/date-filter'
 
 const DAY = 24 * 60 * 60 * 1000
 const OPEN_STATUSES = ['draft', 'sent']
@@ -11,7 +12,9 @@ const OPEN_STATUSES = ['draft', 'sent']
 /**
  * GET /api/quotations — list quotes with filters.
  * Lazily expires open quotes whose validUntil has passed.
- * Query: status, search, days, branchId (super admin scoping).
+ * Query: status, search, days, from, to, branchId (super admin scoping).
+ * An explicit from/to picker range (YYYY-MM-DD, inclusive) overrides the
+ * rolling days window.
  */
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'quotations', 'view')
@@ -30,7 +33,9 @@ export async function GET(req: NextRequest) {
     })
 
     const since = new Date(Date.now() - days * DAY)
-    const where: Record<string, unknown> = { createdAt: { gte: since } }
+    const pickerRange = parseDateRange(searchParams, 'createdAt')
+    const where: Record<string, unknown> = {}
+    where.createdAt = pickerRange?.createdAt ?? { gte: since }
     if (scope.branchId) where.branchId = scope.branchId
     if (status && status !== 'all') where.status = status
     if (search) {

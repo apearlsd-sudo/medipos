@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
+import { parseDateRange } from '@/lib/date-filter'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'purchases', 'view')
@@ -18,6 +19,9 @@ export async function GET(req: NextRequest) {
       where.OR = [{ referenceNo: { contains: search } }, { supplier: { is: { name: { contains: search } } } }]
     }
     if (status && status !== 'all') where.status = status
+    // Date picker filter on the purchase event date (purchaseDate, inclusive bounds).
+    const dateRange = parseDateRange(searchParams, 'purchaseDate')
+    if (dateRange) Object.assign(where, dateRange)
 
     const purchases = await db.purchase.findMany({
       where,

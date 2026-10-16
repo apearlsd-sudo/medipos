@@ -5,13 +5,16 @@ import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { recordSyncOp } from '@/lib/sync'
 import { isMomoProvider } from '@/lib/pos-finance'
 import { nextDocNo } from '@/lib/doc-no'
+import { parseDateRange } from '@/lib/date-filter'
 
 const DAY = 24 * 60 * 60 * 1000
 const METHODS = ['cash', 'momo', 'card', 'bank']
 
 /**
  * GET /api/expenses — expense ledger with filters + period summary.
- * Query: days, categoryId, status, search, branchId (super admin scoping).
+ * Query: days, from, to, categoryId, status, search, branchId (super admin scoping).
+ * An explicit from/to picker range (YYYY-MM-DD, inclusive) overrides the
+ * rolling days window; without one the ledger defaults to the last N days.
  */
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'expenses', 'view')
@@ -25,7 +28,9 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search')?.trim()
     const scope = resolveBranchScope(gate.user, searchParams)
 
-    const where: Record<string, unknown> = { createdAt: { gte: since } }
+    const where: Record<string, unknown> = {}
+    const pickerRange = parseDateRange(searchParams, 'createdAt')
+    where.createdAt = pickerRange?.createdAt ?? { gte: since }
     if (scope.branchId) where.branchId = scope.branchId
     if (categoryId && categoryId !== 'all') where.categoryId = categoryId
     if (status && status !== 'all') where.status = status

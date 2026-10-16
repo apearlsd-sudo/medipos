@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { can, requireUser } from '@/lib/auth'
 import { nextShiftNo, computeShiftSummary } from '@/lib/shifts'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
+import { parseDateRange } from '@/lib/date-filter'
 
 /** GET /api/shifts — role-scoped list.
  *  ONLY the Super Admin sees all staff shifts (and may narrow with ?userId=<id>).
@@ -41,6 +42,8 @@ export async function GET(req: NextRequest) {
     if (search) {
       where.OR = [{ shiftNo: { contains: search } }, { userName: { contains: search } }]
     }
+    const dateRange = parseDateRange(searchParams, 'startedAt')
+    if (dateRange) Object.assign(where, dateRange)
 
     const shifts = await db.shift.findMany({
       where,

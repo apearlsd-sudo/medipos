@@ -5,6 +5,7 @@ import { resolveBranchScope, defaultBranchId } from '@/lib/branches'
 import { logAudit } from '@/lib/audit'
 import { nextTransferReference } from '@/lib/stock-transfer'
 import { recordSyncOp } from '@/lib/sync'
+import { parseDateRange } from '@/lib/date-filter'
 
 // ---------------------------------------------------------------------------
 // GET /api/transfers — list transfers touching the scoped branch (or all).
@@ -22,6 +23,8 @@ export async function GET(req: NextRequest) {
       where.OR = [{ fromBranchId: scope.branchId }, { toBranchId: scope.branchId }]
     }
     if (status && status !== 'all') where.status = status
+    const dateRange = parseDateRange(searchParams, 'createdAt')
+    if (dateRange) Object.assign(where, dateRange)
 
     const transfers = await db.stockTransfer.findMany({
       where,

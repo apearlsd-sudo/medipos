@@ -5,6 +5,7 @@ import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { recordSyncOp } from '@/lib/sync'
 import { emitWriteOffExpenseSync } from '@/lib/writeoff-expense'
 import { createReturnNote, ReturnNoteError, RETURN_REASONS } from '@/lib/stock-returns'
+import { parseDateRange } from '@/lib/date-filter'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,8 +22,9 @@ export async function GET(req: NextRequest) {
   if (gate.response) return gate.response
   try {
     const scope = resolveBranchScope(gate.user, new URL(req.url).searchParams)
+    const dateRange = parseDateRange(new URL(req.url).searchParams, 'createdAt')
     const returns = await db.stockReturn.findMany({
-      where: scope.branchId ? { branchId: scope.branchId } : {},
+      where: { ...(scope.branchId ? { branchId: scope.branchId } : {}), ...(dateRange ?? {}) },
       include: { supplier: { select: { name: true } }, items: true, _count: { select: { items: true } } },
       orderBy: { createdAt: 'desc' },
       take: 100,

@@ -12,6 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { fmtDate, fmtMoney } from '@/lib/format'
 import { ClipboardList, PackagePlus, Plus, Search, Trash2, Truck, Sparkles, Wand2 } from 'lucide-react'
 import { useStoreSettings } from '@/lib/store-settings'
@@ -45,6 +46,8 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -229,6 +232,8 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
     try {
       const params = new URLSearchParams({ status: statusFilter })
       if (search.trim()) params.set('search', search.trim())
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
       const [pRes, sRes] = await Promise.all([
         fetch(`/api/purchases?${params}`, { cache: 'no-store' }),
         fetch('/api/suppliers', { cache: 'no-store' }),
@@ -239,7 +244,7 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
     } finally {
       setLoading(false)
     }
-  }, [search, statusFilter])
+  }, [search, statusFilter, dateFrom, dateTo])
 
   useEffect(() => {
     const t = setTimeout(load, 250)
@@ -365,6 +370,7 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
               <SelectItem value="pending">Pending</SelectItem>
             </SelectContent>
           </Select>
+          <DateRangeFilter label="Purchase" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
         </div>
 
         {loading ? (

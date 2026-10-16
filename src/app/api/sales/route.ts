@@ -9,6 +9,7 @@ import { recordSyncOp } from '@/lib/sync'
 import { planPackSale } from '@/lib/packs'
 import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider, resolveTier, isBirthdayInWindow, roundCashFor, parseCashRoundingMode } from '@/lib/pos-finance'
 import { sumComponentPcts, taxComponents, freezeComponentsJson } from '@/lib/tax-components'
+import { parseDateRange } from '@/lib/date-filter'
 
 export async function GET(req: NextRequest) {
   const gate = await requireUser(req)
@@ -47,6 +48,11 @@ export async function GET(req: NextRequest) {
     if (search) {
       and.push({ OR: [{ invoiceNo: { contains: search } }, { customer: { is: { name: { contains: search } } } }, { cashierName: { contains: search } }] })
     }
+    // Date picker filter: from/to (YYYY-MM-DD, inclusive) on the sale event.
+    // Pushed into AND so it intersects with (never widens) a restricted
+    // viewer's forced "own sales today" createdAt clause.
+    const dateRange = parseDateRange(searchParams, 'createdAt')
+    if (dateRange) and.push(dateRange)
     if (and.length) where.AND = and
     if (status && status !== 'all') where.paymentStatus = status
     if (method && method !== 'all') where.paymentMethod = method

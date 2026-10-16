@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { fmtDate, fmtMoney, fmtRelative } from '@/lib/format'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { ArchiveX, CalendarClock, CircleCheck, Handshake, Plus, RotateCcw, ShieldAlert, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
@@ -58,6 +59,8 @@ export function ReturnsAndQuarantine() {
   const [peNote, setPeNote] = useState('')
   const [peSaving, setPeSaving] = useState(false)
   const [peShow, setPeShow] = useState<'all' | 'open' | 'kept'>('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [keepOpen, setKeepOpen] = useState(false)
   const [keepTargets, setKeepTargets] = useState<PreExpiryCandidate[]>([])
   const [keepNote, setKeepNote] = useState('')
@@ -66,10 +69,13 @@ export function ReturnsAndQuarantine() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
+      const p = new URLSearchParams()
+      if (dateFrom) p.set('from', dateFrom)
+      if (dateTo) p.set('to', dateTo)
       const [mRes, sRes, rRes, qRes] = await Promise.all([
         fetch('/api/medicines?status=active', { cache: 'no-store' }),
         fetch('/api/suppliers', { cache: 'no-store' }),
-        fetch('/api/stock-returns', { cache: 'no-store' }),
+        fetch(`/api/stock-returns${p.toString() ? `?${p.toString()}` : ''}`, { cache: 'no-store' }),
         fetch('/api/quarantine', { cache: 'no-store' }),
       ])
       setMeds((await mRes.json()).medicines ?? [])
@@ -79,7 +85,7 @@ export function ReturnsAndQuarantine() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [dateFrom, dateTo])
 
   const loadCandidates = useCallback(async (days: string) => {
     setPeLoading(true)
@@ -289,7 +295,8 @@ export function ReturnsAndQuarantine() {
       </TabsList>
 
       <TabsContent value="notes" className="mt-3 space-y-3">
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <DateRangeFilter label="Note" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
           <Button onClick={openNote} className="rounded-full bg-teal-600 hover:bg-teal-700"><Plus className="h-4 w-4" /> New Write-off / Return Note</Button>
         </div>
         {lastNote && (

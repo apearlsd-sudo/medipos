@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, ExpiryBadge, PageHeader, StockBadge, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { InventorySyncButtons } from '@/components/pos/inventory-sync'
 import { ReturnsAndQuarantine } from '@/components/pos/stock-returns'
 import { fmtDate, fmtRelative } from '@/lib/format'
@@ -61,6 +62,8 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [logFilter, setLogFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   const [medId, setMedId] = useState('')
   const [adjustType, setAdjustType] = useState('add')
@@ -70,9 +73,13 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
   const load = useCallback(async () => {
     setLoading(true)
     try {
+      const p = new URLSearchParams()
+      if (logFilter !== 'all') p.set('type', logFilter)
+      if (dateFrom) p.set('from', dateFrom)
+      if (dateTo) p.set('to', dateTo)
       const [mRes, lRes] = await Promise.all([
         fetch('/api/medicines?status=active', { cache: 'no-store' }),
-        fetch(`/api/inventory${logFilter !== 'all' ? `?type=${logFilter}` : ''}`, { cache: 'no-store' }),
+        fetch(`/api/inventory${p.toString() ? `?${p.toString()}` : ''}`, { cache: 'no-store' }),
       ])
       const [mJson, lJson] = await Promise.all([mRes.json(), lRes.json()])
       setMeds(mJson.medicines ?? [])
@@ -80,7 +87,7 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
     } finally {
       setLoading(false)
     }
-  }, [logFilter])
+  }, [logFilter, dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
 
@@ -195,21 +202,24 @@ export function Inventory({ onGotoPurchases }: { onGotoPurchases?: () => void })
 
         <TabsContent value="logs" className="mt-3">
           <Card>
-            <div className="flex items-center justify-between gap-2 border-b p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b p-3">
               <div className="flex items-center gap-2 text-sm font-medium"><History className="h-4 w-4 text-muted-foreground" /> Inventory Movement Logs</div>
-              <Select value={logFilter} onValueChange={setLogFilter}>
-                <SelectTrigger className="w-40 rounded-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="sale_out">Sale Out</SelectItem>
-                  <SelectItem value="purchase_in">Purchase In</SelectItem>
-                  <SelectItem value="adjustment">Adjustment</SelectItem>
-                  <SelectItem value="return">Return</SelectItem>
-                  <SelectItem value="writeoff">Write-off</SelectItem>
-                  <SelectItem value="quarantine_in">Quarantine In</SelectItem>
-                  <SelectItem value="quarantine_out">Quarantine Out</SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex flex-wrap items-center gap-2">
+                <DateRangeFilter label="Movement" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+                <Select value={logFilter} onValueChange={setLogFilter}>
+                  <SelectTrigger className="w-40 rounded-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="sale_out">Sale Out</SelectItem>
+                    <SelectItem value="purchase_in">Purchase In</SelectItem>
+                    <SelectItem value="adjustment">Adjustment</SelectItem>
+                    <SelectItem value="return">Return</SelectItem>
+                    <SelectItem value="writeoff">Write-off</SelectItem>
+                    <SelectItem value="quarantine_in">Quarantine In</SelectItem>
+                    <SelectItem value="quarantine_out">Quarantine Out</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <ScrollArea className="max-h-[520px]">
               <Table>

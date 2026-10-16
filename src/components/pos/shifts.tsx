@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { StatusBadge } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { CashMovementDialog, EndShiftDialog, ShiftDetailDialog, StartShiftDialog } from '@/components/pos/shift-dialogs'
 import { ShiftReportReceipt, type ShiftRecord, type ShiftSummaryData } from '@/components/pos/shift-report'
@@ -75,6 +76,8 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
   const [search, setSearch] = useState('')
   const [staff, setStaff] = useState<{ id: string; name: string; username: string; role: string }[]>([])
   const [userFilter, setUserFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [startOpen, setStartOpen] = useState(false)
   const [endOpen, setEndOpen] = useState(false)
   const [movementOpen, setMovementOpen] = useState(false)
@@ -83,10 +86,14 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
 
   const load = useCallback(async () => {
     try {
-      const qs = canSeeAll && userFilter !== 'all' ? `?userId=${encodeURIComponent(userFilter)}` : ''
+      const p = new URLSearchParams()
+      if (canSeeAll && userFilter !== 'all') p.set('userId', userFilter)
+      if (dateFrom) p.set('from', dateFrom)
+      if (dateTo) p.set('to', dateTo)
+      const qs = p.toString()
       const [curRes, histRes] = await Promise.all([
         fetch('/api/shifts/current', { cache: 'no-store' }),
-        fetch(`/api/shifts${qs}`, { cache: 'no-store' }),
+        fetch(`/api/shifts${qs ? `?${qs}` : ''}`, { cache: 'no-store' }),
       ])
       const curJson = await curRes.json()
       const histJson = await histRes.json()
@@ -95,7 +102,7 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
     } finally {
       setLoading(false)
     }
-  }, [canSeeAll, userFilter])
+  }, [canSeeAll, userFilter, dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
 
@@ -338,6 +345,7 @@ export function Shifts({ storeSettings }: { storeSettings?: StoreSettingsMap | n
                 <SelectItem value="closed">Closed</SelectItem>
               </SelectContent>
             </Select>
+            <DateRangeFilter label="Shift" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
             <Button variant="outline" size="icon" className="rounded-full" onClick={load} aria-label="Refresh shifts">
               <RefreshCcw className="h-4 w-4" />
             </Button>

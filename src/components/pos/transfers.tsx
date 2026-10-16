@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { PageHeader, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { useUser } from '@/components/pos/user-context'
 import { fmtDateTime } from '@/lib/format'
 import {
@@ -77,6 +78,8 @@ export function Transfers() {
   const [transfers, setTransfers] = useState<TransferRow[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   // new-transfer dialog state
   const [createOpen, setCreateOpen] = useState(false)
@@ -96,13 +99,16 @@ export function Transfers() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/transfers?status=${statusFilter}`, { cache: 'no-store' })
+      const params = new URLSearchParams({ status: statusFilter })
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
+      const res = await fetch(`/api/transfers?${params.toString()}`, { cache: 'no-store' })
       const json = await res.json()
       setTransfers(json.transfers ?? [])
     } finally {
       setLoading(false)
     }
-  }, [statusFilter])
+  }, [statusFilter, dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
 
@@ -242,16 +248,19 @@ export function Transfers() {
         </Card>
       </div>
 
-      <div className="flex items-center justify-between gap-3">
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-44 rounded-full"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All statuses</SelectItem>
-            <SelectItem value="pending">Pending</SelectItem>
-            <SelectItem value="completed">Completed</SelectItem>
-            <SelectItem value="cancelled">Cancelled</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-44 rounded-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All statuses</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
+          <DateRangeFilter label="Transfer" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
+        </div>
         <p className="hidden text-xs text-muted-foreground sm:block">
           Stock is reserved at creation and moves when the destination branch receives the transfer.
         </p>

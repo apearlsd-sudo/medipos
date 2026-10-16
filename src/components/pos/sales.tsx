@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { AvatarInitials, PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { ThermalReceipt } from '@/components/pos/receipt'
 import { SendReceiptDialog } from '@/components/pos/send-receipt-dialog'
 import { Send } from 'lucide-react'
@@ -103,6 +104,8 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [methodFilter, setMethodFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [detail, setDetail] = useState<SaleDetail | null>(null)
   const [printSale, setPrintSale] = useState<SaleDetail | null>(null)
 
@@ -130,13 +133,15 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
     try {
       const params = new URLSearchParams({ status: statusFilter, method: methodFilter })
       if (search.trim()) params.set('search', search.trim())
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
       const res = await fetch(`/api/sales?${params}`, { cache: 'no-store' })
       const json = await res.json()
       setSales(json.sales ?? [])
     } finally {
       setLoading(false)
     }
-  }, [search, statusFilter, methodFilter])
+  }, [search, statusFilter, methodFilter, dateFrom, dateTo])
 
   useEffect(() => {
     const t = setTimeout(load, 250)
@@ -342,6 +347,7 @@ export function Sales({ onSalesChanged, storeSettings }: { onSalesChanged?: () =
               {PAYMENT_METHODS.map((pm) => <SelectItem key={pm.value} value={pm.value}>{pm.label}</SelectItem>)}
             </SelectContent>
           </Select>
+          <DateRangeFilter label="Sale" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
         </div>
 
         {loading ? (

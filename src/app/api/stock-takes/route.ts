@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { nextStockTakeNo, refreshTakeCounters, logTakeEvent } from '@/lib/stock-take'
 import { resolveBranchScope, branchIdForWrite } from '@/lib/branches'
+import { parseDateRange } from '@/lib/date-filter'
 
 /** GET /api/stock-takes?status=&search= — list count sessions with live aggregates. */
 export async function GET(req: NextRequest) {
@@ -24,6 +25,8 @@ export async function GET(req: NextRequest) {
         { startedByName: { contains: search } },
       ]
     }
+    const dateRange = parseDateRange(searchParams, 'startedAt')
+    if (dateRange) Object.assign(where, dateRange)
 
     const takes = await db.stockTake.findMany({
       where,

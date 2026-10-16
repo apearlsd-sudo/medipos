@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, PageHeader, StatusBadge, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { fmtDate } from '@/lib/format'
 import { CheckCircle2, FileHeart, MoreHorizontal, Pencil, Plus, RefreshCcw, Search, Trash2, XCircle } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -39,6 +40,8 @@ export function Prescriptions() {
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<Prescription | null>(null)
   const [form, setForm] = useState(empty)
@@ -49,13 +52,15 @@ export function Prescriptions() {
     try {
       const params = new URLSearchParams({ status: statusFilter })
       if (search.trim()) params.set('search', search.trim())
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
       const res = await fetch(`/api/prescriptions?${params}`, { cache: 'no-store' })
       const json = await res.json()
       setRxs(json.prescriptions ?? [])
     } finally {
       setLoading(false)
     }
-  }, [search, statusFilter])
+  }, [search, statusFilter, dateFrom, dateTo])
 
   useEffect(() => {
     const t = setTimeout(load, 250)
@@ -154,6 +159,7 @@ export function Prescriptions() {
               <SelectItem value="rejected">Rejected</SelectItem>
             </SelectContent>
           </Select>
+          <DateRangeFilter label="Prescription" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
         </div>
 
         {loading ? (

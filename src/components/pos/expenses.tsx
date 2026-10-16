@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { AvatarInitials, PageHeader, StatCard, StatusBadge, TableSkeleton } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { useUser } from '@/components/pos/user-context'
 import { fmtDate, fmtMoney, fmtCompact, paymentMethodLabel } from '@/lib/format'
 import { BadgePlus, CircleOff, PieChart, Search, Wallet } from 'lucide-react'
@@ -53,6 +54,8 @@ export function Expenses() {
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState('30')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [catFilter, setCatFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('completed')
   const [search, setSearch] = useState('')
@@ -69,6 +72,9 @@ export function Expenses() {
       if (catFilter !== 'all') params.set('categoryId', catFilter)
       if (statusFilter !== 'all') params.set('status', statusFilter)
       if (search.trim()) params.set('search', search.trim())
+      // Picker range wins over the rolling days window (server honours from/to first).
+      if (dateFrom) params.set('from', dateFrom)
+      if (dateTo) params.set('to', dateTo)
       const [expRes, catRes] = await Promise.all([
         fetch(`/api/expenses?${params.toString()}`, { cache: 'no-store' }),
         fetch('/api/expense-categories', { cache: 'no-store' }),
@@ -79,7 +85,7 @@ export function Expenses() {
     } finally {
       setLoading(false)
     }
-  }, [days, catFilter, statusFilter, search])
+  }, [days, catFilter, statusFilter, search, dateFrom, dateTo])
 
   useEffect(() => {
     const t = setTimeout(load, 250)
@@ -172,7 +178,7 @@ export function Expenses() {
 
       {/* Summary cards */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label={`Spent (last ${days} days)`} value={fmtMoney(data?.summary.total)} icon={<Wallet className="h-5 w-5" />} hint={`${data?.summary.count ?? 0} entries`} />
+        <StatCard label={dateFrom || dateTo ? 'Spent (selected period)' : `Spent (last ${days} days)`} value={fmtMoney(data?.summary.total)} icon={<Wallet className="h-5 w-5" />} hint={`${data?.summary.count ?? 0} entries`} />
         <StatCard label="Average expense" value={fmtMoney(data?.summary.avg)} icon={<PieChart className="h-5 w-5" />} hint="per entry in period" />
         <StatCard label="Top category" value={data?.categoryBreakdown[0]?.category ?? '—'} icon={<PieChart className="h-5 w-5" />} hint={data?.categoryBreakdown[0] ? fmtMoney(data.categoryBreakdown[0].total) : 'No spend yet'} />
         <StatCard label="Voided" value={fmtMoney(data?.summary.voidedTotal)} icon={<CircleOff className="h-5 w-5" />} hint="excluded from totals" />
@@ -184,7 +190,7 @@ export function Expenses() {
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search description, no., reference…" className="pl-9" aria-label="Search expenses" />
           </div>
-          <Select value={days} onValueChange={setDays}>
+          <Select value={days} onValueChange={setDays} disabled={dateFrom !== '' || dateTo !== ''}>
             <SelectTrigger className="w-36 rounded-full"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="7">Last 7 days</SelectItem>
@@ -193,6 +199,7 @@ export function Expenses() {
               <SelectItem value="365">Last year</SelectItem>
             </SelectContent>
           </Select>
+          <DateRangeFilter label="Expense" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
           <Select value={catFilter} onValueChange={setCatFilter}>
             <SelectTrigger className="w-44 rounded-full"><SelectValue /></SelectTrigger>
             <SelectContent>

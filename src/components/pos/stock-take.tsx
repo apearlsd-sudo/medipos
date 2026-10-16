@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PageHeader, StatusBadge } from '@/components/pos/shared'
+import { DateRangeFilter } from '@/components/pos/date-range-filter'
 import { VarianceBadge, VarianceValueBadge, signedQty } from '@/components/pos/stock-take-badges'
 import {
   CancelTakeDialog, CompleteTakeDialog, CountSheetDialog, PauseTakeDialog, StartTakeDialog, TakeDetailDialog,
@@ -38,6 +39,8 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
   // filters
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   // report
   const todayIso = new Date().toISOString().slice(0, 10)
@@ -62,13 +65,18 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/stock-takes', { cache: 'no-store' })
+      const p = new URLSearchParams()
+      if (search.trim()) p.set('search', search.trim())
+      if (statusFilter !== 'all') p.set('status', statusFilter)
+      if (dateFrom) p.set('from', dateFrom)
+      if (dateTo) p.set('to', dateTo)
+      const res = await fetch(`/api/stock-takes${p.toString() ? `?${p.toString()}` : ''}`, { cache: 'no-store' })
       const json = await res.json()
       setTakes(json.takes ?? [])
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [search, statusFilter, dateFrom, dateTo])
 
   useEffect(() => { load() }, [load])
 
@@ -412,6 +420,7 @@ export function StockTake({ storeSettings }: { storeSettings?: StoreSettingsMap 
                   <SelectItem value="cancelled">Cancelled</SelectItem>
                 </SelectContent>
               </Select>
+              <DateRangeFilter label="Count" from={dateFrom} to={dateTo} onFromChange={setDateFrom} onToChange={setDateTo} />
             </div>
           </div>
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { recordSyncOp } from '@/lib/sync'
+import { parseDateRange } from '@/lib/date-filter'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'inventory', 'view')
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url)
     const type = searchParams.get('type')
-    const where = type && type !== 'all' ? { type } : {}
+    const where = { ...(type && type !== 'all' ? { type } : {}), ...(parseDateRange(searchParams, 'createdAt') ?? {}) }
     const logs = await db.inventoryLog.findMany({
       where,
       include: { medicine: { select: { name: true, sku: true, unit: true } } },

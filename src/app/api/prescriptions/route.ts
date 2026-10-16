@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
+import { parseDateRange } from '@/lib/date-filter'
 
 export async function GET(req: NextRequest) {
   const gate = await requirePermission(req, 'prescriptions', 'view')
@@ -15,6 +16,8 @@ export async function GET(req: NextRequest) {
       where.OR = [{ code: { contains: search } }, { patientName: { contains: search } }, { doctorName: { contains: search } }]
     }
     if (status && status !== 'all') where.status = status
+    const dateRange = parseDateRange(searchParams, 'createdAt')
+    if (dateRange) Object.assign(where, dateRange)
 
     const prescriptions = await db.prescription.findMany({ where, orderBy: { createdAt: 'desc' } })
     return NextResponse.json({ prescriptions })
