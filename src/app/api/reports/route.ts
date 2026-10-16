@@ -264,14 +264,38 @@ export async function GET(req: NextRequest) {
       else if (dl <= 90) risk.d90 = +(risk.d90 + v).toFixed(2)
     }
 
-    // Write-offs & returns in the period (money that left the shelf)
+    // Write-offs & returns in the period (money that left the shelf).
+    // writeOffTotal counts DESTROYED value only (items with action=writeoff) —
+    // supplier-returned stock is recoverable and quarantined stock is still
+    // undecided, so neither weighs on the P&L.
     const writeOffs = await db.stockReturn.findMany({
       where: { createdAt: { gte: since }, status: 'completed', ...(scope.branchId ? { branchId: scope.branchId } : {}) },
       select: { returnNo: true, type: true, reason: true, totalValue: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: 50,
     })
-    const writeOffTotal = +writeOffs.reduce((s, w) => s + w.totalValue, 0).toFixed(2)
+    const destroyedAgg = await db.stockReturnItem.aggregate({
+      where: {
+        action: 'writeoff',
+        return: { createdAt: { gte: since }, status: 'completed', ...(scope.branchId ? { branchId: scope.branchId } : {}) },
+      },
+      _sum: { value: true },
+    })
+    // Quarantine-desk write-offs never pass through a return note — their
+    // canonical loss record IS the auto-booked expense (clientRef QUA-*).
+    const quarantineAgg = await db.expense.aggregate({
+      where: {
+        clientRef: { startsWith: 'writeoff:QUA-' },
+        status: 'completed',
+        createdAt: { gte: since },
+        ...(scope.branchId ? { branchId: scope.branchId } : {}),
+      },
+      _sum: { amount: true },
+    })
+    const writeOffTotal = +((destroyedAgg._sum.value ?? 0) + (quarantineAgg._sum.amount ?? 0)).toFixed(2)
+    // Gross profit is revenue − COGS; after destroyed stock the owner keeps
+    // less. This is the shrinkage-adjusted margin line for the overview card.
+    const netAfterWriteOffs = +(grossProfit - writeOffTotal).toFixed(2)
 
     // Purchase summary
     const purchases = await db.purchase.findMany({
@@ -376,6 +400,7 @@ export async function GET(req: NextRequest) {
       expiryRisk: risk,
       writeOffs,
       writeOffTotal,
+      netAfterWriteOffs,
       purchaseStats,
       branchBreakdown,
     })

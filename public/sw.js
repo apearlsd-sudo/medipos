@@ -19,7 +19,7 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-const CACHE_VERSION = 'medipos-v13' // v13: per-product batch prefixes — registry CRUD in Settings, Batch Prefix select + wand on Medicines, prefix-aware GRN auto-fill
+const CACHE_VERSION = 'medipos-v14' // v14: write-offs hit the P&L — auto "Inventory Write-offs" expenses, Net-after-Write-offs overview card, digest write-off watchlist
 const SHELL_ASSETS = [
   '/offline.html',
   '/manifest.webmanifest',

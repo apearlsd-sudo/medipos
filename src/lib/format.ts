@@ -175,6 +175,7 @@ export const PAYMENT_METHODS = [
 // still appear on historical sales — kept resolvable for filters and labels.
 const LEGACY_METHOD_LABELS: Record<string, string> = {
   mobile_money: 'Mobile Money',
+  writeoff: 'Write-off (auto)',
 }
 
 export const MOMO_PROVIDERS = [

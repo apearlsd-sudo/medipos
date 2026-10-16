@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { recordSyncOp } from '@/lib/sync'
+import { bookWriteOffExpense, emitWriteOffExpenseSync } from '@/lib/writeoff-expense'
 
 export const dynamic = 'force-dynamic'
 
@@ -108,6 +109,12 @@ export async function POST(req: NextRequest) {
         }
       })
       const totalValue = +lines.reduce((s, l) => s + l.value, 0).toFixed(2)
+      // Only destroyed units are a true loss — supplier-returned stock is
+      // recoverable (credit note) and quarantined stock is still undecided.
+      const destroyedValue = +lines
+        .filter((l) => l.action === 'writeoff')
+        .reduce((s, l) => s + l.value, 0)
+        .toFixed(2)
 
       const created = await tx.stockReturn.create({
         data: {
@@ -144,8 +151,35 @@ export async function POST(req: NextRequest) {
           })
         }
       }
-      return created
+
+      // Auto-book the destroyed value as an "Inventory Write-offs" expense so
+      // the loss hits the P&L (owner digest netPosition, expenses report).
+      let bookedExpense: { id: string; expenseNo: string; amount: number } | null = null
+      if (destroyedValue > 0) {
+        bookedExpense = await bookWriteOffExpense(tx, {
+          ref: returnNo,
+          amount: destroyedValue,
+          branchId,
+          description: `Stock write-off ${returnNo} (${reason})`,
+          userName: gate.user.name,
+          userId: gate.user.id,
+          note: body.note || null,
+        })
+      }
+      return { created, bookedExpense }
     })
+
+    if (note.bookedExpense) {
+      emitWriteOffExpenseSync({
+        ...note.bookedExpense,
+        branchId,
+        description: `Stock write-off ${returnNo} (${reason})`,
+        note: body.note || null,
+        recordedByName: gate.user.name,
+        reference: returnNo,
+        createdAt: new Date(),
+      })
+    }
 
     void recordSyncOp('stock.returned', returnNo, {
       returnNo,
@@ -155,7 +189,7 @@ export async function POST(req: NextRequest) {
       items: items.map((i) => ({ medicineId: i.medicineId, qty: Math.trunc(Number(i.qty)), action: i.action ?? (type === 'supplier_return' ? 'return_supplier' : 'writeoff'), fromQuarantine: i.fromQuarantine === true })),
     })
 
-    return NextResponse.json({ return: note }, { status: 201 })
+    return NextResponse.json({ return: note.created, expenseNo: note.bookedExpense?.expenseNo ?? null }, { status: 201 })
   } catch (e) {
     console.error('StockReturns POST error', e)
     return NextResponse.json({ error: 'Failed to create return note' }, { status: 500 })

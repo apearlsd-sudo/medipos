@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { recordSyncOp } from '@/lib/sync'
+import { findWriteOffExpense } from '@/lib/writeoff-expense'
 
 export const dynamic = 'force-dynamic'
 
@@ -30,8 +31,28 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           data: { medicineId: line.medicineId, type: 'restock', quantity: line.qty, reason: `Cancelled ${existing.returnNo}`, reference: existing.returnNo },
         })
       }
-      return tx.stockReturn.update({ where: { id }, data: { status: 'cancelled' }, include: { items: true } })
+      // Stock is back on the shelf — the auto-booked loss expense must not
+      // keep weighing on the P&L. Void it in the same atomic sweep.
+      const booked = await findWriteOffExpense(existing.returnNo)
+      let voidedExpenseNo: string | null = null
+      if (booked && booked.status !== 'voided') {
+        const v = await tx.expense.update({
+          where: { id: booked.id },
+          data: { status: 'voided', voidedById: gate.user.id, voidedByName: gate.user.name, voidedAt: new Date(), note: `Auto-voided: return note ${existing.returnNo} cancelled` },
+        })
+        voidedExpenseNo = v.expenseNo
+      }
+      const updated = await tx.stockReturn.update({ where: { id }, data: { status: 'cancelled' }, include: { items: true } })
+      return { updated, voidedExpense: voidedExpenseNo ? { id: booked!.id, expenseNo: voidedExpenseNo } : null }
     })
+
+    if (note.voidedExpense) {
+      void recordSyncOp('expense.voided', note.voidedExpense.expenseNo, {
+        id: note.voidedExpense.id,
+        voidedByName: gate.user.name,
+        at: new Date().toISOString(),
+      })
+    }
 
     void recordSyncOp('stock.returned', `${existing.returnNo}-cancel`, {
       returnNo: existing.returnNo,
@@ -39,7 +60,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       reason: 'cancelled',
       items: existing.items.map((i) => ({ medicineId: i.medicineId, qty: i.qty, action: i.action, fromQuarantine: i.fromQuarantine })),
     })
-    return NextResponse.json({ return: note })
+    return NextResponse.json({ return: note.updated, voidedExpenseNo: note.voidedExpense?.expenseNo ?? null })
   } catch (e) {
     console.error('StockReturns PUT error', e)
     return NextResponse.json({ error: 'Failed to cancel return note' }, { status: 500 })

@@ -17,7 +17,7 @@ import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, Check, ChevronDown, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingUp, Truck, Users, Wallet,
+  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, Check, ChevronDown, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingDown, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -38,6 +38,8 @@ interface ReportData {
   productStats: Array<{ name: string; category: string; qtySold: number; revenue: number; profit: number }>
   stockValuation: Array<{ name: string; category: string; branch?: string; qty: number; unit: string; unitCost: number; unitPrice: number; stockValue: number; retailValue: number }>
   expiryReport: Array<{ name: string; branch?: string; batch: string; expiryDate: string; daysLeft: number; qty: number }>
+  writeOffTotal?: number
+  netAfterWriteOffs?: number
   purchaseStats: Array<{ reference: string; supplier: string; date: string; total: number; paid: number; status: string }>
   branchBreakdown?: Array<{
     branchId: string; branchName: string; branchCode: string
@@ -442,10 +444,11 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
       </div>
 
       {/* Summary cards (always visible for context) */}
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         {[
           { label: 'Revenue', value: fmtMoney(data.summary.revenue), icon: DollarSign, sub: `${data.summary.transactions} transactions` },
           { label: 'Gross Profit', value: fmtMoney(data.summary.grossProfit), icon: PiggyBank, sub: `COGS ${fmtMoney(data.summary.cogs)}` },
+          { label: 'Net after Write-offs', value: fmtMoney(data.netAfterWriteOffs ?? data.summary.grossProfit), icon: TrendingDown, sub: `Destroyed stock ${fmtMoney(data.writeOffTotal ?? 0)}`, tone: (data.netAfterWriteOffs ?? data.summary.grossProfit) < 0 ? 'text-red-600 dark:text-red-400' : undefined },
           { label: 'Profit Margin', value: `${data.summary.marginPct}%`, icon: Percent, sub: `Avg sale ${fmtMoney(data.summary.avgTransaction)}` },
           { label: 'Purchases', value: fmtMoney(data.summary.purchases), icon: Wallet, sub: `Inventory ${fmtMoney(data.summary.inventoryValue)}` },
         ].map((c) => (
@@ -454,7 +457,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
               <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-600/10 text-teal-600 dark:text-teal-400"><c.icon className="h-5 w-5" /></span>
             </div>
             <p className="mt-3 text-sm text-muted-foreground">{c.label}</p>
-            <p className="text-2xl font-bold tabular-nums">{c.value}</p>
+            <p className={`text-2xl font-bold tabular-nums ${c.tone ?? ''}`}>{c.value}</p>
             <p className="text-xs text-muted-foreground">{c.sub}</p>
           </Card>
         ))}
@@ -977,7 +980,7 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
           ))}
         </div>
       )}
-      <p className="px-1 text-xs text-muted-foreground">Cost value at risk (stock on hand × cost price) by expiry horizon. Write off or return dead stock from Inventory → Returns &amp; Quarantine to clear it.</p>
+      <p className="px-1 text-xs text-muted-foreground">Cost value at risk (stock on hand × cost price) by expiry horizon. Write off or return dead stock from Inventory → Returns &amp; Quarantine to clear it — every write-off is auto-booked as an “Inventory Write-offs” expense so the P&amp;L reflects the loss.</p>
       <Card>
         <CardContent className="p-0">
           <Table>
@@ -1346,7 +1349,7 @@ function ExpensesSection({ days, onData, grossProfit }: { days: string; onData: 
         <Card className="p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Net position</p>
           <p className={`mt-1 text-2xl font-bold tracking-tight ${net >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>{fmtMoney(net)}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">gross profit − expenses</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">gross profit − expenses (auto write-offs included)</p>
         </Card>
         <Card className="p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Biggest cost</p>
@@ -2285,7 +2288,7 @@ interface DigestData {
   purchases: { count: number; total: number }
   netPosition: number
   topProducts: Array<{ name: string; qty: number; revenue: number }>
-  ops: { lowStock: number; expiringSoon: number; momoPending: { count: number; total: number }; creditOutstanding: number }
+  ops: { lowStock: number; expiringSoon: number; writeOffs: { count: number; total: number }; momoPending: { count: number; total: number }; creditOutstanding: number }
   targets: Array<{ subject: string; period: string; amount: number; revenue: number; pct: number; active: boolean }>
 }
 
@@ -2434,6 +2437,10 @@ function OwnerDigestSection() {
             <div className="rounded-xl border p-3">
               <p className="text-xs text-muted-foreground">Expiring ≤ 30 days</p>
               <p className={`text-xl font-bold tabular-nums ${data.ops.expiringSoon > 0 ? 'text-amber-600 dark:text-amber-400' : ''}`}>{data.ops.expiringSoon}</p>
+            </div>
+            <div className="rounded-xl border p-3">
+              <p className="text-xs text-muted-foreground">Write-offs (period)</p>
+              <p className={`text-xl font-bold tabular-nums ${data.ops.writeOffs.count > 0 ? 'text-violet-600 dark:text-violet-400' : ''}`}>{data.ops.writeOffs.count} <span className="text-sm font-normal text-muted-foreground">({fmtMoney(data.ops.writeOffs.total)})</span></p>
             </div>
             <div className="rounded-xl border p-3">
               <p className="text-xs text-muted-foreground">MoMo pending verification</p>

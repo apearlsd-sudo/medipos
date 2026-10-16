@@ -77,6 +77,7 @@ export interface OwnerDigestData {
   ops: {
     lowStock: number
     expiringSoon: number
+    writeOffs: { count: number; total: number }
     momoPending: { count: number; total: number }
     creditOutstanding: number
   }
@@ -100,7 +101,7 @@ export async function buildOwnerDigest(
   const purchaseWhere: Record<string, unknown> = { purchaseDate: { gte: start, lt: end } }
   if (branchId) purchaseWhere.branchId = branchId
 
-  const [sales, returns, expenses, purchases, topItems, lowStock, expiring, ledgerAgg] = await Promise.all([
+  const [sales, returns, expenses, purchases, topItems, lowStock, expiring, ledgerAgg, destroyedAgg, destroyedNotes, quaAgg] = await Promise.all([
     db.sale.findMany({
       where: saleWhere,
       select: {
@@ -131,6 +132,23 @@ export async function buildOwnerDigest(
     db.customerLedger.groupBy({
       by: ['type'],
       where: branchId ? { branchId } : {},
+      _sum: { amount: true },
+    }),
+    db.stockReturnItem.aggregate({
+      // Destroyed value only — supplier-returned and quarantined lines are not
+      // losses yet (same definition as the reports writeOffTotal).
+      where: { action: 'writeoff', return: { createdAt: { gte: start, lt: end }, status: 'completed', ...(branchId ? { branchId } : {}) } },
+      _sum: { value: true },
+    }),
+    db.stockReturnItem.groupBy({
+      by: ['returnId'],
+      where: { action: 'writeoff', return: { createdAt: { gte: start, lt: end }, status: 'completed', ...(branchId ? { branchId } : {}) } },
+    }),
+    db.expense.aggregate({
+      // Quarantine-desk write-offs (no return note) — canonical record is the
+      // auto-booked expense.
+      where: { clientRef: { startsWith: 'writeoff:QUA-' }, status: 'completed', createdAt: { gte: start, lt: end }, ...(branchId ? { branchId } : {}) },
+      _count: { _all: true },
       _sum: { amount: true },
     }),
   ])
@@ -249,6 +267,10 @@ export async function buildOwnerDigest(
     ops: {
       lowStock,
       expiringSoon: expiring,
+      writeOffs: {
+        count: destroyedNotes.length + quaAgg._count._all,
+        total: +((destroyedAgg._sum.value ?? 0) + (quaAgg._sum.amount ?? 0)).toFixed(2),
+      },
       momoPending: { count: momoPendingCount, total: +momoPendingTotal.toFixed(2) },
       creditOutstanding: +Math.max(0, chargeAmt - paidAmt).toFixed(2),
     },
@@ -276,6 +298,7 @@ export function renderDigestText(d: OwnerDigestData, currency = 'GHS'): string {
   const watch: string[] = []
   if (d.ops.lowStock > 0) watch.push(`${d.ops.lowStock} low stock`)
   if (d.ops.expiringSoon > 0) watch.push(`${d.ops.expiringSoon} expiring ≤30d`)
+  if (d.ops.writeOffs.count > 0) watch.push(`${d.ops.writeOffs.count} write-off(s) ${money(d.ops.writeOffs.total)}`)
   if (d.ops.momoPending.count > 0) watch.push(`${d.ops.momoPending.count} MoMo pending (${money(d.ops.momoPending.total)})`)
   if (d.ops.creditOutstanding > 0) watch.push(`credit out ${money(d.ops.creditOutstanding)}`)
   if (watch.length > 0) L.push(`Watchlist: ${watch.join(' · ')}`)

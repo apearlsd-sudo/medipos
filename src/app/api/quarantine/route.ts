@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { recordSyncOp } from '@/lib/sync'
+import { bookWriteOffExpense, emitWriteOffExpenseSync } from '@/lib/writeoff-expense'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,16 +57,42 @@ export async function POST(req: NextRequest) {
     if (med.quarantineQty < qty) return NextResponse.json({ error: `Only ${med.quarantineQty} unit(s) in quarantine` }, { status: 409 })
 
     const ref = `QUA-${Date.now().toString().slice(-6)}`
+    let bookedExpense: { id: string; expenseNo: string; amount: number } | null = null
     if (action === 'restore') {
       await db.$transaction([
         db.medicine.update({ where: { id: medicineId }, data: { quarantineQty: { decrement: qty }, stockQty: { increment: qty } } }),
         db.inventoryLog.create({ data: { medicineId, type: 'restock', quantity: qty, reason: `Restored from quarantine (${body.note || 'cleared'})`, reference: ref } }),
       ])
     } else {
-      await db.$transaction([
-        db.medicine.update({ where: { id: medicineId }, data: { quarantineQty: { decrement: qty } } }),
-        db.inventoryLog.create({ data: { medicineId, type: 'quarantine_out', quantity: -qty, reason: `Quarantine ${action}${body.note ? ` — ${body.note}` : ''}`, reference: ref } }),
-      ])
+      const result = await db.$transaction(async (tx) => {
+        await tx.medicine.update({ where: { id: medicineId }, data: { quarantineQty: { decrement: qty } } })
+        await tx.inventoryLog.create({ data: { medicineId, type: 'quarantine_out', quantity: -qty, reason: `Quarantine ${action}${body.note ? ` — ${body.note}` : ''}`, reference: ref } })
+        // Destroyed units are a real loss — book them so the P&L feels it.
+        if (action === 'writeoff' && med.costPrice > 0) {
+          return bookWriteOffExpense(tx, {
+            ref,
+            amount: qty * med.costPrice,
+            branchId: med.branchId,
+            description: `Quarantine write-off ${ref} — ${med.name} ×${qty}`,
+            userName: gate.user.name,
+            userId: gate.user.id,
+            note: body.note || null,
+          })
+        }
+        return null
+      })
+      bookedExpense = result
+    }
+    if (bookedExpense) {
+      emitWriteOffExpenseSync({
+        ...bookedExpense,
+        branchId: med.branchId,
+        description: `Quarantine write-off ${ref} — ${med.name} ×${qty}`,
+        note: body.note || null,
+        recordedByName: gate.user.name,
+        reference: ref,
+        createdAt: new Date(),
+      })
     }
     void recordSyncOp('stock.returned', ref, {
       returnNo: ref,
@@ -73,7 +100,7 @@ export async function POST(req: NextRequest) {
       reason: body.note || action,
       items: [{ medicineId, qty, action, fromQuarantine: true }],
     })
-    return NextResponse.json({ ok: true, action, qty })
+    return NextResponse.json({ ok: true, action, qty, expenseNo: bookedExpense?.expenseNo ?? null })
   } catch {
     return NextResponse.json({ error: 'Quarantine action failed' }, { status: 500 })
   }
