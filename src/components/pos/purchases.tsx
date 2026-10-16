@@ -136,7 +136,7 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
   // B4 — goods receipt (GRN) dialog: receive per line, capped at outstanding
   // Task 70 — each line can carry the batch number stamped onto the medicine on receive.
   const [grnTarget, setGrnTarget] = useState<Purchase | null>(null)
-  const [grnLines, setGrnLines] = useState<Array<{ id: string; name: string; qty: number; receivedQty: number; receive: string; batch: string }>>([])
+  const [grnLines, setGrnLines] = useState<Array<{ id: string; name: string; qty: number; receivedQty: number; receive: string; batch: string; prefixCode: string | null }>>([])
   const [grnInvoice, setGrnInvoice] = useState('')
   const [grnBusy, setGrnBusy] = useState(false)
   const [grnBatchBusy, setGrnBatchBusy] = useState(false)
@@ -145,25 +145,57 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
   const openGRN = async (p: Purchase) => {
     setGrnTarget(p)
     setGrnInvoice(p.supplierInvoiceNo ?? '')
-    const res = await fetch(`/api/purchases/${p.id}`, { cache: 'no-store' })
+    const [res, pRes] = await Promise.all([
+      fetch(`/api/purchases/${p.id}`, { cache: 'no-store' }),
+      fetch('/api/batch-prefixes', { cache: 'no-store' }).catch(() => null),
+    ])
     const json = await res.json()
-    const items = (json.purchase?.items ?? []) as Array<{ id: string; name: string; qty: number; receivedQty: number; batchNumber: string | null }>
-    setGrnLines(items.map((l) => ({ id: l.id, name: l.name, qty: l.qty, receivedQty: l.receivedQty, receive: String(Math.max(0, l.qty - l.receivedQty)), batch: l.batchNumber ?? '' })))
+    // Task 71 — resolve each line's product prefix (registry code) once per dialog
+    // open; lines whose product has no prefix fall back to the store default.
+    const codeById = new Map<string, string>()
+    try {
+      const pJson = await pRes?.json()
+      for (const row of pJson?.prefixes ?? []) codeById.set(row.id, row.code)
+    } catch { /* registry unavailable — every line just uses the default prefix */ }
+    const items = (json.purchase?.items ?? []) as Array<{ id: string; name: string; qty: number; receivedQty: number; batchNumber: string | null; medicine?: { batchPrefixId: string | null } | null }>
+    setGrnLines(items.map((l) => ({
+      id: l.id,
+      name: l.name,
+      qty: l.qty,
+      receivedQty: l.receivedQty,
+      receive: String(Math.max(0, l.qty - l.receivedQty)),
+      batch: l.batchNumber ?? '',
+      prefixCode: l.medicine?.batchPrefixId ? codeById.get(l.medicine.batchPrefixId) ?? null : null,
+    })))
   }
 
-  // Task 70 — one request fills every still-empty batch line with sequential
-  // generated numbers (PREFIX-YYYYMMDD-###) so simultaneous lines never collide.
+  // Task 70/71 — fill every still-empty batch line with sequential generated
+  // numbers (PREFIX-YYYYMMDD-###). Each line resolves its product's stored
+  // prefix first, then the store default; one request per distinct prefix keeps
+  // same-prefix lines sequential and different-prefix lines collision-free.
   const autoFillBatches = async () => {
-    const empty = grnLines.filter((l) => l.qty - l.receivedQty > 0 && !l.batch.trim()).length
-    if (empty === 0) { toast({ title: 'Nothing to fill', description: 'Every receivable line already has a batch number.' }); return }
+    const fillable = grnLines.filter((l) => l.qty - l.receivedQty > 0 && !l.batch.trim())
+    if (fillable.length === 0) { toast({ title: 'Nothing to fill', description: 'Every receivable line already has a batch number.' }); return }
     setGrnBatchBusy(true)
     try {
-      const res = await fetch(`/api/batches/next?prefix=${encodeURIComponent(storeSettings?.batchPrefix ?? '')}&count=${empty}`, { cache: 'no-store' })
-      const json = await res.json()
-      if (!res.ok || !Array.isArray(json.batches)) { toast({ title: 'Could not generate batch numbers', description: json.error, variant: 'destructive' }); return }
-      let i = 0
-      setGrnLines((prev) => prev.map((l) => (l.qty - l.receivedQty > 0 && !l.batch.trim() ? { ...l, batch: json.batches[i++] ?? l.batch } : l)))
-      toast({ title: `${json.batches.length} batch number(s) filled`, description: 'Edit any line before posting if the supplier printed different lots.' })
+      const defaultPrefix = (storeSettings?.batchPrefix ?? '').trim()
+      const prefixFor = (l: { prefixCode: string | null }) => l.prefixCode || defaultPrefix
+      const counts = new Map<string, number>()
+      for (const l of fillable) counts.set(prefixFor(l), (counts.get(prefixFor(l)) ?? 0) + 1)
+      const queues = new Map<string, string[]>()
+      for (const [prefix, n] of counts) {
+        const res = await fetch(`/api/batches/next?prefix=${encodeURIComponent(prefix)}&count=${n}`, { cache: 'no-store' })
+        const json = await res.json()
+        if (!res.ok || !Array.isArray(json.batches)) { toast({ title: 'Could not generate batch numbers', description: json.error, variant: 'destructive' }); return }
+        queues.set(prefix, json.batches as string[])
+      }
+      const assigned = new Map<string, string>()
+      for (const l of fillable) {
+        const q = queues.get(prefixFor(l))
+        if (q?.length) assigned.set(l.id, q.shift()!)
+      }
+      setGrnLines((prev) => prev.map((l) => (assigned.has(l.id) ? { ...l, batch: assigned.get(l.id)! } : l)))
+      toast({ title: `${assigned.size} batch number(s) filled`, description: 'Product prefixes applied where set. Edit any line before posting if the supplier printed different lots.' })
     } finally {
       setGrnBatchBusy(false)
     }
@@ -480,7 +512,7 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
                 onClick={autoFillBatches}
                 disabled={grnBatchBusy}
                 className="h-8 shrink-0 rounded-full text-xs text-teal-700 dark:text-teal-300"
-                title="Generate batch numbers for every empty line (uses the default prefix from Settings)"
+                title="Generate batch numbers for every empty line (uses each product's prefix where set, else the store default)"
               >
                 <Wand2 className="h-3.5 w-3.5" /> {grnBatchBusy ? 'Filling…' : 'Auto-fill batches'}
               </Button>
@@ -494,6 +526,14 @@ export function Purchases({ onPurchasesChanged }: { onPurchasesChanged?: () => v
                       <p className="truncate font-medium">{l.name}</p>
                       <p className="text-xs text-muted-foreground tabular-nums">ordered {l.qty} · received {l.receivedQty} · outstanding {outstanding}</p>
                     </div>
+                    {l.prefixCode && (
+                      <span
+                        title="This product has its own batch prefix (Settings → Batch Numbering)"
+                        className="shrink-0 rounded-full bg-teal-600/10 px-2 py-0.5 text-[10px] font-semibold text-teal-700 dark:text-teal-300"
+                      >
+                        {l.prefixCode}
+                      </span>
+                    )}
                     <Input
                       value={l.batch}
                       disabled={outstanding <= 0}

@@ -933,3 +933,25 @@ Work Log:
 
 Stage Summary:
 - Batch numbers are now one tap away everywhere stock enters: a wand on the Medicines form, an auto-fill sweep across GRN lines, and a configurable default prefix in Settings — PREFIX-DATE-### sequences that never collide with any batch already on file while supplier-printed lots stay free-form. 12/12 verify + 136/136 regression green, deployed on SW v12, DB backed up.
+
+---
+Task ID: 71
+Agent: main
+Task: "create and store batch prefixes for different products. the user only select the batch prefix for a particular product and the system adds unique number to the prefix" — per-product batch prefix registry layered on Task 70's generation engine.
+
+REVISION:
+- SCHEMA: new `BatchPrefix` model (code @unique uppercase-alnum-≤10, label?, createdAt, medicines[]) + `Medicine.batchPrefixId` FK (onDelete: SetNull). Additive db:push, no data touched.
+- RESOLUTION CHAIN (everywhere): product's registry prefix → store default (Settings → Batch Numbering) → BAT. Never auto-imposed; hand-typed supplier lots stay free-form.
+- API: `GET/POST /api/batch-prefixes` (GET requireUser — Medicines form + GRN dialog read it; POST requirePermission settings.edit; code normalized server-side via new exported `normalizePrefixCode`, dup → 409, junk → 400) + `DELETE /api/batch-prefixes/[id]` (settings.edit; SetNull returns products to default). Medicines POST/PUT now persist `batchPrefixId` (PUT uses supplierId-style undefined-vs-empty semantics). Sync payloads intentionally unchanged — registry is per-node config.
+- SETTINGS: Batch Numbering card gains "Product prefixes" registry — rows (code mono-teal, label, N-product badge, delete w/ confirm), add form (code uppercase + optional label, Enter submits), empty-state hint; card description now explains the chain.
+- MEDICINES FORM: new "Batch Prefix" select (Store default + registry entries "CODE — label") saved with the product; wand resolves form selection → store default → BAT; captions updated.
+- GRN: openGRN fetches registry once and resolves each line's `prefixCode` (medicine include rides through existing purchase GET); Auto-fill groups empty lines by resolved prefix — ONE /api/batches/next request per distinct prefix (count per group) with a precomputed assignment map (no setState-updater mutation); lines with a product prefix show a teal PCM chip; toast + tooltips updated.
+
+VERIFY:
+- `scripts/probe-batch-prefix.js` 6/6 — create, unique-code lookup, FK link, _count include, SetNull on delete, cleanup.
+- `scripts/verify-batch-prefixes.sh` 15/15 — 401 unauth; zzq!→ZZQ normalization; dup 409; junk 400; label in list; medicine POST carries batchPrefixId; registry count 1; PUT ""→null clears; generate honors ZZQ-YYYYMMDD-###; cashier 403 write / 200 read / 403 delete; admin delete → medicine reverts to null; probe rows cleaned.
+- REGRESSION: tsc src/ clean, eslint clean, BUILD_EXIT=0 → SW v12→v13 + kill + relaunch (production :3000 + hub :3003, HTTP/LOGIN/HUB 200, sw.js serves medipos-v13). 136/136 green in one pass (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 29).
+- BROWSER E2E (zero page/console errors, screenshots in download/): Settings registry shows PCM | Paracetamol probe | 1 product; added AMX via UI (lowercase input normalized, toast, row) then deleted via confirm dialog (toast, row gone); Medicines edit dialog preselects "PCM — Paracetamol probe" and the wand fills PCM-20261016-001 (dialog cancelled, nothing saved); GRN dialog shows the PCM chip only on the linked line and Auto-fill produced PCM-20261016-001 | BAT-20261016-001 (per-product + default fallback in one dialog, no same-stem collision) — dialog closed WITHOUT posting, then fixtures (PO, 2 meds, category, PCM prefix) deleted via `scripts/e2e-batch-prefix-cleanup.js` (0 rows left).
+
+Stage Summary:
+- The pharmacy now keeps a per-product prefix registry: store PCM/AMX/… codes once in Settings, select one on each product's form, and every generated batch — wand on the product form or Auto-fill on goods receiving — carries that product's code, with the store default still catching everything else. 15/15 verify + 6/6 probe + 136/136 regression green, deployed on SW v13, DB backed up.

@@ -28,6 +28,15 @@ interface Insurer {
 
 const emptyInsurer = { name: '', shortCode: '', phone: '', coveragePercent: '80', note: '' }
 
+// Task 71 — a stored batch prefix ("PCM") optionally labeled for the product or
+// family it belongs to; _count.medicines shows how many products selected it.
+interface BatchPrefixRow {
+  id: string
+  code: string
+  label: string | null
+  _count?: { medicines: number }
+}
+
 /** Tier 1 settings: loyalty program rates + insurance companies. */
 export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   const [insurers, setInsurers] = useState<Insurer[]>([])
@@ -70,15 +79,24 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   const [batchPrefix, setBatchPrefix] = useState('')
   const [batchPrefixSaving, setBatchPrefixSaving] = useState(false)
 
+  // Task 71 — product prefix registry (add / delete here, assign on product forms).
+  const [prefixRows, setPrefixRows] = useState<BatchPrefixRow[]>([])
+  const [newPrefixCode, setNewPrefixCode] = useState('')
+  const [newPrefixLabel, setNewPrefixLabel] = useState('')
+  const [prefixBusy, setPrefixBusy] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [iRes, sRes] = await Promise.all([
+      const [iRes, sRes, pRes] = await Promise.all([
         fetch('/api/insurers', { cache: 'no-store' }),
         fetch('/api/settings', { cache: 'no-store' }),
+        fetch('/api/batch-prefixes', { cache: 'no-store' }),
       ])
       const iJson = await iRes.json().catch(() => ({ insurers: [] }))
       setInsurers(iJson.insurers ?? [])
+      const pJson = await pRes.json().catch(() => ({ prefixes: [] }))
+      setPrefixRows(pJson.prefixes ?? [])
       const sJson = await sRes.json().catch(() => ({ settings: {} }))
       const s: Record<string, string> = sJson.settings ?? {}
       setLoyaltyEnabled(s.loyaltyEnabled !== 'false')
@@ -210,6 +228,39 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
     } finally {
       setBatchPrefixSaving(false)
     }
+  }
+
+  // Task 71 — registry maintenance. Codes are normalized server-side
+  // (uppercase alphanumerics, max 10); deleting a prefix returns its products
+  // to the store default via the FK's SetNull.
+  const addPrefix = async () => {
+    const code = newPrefixCode.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)
+    if (!code) { toast({ title: 'Prefix code required', description: 'Letters and numbers only, max 10 characters.', variant: 'destructive' }); return }
+    setPrefixBusy(true)
+    try {
+      const res = await fetch('/api/batch-prefixes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, label: newPrefixLabel.trim() || undefined }),
+      })
+      const json = await res.json()
+      if (!res.ok) { toast({ title: 'Could not add prefix', description: json.error, variant: 'destructive' }); return }
+      setNewPrefixCode('')
+      setNewPrefixLabel('')
+      await load()
+      toast({ title: `Prefix ${json.prefix.code} added`, description: 'Select it on a product\u2019s form (Medicines \u2192 Batch Prefix) so its generated batches carry it.' })
+    } finally {
+      setPrefixBusy(false)
+    }
+  }
+
+  const removePrefix = async (p: BatchPrefixRow) => {
+    if (!confirm(`Delete prefix ${p.code}? Products using it fall back to the store default prefix.`)) return
+    const res = await fetch(`/api/batch-prefixes/${p.id}`, { method: 'DELETE' })
+    const json = await res.json().catch(() => ({}))
+    if (!res.ok) { toast({ title: 'Could not delete prefix', description: json.error, variant: 'destructive' }); return }
+    await load()
+    toast({ title: `Prefix ${p.code} deleted`, description: 'Its products now use the store default again.' })
   }
 
   const saveCashRounding = async () => {
@@ -360,7 +411,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base"><Boxes className="h-4 w-4 text-teal-500" /> Batch Numbering</CardTitle>
           <CardDescription>
-            Default prefix for auto-generated batch numbers. The wand button on the Medicines form and the Auto-fill button on goods receiving generate <span className="font-medium text-foreground">PREFIX-DATE-###</span> numbers that never collide with a batch already on file. Leave blank to use the built-in <span className="font-medium text-foreground">BAT</span>.
+            Default prefix for auto-generated batch numbers. The wand button on the Medicines form and the Auto-fill button on goods receiving generate <span className="font-medium text-foreground">PREFIX-DATE-###</span> numbers that never collide with a batch already on file — a product with its own prefix (below) always uses it, everything else falls back to this default. Leave blank to use the built-in <span className="font-medium text-foreground">BAT</span>.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -387,6 +438,76 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
             <Wand2 className="h-3.5 w-3.5 text-teal-500" />
             Example: {(batchPrefix.trim().toUpperCase().replace(/[^A-Z0-9]/g, '') || 'BAT')}-{new Date().getFullYear()}{String(new Date().getMonth() + 1).padStart(2, '0')}{String(new Date().getDate()).padStart(2, '0')}-001 — the sequence advances with every generated batch. Supplier-printed lots can still be typed in by hand.
           </p>
+
+          {/* Task 71 — per-product prefix registry */}
+          <div className="space-y-2.5 border-t pt-3">
+            <div>
+              <p className="text-sm font-medium">Product prefixes</p>
+              <p className="text-xs text-muted-foreground">
+                Store a prefix per product or product family, then select it on the product&rsquo;s form (Medicines &rarr; Batch Prefix). Goods receiving and the wand use the product&rsquo;s prefix first. Deleting a prefix returns its products to the default above.
+              </p>
+            </div>
+            {prefixRows.length > 0 && (
+              <div className="rounded-xl border">
+                {prefixRows.map((p, i) => (
+                  <div key={p.id} className={`flex items-center gap-3 px-3 py-2 text-sm ${i > 0 ? 'border-t' : ''}`}>
+                    <span className="w-16 shrink-0 font-mono text-xs font-bold text-teal-700 dark:text-teal-300">{p.code}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{p.label || '\u2014'}</span>
+                    <Badge variant="outline" className="shrink-0 text-[10px] text-muted-foreground">
+                      {p._count?.medicines ?? 0} product{(p._count?.medicines ?? 0) === 1 ? '' : 's'}
+                    </Badge>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 shrink-0 text-red-500 hover:text-red-600"
+                      onClick={() => removePrefix(p)}
+                      disabled={!canEdit}
+                      aria-label={`Delete prefix ${p.code}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {prefixRows.length === 0 && (
+              <p className="rounded-lg bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                No product prefixes yet — add one below, then pick it on a product&rsquo;s form so its batches stand out from every other product&rsquo;s.
+              </p>
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="new-prefix-code" className="text-xs">New prefix</Label>
+                <Input
+                  id="new-prefix-code"
+                  value={newPrefixCode}
+                  onChange={(e) => setNewPrefixCode(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addPrefix() }}
+                  disabled={!canEdit}
+                  placeholder="e.g. PCM"
+                  maxLength={10}
+                  className="h-9 w-28 uppercase"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-prefix-label" className="text-xs">Label (optional)</Label>
+                <Input
+                  id="new-prefix-label"
+                  value={newPrefixLabel}
+                  onChange={(e) => setNewPrefixLabel(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') addPrefix() }}
+                  disabled={!canEdit}
+                  placeholder="e.g. Paracetamol"
+                  maxLength={40}
+                  className="h-9 w-44"
+                />
+              </div>
+              <Button onClick={addPrefix} disabled={!canEdit || prefixBusy} className="h-9 rounded-full bg-teal-600 hover:bg-teal-700">
+                {prefixBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Add prefix
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

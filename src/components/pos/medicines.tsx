@@ -38,6 +38,7 @@ interface Med {
   supplier: { id: string; name: string } | null
   unit: string
   batchNumber: string | null
+  batchPrefixId: string | null
   expiryDate: string | null
   stockQty: number
   reorderLevel: number
@@ -54,9 +55,13 @@ interface Med {
 interface Category { id: string; name: string }
 interface Supplier { id: string; name: string }
 
+// Task 71 — stored batch prefixes (Settings → Batch Numbering); a product
+// selects one and every generated batch for it carries that code.
+interface BatchPrefixRow { id: string; code: string; label: string | null }
+
 const emptyForm = {
   name: '', genericName: '', brand: '', sku: '', barcode: '', categoryId: '', supplierId: '', unit: 'Box',
-  batchNumber: '', expiryDate: '', stockQty: '0', reorderLevel: '20', costPrice: '0', sellingPrice: '0',
+  batchNumber: '', batchPrefixId: '', expiryDate: '', stockQty: '0', reorderLevel: '20', costPrice: '0', sellingPrice: '0',
   prescriptionRequired: false, insuranceCovered: false, innerUnit: '', innerQty: '1', location: '', status: 'active',
 }
 
@@ -91,6 +96,8 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
   const [labelSearch, setLabelSearch] = useState('')
   const [labelItems, setLabelItems] = useState<Array<{ med: Med; qty: number }>>([])
   const [labelSize, setLabelSize] = useState<LabelSize>('medium')
+  // Task 71 — prefix registry for the Batch Prefix selector on the product form.
+  const [prefixRows, setPrefixRows] = useState<BatchPrefixRow[]>([])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -127,6 +134,15 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
     }
   }, [])
 
+  // Task 71 — pull the prefix registry once per mount so the form's Batch
+  // Prefix selector (and the wand's prefix resolution) always has fresh codes.
+  useEffect(() => {
+    fetch('/api/batch-prefixes', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => setPrefixRows(j.prefixes ?? []))
+      .catch(() => {})
+  }, [])
+
   const stats = useMemo(() => {
     const total = meds.length
     const low = meds.filter((m) => m.stockQty > 0 && m.stockQty <= m.reorderLevel).length
@@ -147,6 +163,7 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
     setForm({
       name: m.name, genericName: m.genericName ?? '', brand: m.brand ?? '', sku: m.sku, barcode: m.barcode ?? '',
       categoryId: m.categoryId, supplierId: m.supplierId ?? '', unit: m.unit, batchNumber: m.batchNumber ?? '',
+      batchPrefixId: m.batchPrefixId ?? '',
       expiryDate: m.expiryDate ? m.expiryDate.slice(0, 10) : '', stockQty: String(m.stockQty), reorderLevel: String(m.reorderLevel),
       costPrice: String(m.costPrice), sellingPrice: String(m.sellingPrice), prescriptionRequired: m.prescriptionRequired,
       insuranceCovered: m.insuranceCovered,
@@ -207,13 +224,16 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
 
   const set = (k: keyof typeof emptyForm, v: string | boolean) => setForm((f) => ({ ...f, [k]: v }))
 
-  // Task 70 — auto batch number (PREFIX-YYYYMMDD-###). Uses the store's default
-  // prefix from Settings → Batch numbering; blank prefix falls back to BAT server-side.
+  // Task 70/71 — auto batch number (PREFIX-YYYYMMDD-###). Uses the prefix
+  // selected on the product's form; none selected → the store's default from
+  // Settings → Batch numbering; blank default falls back to BAT server-side.
   const [batchBusy, setBatchBusy] = useState(false)
   const generateBatch = async () => {
     setBatchBusy(true)
     try {
-      const res = await fetch(`/api/batches/next?prefix=${encodeURIComponent(storeSettings?.batchPrefix ?? '')}`, { cache: 'no-store' })
+      const chosen = prefixRows.find((p) => p.id === form.batchPrefixId)?.code ?? ''
+      const prefix = chosen || (storeSettings?.batchPrefix ?? '')
+      const res = await fetch(`/api/batches/next?prefix=${encodeURIComponent(prefix)}`, { cache: 'no-store' })
       const json = await res.json()
       if (!res.ok || !json.batches?.[0]) { toast({ title: 'Could not generate a batch number', description: json.error, variant: 'destructive' }); return }
       set('batchNumber', json.batches[0])
@@ -445,6 +465,19 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
               <Input value={form.barcode} onChange={(e) => set('barcode', e.target.value)} placeholder="Optional EAN/UPC" />
             </div>
             <div className="space-y-1.5">
+              <Label>Batch Prefix</Label>
+              <Select value={form.batchPrefixId || 'default'} onValueChange={(v) => set('batchPrefixId', v === 'default' ? '' : v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">Store default</SelectItem>
+                  {prefixRows.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.code}{p.label ? ` — ${p.label}` : ''}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">Saved with the product; generate prefers it.</p>
+            </div>
+            <div className="space-y-1.5">
               <Label>Batch Number</Label>
               <div className="flex gap-2">
                 <Input value={form.batchNumber} onChange={(e) => set('batchNumber', e.target.value)} placeholder="e.g. AMX-2405" />
@@ -454,14 +487,14 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
                   size="icon"
                   onClick={generateBatch}
                   disabled={batchBusy}
-                  title="Generate the next batch number (uses the default prefix from Settings)"
+                  title="Generate the next batch number (uses this product's prefix, or the store default)"
                   aria-label="Generate batch number"
                   className="h-9 w-9 shrink-0 text-teal-600 hover:bg-teal-50 hover:text-teal-700 dark:text-teal-400 dark:hover:bg-teal-500/10"
                 >
                   <Wand2 className="h-4 w-4" />
                 </Button>
               </div>
-              <p className="text-[11px] text-muted-foreground">Type the supplier&rsquo;s lot, or tap the wand to generate PREFIX-DATE-###.</p>
+              <p className="text-[11px] text-muted-foreground">Type the supplier&rsquo;s lot, or tap the wand to generate PREFIX-DATE-### from the selected prefix.</p>
             </div>
             <div className="space-y-1.5">
               <Label>Expiry Date</Label>

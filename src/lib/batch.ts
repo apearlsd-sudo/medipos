@@ -17,10 +17,14 @@ import { db } from '@/lib/db'
 const DEFAULT_PREFIX = 'BAT'
 const MAX_PREFIX_LEN = 10
 
-/** Uppercase alphanumerics only, capped at 10 chars, falls back to `BAT`. */
+/** Uppercase alphanumerics only, capped at 10 chars; '' when nothing usable remains. */
+export function normalizePrefixCode(raw?: string | null): string {
+  return (raw ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, MAX_PREFIX_LEN)
+}
+
+/** Registry/default prefix, falling back to `BAT` when blank. */
 export function sanitizeBatchPrefix(raw?: string | null): string {
-  const p = (raw ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, MAX_PREFIX_LEN)
-  return p || DEFAULT_PREFIX
+  return normalizePrefixCode(raw) || DEFAULT_PREFIX
 }
 
 /** Today's YYYYMMDD stamp used in the batch stem. */

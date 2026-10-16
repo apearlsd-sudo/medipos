@@ -95,6 +95,7 @@ export async function POST(req: NextRequest) {
         supplierId: body.supplierId || null,
         unit: body.unit || 'Box',
         batchNumber: body.batchNumber || null,
+        batchPrefixId: body.batchPrefixId || null,
         expiryDate: body.expiryDate ? new Date(body.expiryDate) : null,
         stockQty: Number(body.stockQty ?? 0),
         reorderLevel: Number(body.reorderLevel ?? 20),

@@ -38,6 +38,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         supplierId: body.supplierId !== undefined ? (body.supplierId || null) : existing.supplierId,
         unit: body.unit ?? existing.unit,
         batchNumber: body.batchNumber ?? existing.batchNumber,
+        batchPrefixId: body.batchPrefixId !== undefined ? (body.batchPrefixId || null) : existing.batchPrefixId,
         expiryDate: body.expiryDate ? new Date(body.expiryDate) : existing.expiryDate,
         stockQty: body.stockQty !== undefined ? Number(body.stockQty) : existing.stockQty,
         reorderLevel: body.reorderLevel !== undefined ? Number(body.reorderLevel) : existing.reorderLevel,

@@ -129,6 +129,18 @@ model Supplier {
   updatedAt     DateTime   @updatedAt
 }
 
+// Task 71 — per-product batch prefixes: short codes (e.g. PCM) the pharmacy
+// maintains in Settings → Batch Numbering and assigns to products. Generation
+// resolves a product's prefix first, then the store default. Deleting a prefix
+// returns its products to the default (SetNull) — batch numbers on file stay.
+model BatchPrefix {
+  id        String     @id @default(cuid())
+  code      String     @unique
+  label     String?
+  createdAt DateTime   @default(now())
+  medicines Medicine[]
+}
+
 model Medicine {
   id                   String         @id @default(cuid())
   name                 String
@@ -144,6 +156,8 @@ model Medicine {
   supplier             Supplier?      @relation(fields: [supplierId], references: [id])
   unit                 String         @default("Box")
   batchNumber          String?
+  batchPrefixId        String?
+  batchPrefix          BatchPrefix?   @relation(fields: [batchPrefixId], references: [id], onDelete: SetNull)
   expiryDate           DateTime?
   stockQty             Int            @default(0)
   reorderLevel         Int            @default(20)
