@@ -270,7 +270,7 @@ export async function GET(req: NextRequest) {
     // undecided, so neither weighs on the P&L.
     const writeOffs = await db.stockReturn.findMany({
       where: { createdAt: { gte: since }, status: 'completed', ...(scope.branchId ? { branchId: scope.branchId } : {}) },
-      select: { returnNo: true, type: true, reason: true, totalValue: true, createdAt: true },
+      select: { returnNo: true, type: true, reason: true, source: true, totalValue: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: 50,
     })
@@ -296,6 +296,25 @@ export async function GET(req: NextRequest) {
     // Gross profit is revenue − COGS; after destroyed stock the owner keeps
     // less. This is the shrinkage-adjusted margin line for the overview card.
     const netAfterWriteOffs = +(grossProfit - writeOffTotal).toFixed(2)
+
+    // Pre-emptive disposals — the pre-expiry disposal desk's footprint in the
+    // period: stock destroyed or returned to suppliers BEFORE it expired
+    // (source='pre_expiry'). Destroyed value is a subset of writeOffTotal;
+    // returned value is recoverable supplier credit, not a loss.
+    const preExpiryNotes = await db.stockReturn.findMany({
+      where: { createdAt: { gte: since }, status: 'completed', source: 'pre_expiry', ...(scope.branchId ? { branchId: scope.branchId } : {}) },
+      select: { items: { select: { qty: true, value: true, action: true, daysBeforeExpiry: true } } },
+      take: 200,
+    })
+    const preLines = preExpiryNotes.flatMap((n) => n.items)
+    const preDays = preLines.map((i) => i.daysBeforeExpiry).filter((d): d is number => typeof d === 'number')
+    const preExpiryDisposals = {
+      notes: preExpiryNotes.length,
+      units: preLines.reduce((s, i) => s + i.qty, 0),
+      destroyedValue: +preLines.filter((i) => i.action === 'writeoff').reduce((s, i) => s + i.value, 0).toFixed(2),
+      returnedValue: +preLines.filter((i) => i.action === 'return_supplier').reduce((s, i) => s + i.value, 0).toFixed(2),
+      avgDaysEarly: preDays.length ? +(preDays.reduce((a, b) => a + b, 0) / preDays.length).toFixed(1) : null,
+    }
 
     // Purchase summary
     const purchases = await db.purchase.findMany({
@@ -401,6 +420,7 @@ export async function GET(req: NextRequest) {
       writeOffs,
       writeOffTotal,
       netAfterWriteOffs,
+      preExpiryDisposals,
       purchaseStats,
       branchBreakdown,
     })

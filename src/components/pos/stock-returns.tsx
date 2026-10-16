@@ -13,20 +13,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { fmtDate, fmtMoney, fmtRelative } from '@/lib/format'
-import { ArchiveX, Handshake, Plus, RotateCcw, ShieldAlert, Trash2 } from 'lucide-react'
+import { ArchiveX, CalendarClock, Handshake, Plus, RotateCcw, ShieldAlert, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
 interface MedOption { id: string; name: string; sku: string; unit: string; stockQty: number; quarantineQty: number; costPrice: number }
 interface SupplierOption { id: string; name: string }
-interface ReturnRow { id: string; returnNo: string; type: string; reason: string; status: string; supplier: string | null; totalValue: number; units: number; createdByName: string | null; createdAt: string }
+interface ReturnRow { id: string; returnNo: string; type: string; reason: string; status: string; source?: string | null; supplier: string | null; totalValue: number; units: number; createdByName: string | null; createdAt: string }
 interface QuarantineRow { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string | null; daysLeft: number | null; quarantineQty: number; stockQty: number; unitCost: number; value: number }
+interface PreExpiryCandidate { id: string; name: string; sku: string; unit: string; batchNumber: string | null; expiryDate: string; daysLeft: number; stockQty: number; costPrice: number; valueAtRisk: number; supplierId: string | null; supplierName: string | null }
 
 interface DraftLine { medicineId: string; qty: string; fromQuarantine: boolean }
 
 const emptyDraft = () => ({ medicineId: '', qty: '1', fromQuarantine: false })
 
-/** Tier 2: write-offs, supplier returns and the quarantine desk. */
+const PE_WINDOWS = ['30', '60', '90', '120'] as const
+
+/** Tier 2: write-offs, supplier returns, the quarantine desk and the pre-expiry disposal workflow. */
 export function ReturnsAndQuarantine() {
   const [meds, setMeds] = useState<MedOption[]>([])
   const [suppliers, setSuppliers] = useState<SupplierOption[]>([])
@@ -42,6 +45,17 @@ export function ReturnsAndQuarantine() {
   const [lines, setLines] = useState<DraftLine[]>([emptyDraft()])
   const [saving, setSaving] = useState(false)
   const [lastNote, setLastNote] = useState<{ returnNo: string; totalValue: number; itemCount: number } | null>(null)
+
+  // --- Pre-expiry disposal desk state ---
+  const [cands, setCands] = useState<PreExpiryCandidate[]>([])
+  const [peDays, setPeDays] = useState('60')
+  const [peLoading, setPeLoading] = useState(true)
+  const [peSel, setPeSel] = useState<Record<string, string>>({}) // medicineId -> dispose qty (string)
+  const [peOpen, setPeOpen] = useState(false)
+  const [peAction, setPeAction] = useState<'writeoff' | 'return_supplier'>('writeoff')
+  const [peSupplier, setPeSupplier] = useState('none')
+  const [peNote, setPeNote] = useState('')
+  const [peSaving, setPeSaving] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -61,7 +75,21 @@ export function ReturnsAndQuarantine() {
     }
   }, [])
 
+  const loadCandidates = useCallback(async (days: string) => {
+    setPeLoading(true)
+    try {
+      const res = await fetch(`/api/disposals/pre-expiry?days=${days}`, { cache: 'no-store' })
+      const json = await res.json()
+      setCands(res.ok ? (json.items ?? []) : [])
+    } catch {
+      setCands([])
+    } finally {
+      setPeLoading(false)
+    }
+  }, [])
+
   useEffect(() => { load() }, [load])
+  useEffect(() => { setPeSel({}); loadCandidates(peDays) }, [loadCandidates, peDays])
 
   const openNote = () => {
     setType('writeoff'); setReason('expired'); setSupplierId('none'); setNote('')
@@ -120,10 +148,92 @@ export function ReturnsAndQuarantine() {
     load()
   }
 
+  // --- Pre-expiry disposal desk helpers ---
+  const selectedIds = Object.keys(peSel).filter((id) => Number(peSel[id]) > 0 && cands.some((c) => c.id === id))
+  const selectedRows = selectedIds.map((id) => cands.find((c) => c.id === id)!).filter(Boolean)
+  const selUnits = selectedRows.reduce((s, c) => s + (Number(peSel[c.id]) || 0), 0)
+  const selValue = selectedRows.reduce((s, c) => s + (Number(peSel[c.id]) || 0) * c.costPrice, 0)
+  const allSelected = cands.length > 0 && cands.every((c) => Number(peSel[c.id]) > 0)
+  const selSuppliers = [...new Set(selectedRows.map((c) => c.supplierId).filter(Boolean))]
+  const candUnits = cands.reduce((s, c) => s + c.stockQty, 0)
+  const candValue = cands.reduce((s, c) => s + c.valueAtRisk, 0)
+
+  const toggleRow = (c: PreExpiryCandidate, on: boolean) => {
+    setPeSel((prev) => {
+      const next = { ...prev }
+      if (on) next[c.id] = String(c.stockQty)
+      else delete next[c.id]
+      return next
+    })
+  }
+  const toggleAll = () => {
+    if (allSelected) { setPeSel({}); return }
+    const next: Record<string, string> = {}
+    for (const c of cands) next[c.id] = String(c.stockQty)
+    setPeSel(next)
+  }
+
+  const openDisposal = (action: 'writeoff' | 'return_supplier') => {
+    if (selectedIds.length === 0) { toast({ title: 'Select at least one product first', variant: 'destructive' }); return }
+    setPeAction(action)
+    setPeNote('')
+    // Preselect the supplier when the whole selection comes from one source.
+    setPeSupplier(action === 'return_supplier' && selSuppliers.length === 1 ? (selSuppliers[0] as string) : 'none')
+    setPeOpen(true)
+  }
+
+  const submitDisposal = async () => {
+    const items = selectedIds.map((id) => ({ medicineId: id, qty: Number(peSel[id]) }))
+    if (items.length === 0) { toast({ title: 'Select at least one product', variant: 'destructive' }); return }
+    if (peAction === 'return_supplier' && peSupplier === 'none') { toast({ title: 'Choose a supplier for the return', variant: 'destructive' }); return }
+    setPeSaving(true)
+    try {
+      const res = await fetch('/api/disposals/pre-expiry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: peAction,
+          days: Number(peDays),
+          items,
+          supplierId: peAction === 'return_supplier' ? peSupplier : undefined,
+          note: peNote || undefined,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) { toast({ title: 'Disposal failed', description: json.error, variant: 'destructive' }); return }
+      const destroyed = peAction === 'writeoff'
+      toast({
+        title: `${json.return.returnNo} recorded — disposed ${json.return.items.reduce((s: number, i: { qty: number }) => s + i.qty, 0)} unit(s) before expiry`,
+        description: destroyed
+          ? `${fmtMoney(json.return.totalValue)} written off and auto-booked as an Inventory Write-offs expense${json.expenseNo ? ` (${json.expenseNo})` : ''}.`
+          : `${fmtMoney(json.return.totalValue)} left with the supplier return note — recoverable via credit, no P&L hit.`,
+      })
+      setPeOpen(false)
+      setPeSel({})
+      loadCandidates(peDays)
+      load()
+    } finally {
+      setPeSaving(false)
+    }
+  }
+
+  const daysLeftChip = (d: number) => (
+    <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+      d <= 14
+        ? 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400'
+        : d <= 30
+          ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400'
+          : 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-400'
+    }`}>
+      {d} d
+    </span>
+  )
+
   return (
     <Tabs defaultValue="notes">
       <TabsList className="rounded-full">
         <TabsTrigger value="notes" className="rounded-full">Write-offs &amp; Returns</TabsTrigger>
+        <TabsTrigger value="pre" className="rounded-full">Pre-Expiry Review ({cands.length})</TabsTrigger>
         <TabsTrigger value="quarantine" className="rounded-full">Quarantine ({quar.length})</TabsTrigger>
       </TabsList>
 
@@ -151,7 +261,12 @@ export function ReturnsAndQuarantine() {
                 <TableRow key={r.id}>
                   <TableCell className="font-medium">{r.returnNo}</TableCell>
                   <TableCell><Badge variant="outline" className="rounded-full">{r.type === 'supplier_return' ? 'supplier return' : 'write-off'}</Badge></TableCell>
-                  <TableCell className="capitalize">{r.reason}{r.supplier ? <span className="block text-xs text-muted-foreground">{r.supplier}</span> : null}</TableCell>
+                  <TableCell className="capitalize">
+                    {r.reason.replace(/_/g, '-')}{r.source === 'pre_expiry' && (
+                      <Badge className="ml-1.5 rounded-full bg-teal-100 text-[10px] uppercase tracking-wide text-teal-700 dark:bg-teal-500/15 dark:text-teal-300">pre-expiry desk</Badge>
+                    )}
+                    {r.supplier ? <span className="block text-xs text-muted-foreground">{r.supplier}</span> : null}
+                  </TableCell>
                   <TableCell className="text-center tabular-nums">{r.units}</TableCell>
                   <TableCell className="text-right tabular-nums font-semibold">{fmtMoney(r.totalValue)}</TableCell>
                   <TableCell className="hidden md:table-cell text-sm text-muted-foreground">{r.createdByName}</TableCell>
@@ -167,6 +282,103 @@ export function ReturnsAndQuarantine() {
             </TableBody>
           </Table>
         </Card>
+      </TabsContent>
+
+      <TabsContent value="pre" className="mt-3 space-y-3">
+        <Card>
+          <div className="flex flex-wrap items-center gap-2 border-b p-3 text-sm font-medium">
+            <CalendarClock className="h-4 w-4 text-teal-600" />
+            <span>Pre-expiry disposal desk — catch stock <em>before</em> the expiry date: return it to the supplier for credit, or write it off early</span>
+            <div className="ml-auto flex items-center gap-2">
+              <Select value={peDays} onValueChange={setPeDays}>
+                <SelectTrigger className="h-8 w-[170px] rounded-full text-xs" aria-label="Expiry window"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {PE_WINDOWS.map((w) => <SelectItem key={w} value={w}>Expiring within {w} days</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <Button variant="outline" size="icon" className="h-8 w-8 rounded-full" onClick={() => loadCandidates(peDays)} aria-label="Refresh candidates"><RotateCcw className="h-3.5 w-3.5" /></Button>
+            </div>
+          </div>
+          {!peLoading && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
+              <span><strong className="text-foreground tabular-nums">{cands.length}</strong> product(s)</span>
+              <span><strong className="text-foreground tabular-nums">{candUnits}</strong> {cands[0]?.unit ?? 'unit'}(s) on hand</span>
+              <span><strong className="text-foreground tabular-nums">{fmtMoney(candValue)}</strong> cost value at risk</span>
+              {selectedIds.length > 0 && (
+                <span className="rounded-full bg-teal-600 px-2.5 py-0.5 font-semibold text-white tabular-nums">
+                  {selectedIds.length} selected · {selUnits} unit(s) · {fmtMoney(selValue)}
+                </span>
+              )}
+            </div>
+          )}
+          {peLoading ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Scanning the shelves…</p>
+          ) : cands.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">Nothing expiring within {peDays} days — the desk is clear. Raise the window to look further ahead.</p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="w-10">
+                    <Checkbox checked={allSelected} onCheckedChange={() => toggleAll()} aria-label="Select all candidates" />
+                  </TableHead>
+                  <TableHead>Product</TableHead>
+                  <TableHead className="hidden md:table-cell">Batch</TableHead>
+                  <TableHead>Expiry</TableHead>
+                  <TableHead className="text-center">On hand</TableHead>
+                  <TableHead className="text-right hidden md:table-cell">Unit cost</TableHead>
+                  <TableHead className="text-right">Value at risk</TableHead>
+                  <TableHead className="hidden md:table-cell">Dispose qty</TableHead>
+                  <TableHead className="hidden lg:table-cell">Supplier</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cands.map((c) => (
+                  <TableRow key={c.id} className={peSel[c.id] ? 'bg-teal-50/50 dark:bg-teal-500/5' : undefined}>
+                    <TableCell>
+                      <Checkbox checked={Number(peSel[c.id]) > 0} onCheckedChange={(v) => toggleRow(c, v === true)} aria-label={`Select ${c.name}`} />
+                    </TableCell>
+                    <TableCell className="max-w-56">
+                      <p className="truncate font-medium">{c.name}</p>
+                      <p className="text-xs text-muted-foreground">{c.sku}</p>
+                    </TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">{c.batchNumber ?? '—'}</TableCell>
+                    <TableCell>
+                      <span className="tabular-nums">{fmtDate(c.expiryDate)}</span>
+                      <span className="ml-2 inline-block align-middle">{daysLeftChip(c.daysLeft)}</span>
+                    </TableCell>
+                    <TableCell className="text-center tabular-nums">{c.stockQty} {c.unit}</TableCell>
+                    <TableCell className="text-right tabular-nums hidden md:table-cell">{fmtMoney(c.costPrice)}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums">{fmtMoney(c.valueAtRisk)}</TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={c.stockQty}
+                        value={peSel[c.id] ?? ''}
+                        onChange={(e) => setPeSel((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                        placeholder="—"
+                        className="h-8 w-20 tabular-nums"
+                        aria-label={`Dispose quantity for ${c.name}`}
+                      />
+                    </TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground lg:table-cell">{c.supplierName ?? '—'}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </Card>
+        {cands.length > 0 && (
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button variant="outline" className="rounded-full border-red-300 text-red-600 hover:bg-red-50 dark:border-red-500/40 dark:text-red-400 dark:hover:bg-red-500/10" onClick={() => openDisposal('writeoff')} disabled={selectedIds.length === 0}>
+              <Trash2 className="h-4 w-4" /> Write off selected ({selUnits})
+            </Button>
+            <Button variant="outline" className="rounded-full border-teal-300 text-teal-700 hover:bg-teal-50 dark:border-teal-500/40 dark:text-teal-300 dark:hover:bg-teal-500/10" onClick={() => openDisposal('return_supplier')} disabled={selectedIds.length === 0}>
+              <Handshake className="h-4 w-4" /> Return to supplier
+            </Button>
+          </div>
+        )}
       </TabsContent>
 
       <TabsContent value="quarantine" className="mt-3">
@@ -267,6 +479,60 @@ export function ReturnsAndQuarantine() {
                 <Button variant="outline" onClick={() => setNoteOpen(false)}>Close</Button>
                 <Button onClick={submitNote} disabled={saving} className="bg-teal-600 hover:bg-teal-700">{saving ? 'Recording…' : 'Record Note'}</Button>
               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Pre-expiry disposal confirm dialog */}
+      <Dialog open={peOpen} onOpenChange={setPeOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CalendarClock className="h-4 w-4 text-teal-600" /> {peAction === 'writeoff' ? 'Write off before expiry' : 'Return to supplier before expiry'}</DialogTitle>
+            <DialogDescription>
+              {selectedRows.length} product(s) · {selUnits} unit(s) · {fmtMoney(selValue)} cost value. Acting before expiry keeps this off the expired-loss pile.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="max-h-44 rounded-lg border bg-muted/30 p-2 text-sm">
+              <ScrollArea className="max-h-40">
+                <ul className="space-y-1">
+                  {selectedRows.map((c) => (
+                    <li key={c.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{c.name} <span className="text-xs text-muted-foreground">· exp {fmtDate(c.expiryDate)} ({c.daysLeft} d left)</span></span>
+                      <span className="shrink-0 tabular-nums">{peSel[c.id]} × {fmtMoney(c.costPrice)} = <strong>{fmtMoney((Number(peSel[c.id]) || 0) * c.costPrice)}</strong></span>
+                    </li>
+                  ))}
+                </ul>
+              </ScrollArea>
+            </div>
+            {peAction === 'writeoff' ? (
+              <p className="rounded-lg border border-red-200 bg-red-50/60 p-2.5 text-xs text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">
+                This destroys the stock now. The {fmtMoney(selValue)} cost value is auto-booked as an <strong>Inventory Write-offs</strong> expense so the P&amp;L reflects the loss immediately — booked days (or weeks) before the units actually expire.
+              </p>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Supplier *</Label>
+                  <Select value={peSupplier} onValueChange={setPeSupplier}>
+                    <SelectTrigger><SelectValue placeholder="Select supplier…" /></SelectTrigger>
+                    <SelectContent>{suppliers.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                  </Select>
+                  {selSuppliers.length > 1 && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">Selection spans {selSuppliers.length} suppliers — the note books them all under the one chosen here. Consider disposing per supplier for clean credit notes.</p>
+                  )}
+                </div>
+                <p className="rounded-lg border border-teal-200 bg-teal-50/60 p-2.5 text-xs text-teal-700 dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300">
+                  Stock leaves with a supplier return note — recoverable via credit, so nothing hits the P&amp;L until the supplier refuses and it is actually destroyed.
+                </p>
+              </>
+            )}
+            <Textarea rows={2} value={peNote} onChange={(e) => setPeNote(e.target.value)} placeholder="Note (optional) — e.g. supplier authorization ref" />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPeOpen(false)}>Close</Button>
+              <Button onClick={submitDisposal} disabled={peSaving} className={peAction === 'writeoff' ? 'bg-red-600 hover:bg-red-700' : 'bg-teal-600 hover:bg-teal-700'}>
+                {peSaving ? 'Recording…' : peAction === 'writeoff' ? `Destroy ${selUnits} unit(s)` : 'Create return note'}
+              </Button>
             </div>
           </div>
         </DialogContent>

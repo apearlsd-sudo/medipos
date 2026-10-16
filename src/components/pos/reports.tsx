@@ -40,6 +40,7 @@ interface ReportData {
   expiryReport: Array<{ name: string; branch?: string; batch: string; expiryDate: string; daysLeft: number; qty: number }>
   writeOffTotal?: number
   netAfterWriteOffs?: number
+  preExpiryDisposals?: { notes: number; units: number; destroyedValue: number; returnedValue: number; avgDaysEarly: number | null }
   purchaseStats: Array<{ reference: string; supplier: string; date: string; total: number; paid: number; status: string }>
   branchBreakdown?: Array<{
     branchId: string; branchName: string; branchCode: string
@@ -962,16 +963,18 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
   if (tab === 'expiry') {
     const risk = (data as { expiryRisk?: { expired: number; d30: number; d60: number; d90: number } }).expiryRisk
     const writeOffTotal = (data as { writeOffTotal?: number }).writeOffTotal
+    const pre = data.preExpiryDisposals
     return (
       <div className="space-y-3">
       {risk && (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
           {[
             { label: 'Expired (sellable)', value: risk.expired, cls: 'text-red-600 dark:text-red-400' },
             { label: 'Expiring ≤30 d', value: risk.d30, cls: 'text-amber-600 dark:text-amber-400' },
             { label: '31–60 d', value: risk.d60, cls: 'text-amber-500' },
             { label: '61–90 d', value: risk.d90, cls: 'text-sky-600 dark:text-sky-400' },
             { label: 'Written off (period)', value: writeOffTotal ?? 0, cls: 'text-violet-600 dark:text-violet-400' },
+            { label: 'Disposed pre-expiry (period)', value: pre?.destroyedValue ?? 0, cls: 'text-teal-600 dark:text-teal-400' },
           ].map((c) => (
             <Card key={c.label} className="p-4">
               <p className="text-xs text-muted-foreground">{c.label}</p>
@@ -980,7 +983,9 @@ function ReportDataTable({ tab, data }: { tab: ReportTab; data: ReportData }) {
           ))}
         </div>
       )}
-      <p className="px-1 text-xs text-muted-foreground">Cost value at risk (stock on hand × cost price) by expiry horizon. Write off or return dead stock from Inventory → Returns &amp; Quarantine to clear it — every write-off is auto-booked as an “Inventory Write-offs” expense so the P&amp;L reflects the loss.</p>
+      <p className="px-1 text-xs text-muted-foreground">Cost value at risk (stock on hand × cost price) by expiry horizon. Write off or return dead stock from Inventory → Returns &amp; Quarantine to clear it — every write-off is auto-booked as an “Inventory Write-offs” expense so the P&amp;L reflects the loss.{pre && pre.notes > 0 && (
+        <> The pre-expiry disposal desk caught <strong className="font-semibold text-teal-600 dark:text-teal-400">{pre.units} unit(s)</strong> across {pre.notes} note(s) before expiry — {fmtMoney(pre.destroyedValue)} destroyed, {fmtMoney(pre.returnedValue)} sent back for supplier credit{pre.avgDaysEarly !== null ? `, on average ${pre.avgDaysEarly} days early` : ''}.</>
+      )}</p>
       <Card>
         <CardContent className="p-0">
           <Table>

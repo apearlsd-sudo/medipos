@@ -465,6 +465,7 @@ model StockReturn {
   branchId      String?
   totalValue    Float             @default(0) // cost value of the removed stock
   note          String?
+  source        String? // 'pre_expiry' — booked via the pre-expiry disposal desk (null = manual note)
   createdById   String?
   createdByName String?
   items         StockReturnItem[]
@@ -489,6 +490,7 @@ model StockReturnItem {
   value       Float       @default(0)
   action      String      @default("writeoff") // writeoff | return_supplier | quarantine
   fromQuarantine Boolean  @default(false) // qty came out of Medicine.quarantineQty
+  daysBeforeExpiry Int? // pre-expiry desk snapshot: days between disposal and expiry
 }
 
 model Shift {

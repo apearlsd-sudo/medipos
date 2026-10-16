@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { recordSyncOp } from '@/lib/sync'
+import { nextDocNo } from '@/lib/doc-no'
 
 // ---------------------------------------------------------------------------
 // Write-off → expense booking. Every destroyed unit (expired / damaged /
@@ -71,30 +72,47 @@ export async function bookWriteOffExpense(
   if (dup) return dup
 
   const category = await ensureWriteOffCategory(client)
-  const count = await client.expense.count()
   const createdAt = input.createdAt ?? new Date()
-  const expenseNo = `EXP-${createdAt.getFullYear()}-${String(count + 1).padStart(4, '0')}`
-
-  const expense = await client.expense.create({
-    data: {
-      expenseNo,
-      categoryId: category.id,
-      branchId: input.branchId ?? null,
-      description: input.description,
-      amount,
-      // Not a drawer outflow — system-booked loss, labeled for the ledger.
-      paymentMethod: 'writeoff',
-      reference: input.ref,
-      status: 'completed',
-      note: input.note ?? 'Auto-booked stock write-off',
-      recordedById: input.userId ?? null,
-      recordedByName: input.userName,
-      clientRef,
-      createdAt,
-      updatedAt: createdAt,
-    },
-  })
-  return { id: expense.id, expenseNo: expense.expenseNo, amount }
+  const prefix = `EXP-${createdAt.getFullYear()}-`
+  let booked: { id: string; expenseNo: string; amount: number } | null = null
+  // Gap-proof numbering + small retry: two bookings racing the same highest
+  // number (or a manually typed EXP-####) must not fail the caller's stock
+  // transaction — recompute from the new max and retry.
+  for (let attempt = 0; attempt < 3 && !booked; attempt++) {
+    const last = await client.expense.findFirst({
+      where: { expenseNo: { startsWith: prefix } },
+      orderBy: { expenseNo: 'desc' },
+      select: { expenseNo: true },
+    })
+    const expenseNo = nextDocNo(last?.expenseNo, prefix)
+    try {
+      const expense = await client.expense.create({
+        data: {
+          expenseNo,
+          categoryId: category.id,
+          branchId: input.branchId ?? null,
+          description: input.description,
+          amount,
+          // Not a drawer outflow — system-booked loss, labeled for the ledger.
+          paymentMethod: 'writeoff',
+          reference: input.ref,
+          status: 'completed',
+          note: input.note ?? 'Auto-booked stock write-off',
+          recordedById: input.userId ?? null,
+          recordedByName: input.userName,
+          clientRef,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      })
+      booked = { id: expense.id, expenseNo: expense.expenseNo, amount }
+    } catch (e) {
+      const isDupNo = e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002'
+      if (!isDupNo || attempt === 2) throw e
+    }
+  }
+  if (!booked) throw new Error('Could not allocate an expense number for the write-off')
+  return booked
 }
 
 /** Find the auto-booked expense for a loss event, if any. */

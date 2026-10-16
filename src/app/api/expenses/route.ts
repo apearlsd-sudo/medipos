@@ -4,6 +4,7 @@ import { requirePermission } from '@/lib/auth'
 import { branchIdForWrite, resolveBranchScope } from '@/lib/branches'
 import { recordSyncOp } from '@/lib/sync'
 import { isMomoProvider } from '@/lib/pos-finance'
+import { nextDocNo } from '@/lib/doc-no'
 
 const DAY = 24 * 60 * 60 * 1000
 const METHODS = ['cash', 'momo', 'card', 'bank']
@@ -150,8 +151,15 @@ export async function POST(req: NextRequest) {
     }
 
     const branchId = await branchIdForWrite(gate.user, body.branchId)
-    const count = await db.expense.count()
-    const expenseNo = `EXP-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`
+    // Gap-proof numbering: deleted expenses leave number gaps, so count+1
+    // can land on a still-taken expenseNo — take the year's max instead.
+    const expPrefix = `EXP-${new Date().getFullYear()}-`
+    const lastExp = await db.expense.findFirst({
+      where: { expenseNo: { startsWith: expPrefix } },
+      orderBy: { expenseNo: 'desc' },
+      select: { expenseNo: true },
+    })
+    const expenseNo = nextDocNo(lastExp?.expenseNo, expPrefix)
 
     const expense = await db.expense.create({
       data: {
