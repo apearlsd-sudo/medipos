@@ -1299,3 +1299,16 @@ Work Log:
 
 Stage Summary:
 - Repo is now public-safe and push-ready: no secrets, no business data (DB/backups/S3 creds), no build artifacts, no >100MB blobs; full application history preserved (Task-82 → recovery → phase2 → rebuild-all). Push pending GitHub credentials (fine-grained PAT, Contents:Read+Write on apearlsd-sudo/medipos); bundle at .push-staging/pre-rewrite.bundle is the rollback point.
+
+---
+Task ID: push-github-remote
+Agent: main
+Task: (update) push executed — apearlsd-sudo/medipos now live.
+
+Work Log:
+- Tokens 1 & 2 (fine-grained): valid identity but 403 — API write probe returned "Resource not accessible by personal access token" → Contents:Read/Write + repo selection both missing. Diagnosed via GET /repos (perms object shows owner role, not token scope) + harmless git/blobs write probe.
+- Token 3: git push accepted — "* [new branch] main -> main"; remote main = 7745ad1303d704bf3b0be47e54b72ad3ea459a2d (repo-hygiene commit on top of rewritten history). Token used only as one-shot push URL, never stored in git config/credential store; outputs redacted.
+- Upstream wired: origin/main tracking set; anonymous fetch OK (public repo).
+
+Stage Summary:
+- https://github.com/apearlsd-sudo/medipos = full app history (Task-82 → recovery → phase2 → rebuild-all → repo hygiene), 509 files, no DB/secrets/build artifacts. User advised to revoke all three pasted tokens. Follow-up candidate: GitHub provider (releases) for electron-updater + Actions CI for Windows NSIS builds.
