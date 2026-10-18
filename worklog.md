@@ -1390,3 +1390,17 @@ Work Log:
 
 Stage Summary:
 - End-to-end closed: push → tag v* → windows-latest CI → NSIS installer on GitHub Releases → installed desktop apps auto-update. Roadmaps #1-#5 fully delivered AND publicly shipped. Next natural step: install v0.3.1 on a real Windows machine (first true validation of the Electron net-stack updater path), then future releases are just: bump version → tag → push.
+
+---
+Task ID: v0.3.2-ui-clipboard
+Agent: main
+Task: user reports (installed Windows app): IP addresses truncated in Device Discovery & Internet Sync / Network & Sync below 2560px viewports; copy/paste entirely non-functional in the installed app.
+
+Work Log:
+- TRUNCATION root cause: IP/URL display lines used `truncate` (ellipsis) — fine only ≥2560px where content fits. 6 sites fixed across 3 components → `break-all` (wrap): network-sync workstation addresses (http://ip:port list), device-discovery LAN-discovery line + live-link sub + Cloudflare tunnel URL + device address rows, workstation-sync endpoint URLs. Name+badge rows keep truncate (user-set names, layout-sensitive). Tunnel quick-command keeps truncate (has copy button).
+- CLIPBOARD root cause: electron/main.js called Menu.setApplicationMenu(null) — on Windows/Linux the standard editing accelerators (Ctrl+C/X/V/Z/A) are registered ONLY via the application menu, so the installed app had NO copy/paste anywhere. Fix: minimal hidden Edit menu (autoHideMenuBar already set — Alt reveals) + right-click context-menu on webContents (undo/redo/sep/cut/copy/paste/selectAll driven by editFlags, copy-only on selections).
+- VERIFY: node --check both files; SW v49→v50; build rc=0 (PIPESTATUS this time); standalone SW=v50; REGRESSION 139/139 (24+17+30+36+32); relaunch HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY; headless Xvfb Electron smoke ×2 → DESKTOP_SMOKE_OK with the new menu code.
+- RELEASE: version 0.3.2, commit af0e0d1, tag v0.3.2 pushed → CI 39140384149. First release with releaseType: release (expect published, not draft, no split-assets). User's installed v0.3.1 should auto-update via the GitHub feed — first real-world updater validation.
+
+Stage Summary:
+- Both desktop usability bugs fixed at the root (not workarounds): addresses readable at every viewport, clipboard works keyboard + mouse. v0.3.2 in CI; pending: release assets + latest.yml check, worklog final note.
