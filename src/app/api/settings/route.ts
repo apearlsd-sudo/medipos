@@ -60,8 +60,6 @@ const TILL_SETTING_KEYS = new Set([
   'loyaltyBirthdayWindowDays',
   // checkout (mobile money provider list)
   'momoProviders',
-  // checkout (cash rounding on the cash leg)
-  'cashRounding',
 ])
 
 export async function GET(req: NextRequest) {

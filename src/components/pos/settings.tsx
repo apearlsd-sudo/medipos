@@ -12,6 +12,7 @@ import { TwoFactorCard } from '@/components/pos/security-settings'
 import { CommerceCards } from '@/components/pos/commerce-settings'
 import { DataHygieneCard } from '@/components/pos/data-hygiene'
 import { CloudBackupCard } from '@/components/pos/cloud-backup'
+import { HardwareConsoleCard } from '@/components/pos/hardware-console'
 import { NetworkSyncCard } from '@/components/pos/network-sync'
 import { DeviceDiscoveryCard } from '@/components/pos/device-discovery'
 import { WorkstationSyncCard } from '@/components/pos/workstation-sync'
@@ -19,15 +20,18 @@ import { usePwaInstall } from '@/components/pos/pwa-register'
 import { TaxEraCard } from '@/components/pos/tax-era-settings'
 import { describeDiscountPolicy, DISCOUNT_POLICY_DEFAULTS, discountPolicyFromSettings } from '@/lib/discount-approval'
 import { sumComponentPcts } from '@/lib/tax-components'
-import { CURRENCIES, LOCALES, fmtDate, fmtMoney } from '@/lib/format'
+import { CURRENCIES, LOCALES, fmtDate, fmtMoney, fmtTime, setDatetimeConfig } from '@/lib/format'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 import type { LucideIcon } from 'lucide-react'
-import { BadgeCheck, Download, HandCoins, HardDriveDownload, Loader2, MonitorDown, Moon, Network, Percent, Printer, Save, ShieldCheck, Store, Sun, TriangleAlert, Wallet } from 'lucide-react'
+import { BadgeCheck, Download, HandCoins, HardDriveDownload, ImageUp, Loader2, MonitorDown, Moon, Network, Percent, Printer, Save, ShieldCheck, Store, Sun, Trash2, TriangleAlert, Wallet } from 'lucide-react'
 
 interface StoreSettings {
   storeName: string
+  brandSlogan: string
+  datetimeTime: string
+  datetimeDate: string
   storePhone: string
   storeEmail: string
   storeAddress: string
@@ -54,6 +58,9 @@ interface StoreSettings {
 
 const DEFAULTS: StoreSettings = {
   storeName: 'MediPOS Pharmacy',
+  brandSlogan: '',
+  datetimeTime: '12h',
+  datetimeDate: 'dmy',
   storePhone: '+233 30 222 5500',
   storeEmail: 'contact@medipos.com',
   storeAddress: '25 Liberation Road, Airport Residential Area, Accra',
@@ -86,7 +93,7 @@ const DEFAULTS: StoreSettings = {
 // section where they were made; the self-saving consoles (sync, commerce,
 // hygiene, tax eras) manage their own persistence and carry no fields.
 // ---------------------------------------------------------------------------
-type SettingsSection = 'store' | 'sales' | 'till' | 'sync' | 'app' | 'security'
+type SettingsSection = 'store' | 'sales' | 'till' | 'sync' | 'hardware' | 'app' | 'security'
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; blurb: string; icon: LucideIcon; fields?: Array<keyof StoreSettings> }> = [
   {
@@ -110,6 +117,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; blurb: string; icon:
     icon: HandCoins,
     fields: ['receiptHeader', 'receiptFooter', 'receiptShowBarcode'],
   },
+  { id: 'hardware', label: 'Hardware', blurb: 'Receipt printers, label printers and cash drawers', icon: Printer },
   { id: 'sync', label: 'Sync & Devices', blurb: 'Node replication, device discovery and the offline queue', icon: Network },
   { id: 'app', label: 'App & Data', blurb: 'Appearance, app installation and database backups', icon: HardDriveDownload },
   { id: 'security', label: 'Security & Session', blurb: 'Your account, two-factor sign-in and recovery', icon: ShieldCheck },
@@ -120,6 +128,8 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
   const [loaded, setLoaded] = useState(false)
   const [loadFailed, setLoadFailed] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [logoVersion, setLogoVersion] = useState<number>(0)
+  const [logoBusy, setLogoBusy] = useState(false)
   const [section, setSection] = useState<SettingsSection>('store')
   const [dirty, setDirty] = useState<ReadonlySet<keyof StoreSettings>>(new Set())
   const { resolvedTheme, setTheme } = useTheme()
@@ -136,6 +146,12 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
       .then((j) => {
         setSettings({ ...DEFAULTS, ...(j?.settings ?? {}) })
         setDirty(new Set())
+        setDatetimeConfig({
+          hour12: (j?.settings?.datetimeTime ?? '12h') !== '24h',
+          dateOrder: (j?.settings?.datetimeDate ?? 'dmy') === 'mdy' ? 'mdy' : 'dmy',
+        })
+        const v = Number(j?.settings?.brand_logo_version ?? 0)
+        if (v > 0) setLogoVersion(v)
       })
       .catch(() => setLoadFailed(true))
       .finally(() => setLoaded(true))
@@ -172,6 +188,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
       if (res.ok) {
         toast({ title: 'Settings saved', description: 'Store preferences, currency and receipt updated successfully.' })
         setDirty(new Set())
+        setDatetimeConfig({ hour12: settings.datetimeTime !== '24h', dateOrder: settings.datetimeDate === 'mdy' ? 'mdy' : 'dmy' })
         onSettingsSaved?.()
       } else {
         const j = await res.json().catch(() => ({}))
@@ -254,7 +271,80 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                   <CardDescription>Appears on receipts and invoices.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border bg-white shadow-sm">
+                      {logoVersion > 0 ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={`/api/branding/logo?v=${logoVersion}`} alt="Pharmacy logo" className="h-full w-full object-contain" />
+                      ) : (
+                        <Store className="h-7 w-7 text-muted-foreground/50" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1 space-y-1.5">
+                      <Label className="text-xs">Pharmacy logo (shows on the sign-in screen)</Label>
+                      <div className="flex flex-wrap gap-2">
+                        <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium hover:bg-muted">
+                          {logoBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageUp className="h-3.5 w-3.5" />} Upload logo
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                            className="hidden"
+                            disabled={!canEditSettings || logoBusy}
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              e.target.value = ''
+                              if (!file || !canEditSettings) return
+                              setLogoBusy(true)
+                              try {
+                                const dataUrl = await new Promise<string>((resolve, reject) => {
+                                  const reader = new FileReader()
+                                  reader.onerror = () => reject(new Error('read failed'))
+                                  reader.onload = () => {
+                                    if (file.type === 'image/svg+xml') return resolve(String(reader.result))
+                                    const img = new Image()
+                                    img.onerror = () => reject(new Error('not an image'))
+                                    img.onload = () => {
+                                      const max = 256
+                                      const scale = Math.min(1, max / Math.max(img.width, img.height))
+                                      const canvas = document.createElement('canvas')
+                                      canvas.width = Math.max(1, Math.round(img.width * scale))
+                                      canvas.height = Math.max(1, Math.round(img.height * scale))
+                                      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+                                      resolve(canvas.toDataURL('image/png'))
+                                    }
+                                    img.src = String(reader.result)
+                                  }
+                                  reader.readAsDataURL(file)
+                                })
+                                const res = await fetch('/api/branding/logo', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataUrl }) })
+                                const j = await res.json()
+                                if (res.ok) { setLogoVersion(Number(j.logoVersion)); toast({ title: 'Logo updated', description: 'It now shows on the sign-in screen.' }) }
+                                else toast({ title: 'Logo upload failed', description: j.error, variant: 'destructive' })
+                              } catch {
+                                toast({ title: 'Logo upload failed', description: 'Could not read that file as an image.', variant: 'destructive' })
+                              } finally {
+                                setLogoBusy(false)
+                              }
+                            }}
+                          />
+                        </label>
+                        {logoVersion > 0 && (
+                          <Button variant="outline" size="sm" className="rounded-full text-red-600 hover:text-red-700" disabled={!canEditSettings || logoBusy}
+                            onClick={async () => {
+                              setLogoBusy(true)
+                              try {
+                                const res = await fetch('/api/branding/logo', { method: 'DELETE' })
+                                if (res.ok) { setLogoVersion(0); toast({ title: 'Logo removed' }) }
+                              } finally { setLogoBusy(false) }
+                            }}>
+                            <Trash2 className="h-3.5 w-3.5" /> Remove
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                   <div className="space-y-1.5"><Label>Store Name</Label><Input disabled={!canEditSettings} value={settings.storeName} onChange={(e) => set('storeName', e.target.value)} /></div>
+                  <div className="space-y-1.5"><Label>Slogan (shows under the store name on the sign-in screen)</Label><Input disabled={!canEditSettings} placeholder="Your health, our commitment" value={settings.brandSlogan} onChange={(e) => set('brandSlogan', e.target.value)} /></div>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5"><Label>Phone</Label><Input disabled={!canEditSettings} value={settings.storePhone} onChange={(e) => set('storePhone', e.target.value)} /></div>
                     <div className="space-y-1.5"><Label>Email</Label><Input disabled={!canEditSettings} value={settings.storeEmail} onChange={(e) => set('storeEmail', e.target.value)} /></div>
@@ -295,12 +385,35 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
                       </Select>
                     </div>
                   </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Time format</Label>
+                      <Select value={settings.datetimeTime} onValueChange={(v) => set('datetimeTime', v)} disabled={!canEditSettings}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="12h">12-hour (2:45 PM)</SelectItem>
+                          <SelectItem value="24h">24-hour (14:45)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Date order</Label>
+                      <Select value={settings.datetimeDate} onValueChange={(v) => set('datetimeDate', v)} disabled={!canEditSettings}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="dmy">Day first (17 Oct 2026)</SelectItem>
+                          <SelectItem value="mdy">Month first (Oct 17, 2026)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
                   <div className="rounded-xl border bg-muted/40 p-4">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Preview</p>
                     <div className="grid gap-1.5 text-sm">
                       <div className="flex justify-between"><span className="text-muted-foreground">Price</span><span className="font-semibold tabular-nums">{fmtMoney(1234.5)}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Large amount</span><span className="font-semibold tabular-nums">{fmtMoney(1250000)}</span></div>
                       <div className="flex justify-between"><span className="text-muted-foreground">Date format</span><span className="font-medium">{fmtDate(new Date())}</span></div>
+                      <div className="flex justify-between"><span className="text-muted-foreground">Time format</span><span className="font-medium">{fmtTime(new Date())}</span></div>
                     </div>
                     {selectedCurrency && (
                       <p className="mt-2 text-xs text-muted-foreground">
@@ -455,6 +568,12 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               <NetworkSyncCard />
               <DeviceDiscoveryCard />
               <WorkstationSyncCard />
+            </div>
+          )}
+
+          {section === 'hardware' && (
+            <div className="grid items-start gap-4 xl:grid-cols-2">
+              <HardwareConsoleCard />
             </div>
           )}
 

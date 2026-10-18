@@ -8,7 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { fmtDuration } from '@/components/pos/shifts'
-import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, Moon, PackageX, Percent, Settings, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
+import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, Moon, PackageX, Percent, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useEffect, useState } from 'react'
 
@@ -281,12 +281,6 @@ export function Header({ title, onMenuClick, onGotoPOS, onGotoShifts, onGotoAppr
               )}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            {user.email && (
-              <div className="px-2 py-1.5 text-xs text-muted-foreground">{user.email}</div>
-            )}
-            <DropdownMenuItem onClick={() => (window.location.hash = '#settings')} className="gap-2">
-              <Settings className="h-4 w-4" /> Settings
-            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="gap-2 text-red-600 focus:text-red-600 dark:text-red-400">
               <LogOut className="h-4 w-4" /> Sign out

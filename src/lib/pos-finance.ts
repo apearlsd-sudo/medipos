@@ -213,34 +213,3 @@ export function earnFor(dueAmount: number, s: LoyaltySettings, multiplier = 1, b
 // Z-report and the accounting pack can account for every pesewa.
 // ---------------------------------------------------------------------------
 
-export type CashRoundingMode = 'none' | '0.05' | '0.10'
-
-/** Parses the stored setting; anything unexpected means "off". */
-export function parseCashRoundingMode(v: string | null | undefined): CashRoundingMode {
-  return v === '0.05' || v === '0.10' ? v : 'none'
-}
-
-/** Round `amount` to the nearest multiple of `step` (half-up on ties). */
-function roundToNearest(amount: number, step: number): number {
-  return Math.round(amount / step) * step
-}
-
-/**
- * Cash rounding for a sale's amount due.
- * Returns `roundedDue` (what the cash customer is asked to pay) and the
- * signed `delta` (roundedDue − due; + = store collects the difference,
- * − = customer's favor). Non-cash tenders always pass `cashInvolved=false`
- * and get the exact amount back.
- */
-export function roundCashFor(
-  due: number,
-  mode: CashRoundingMode,
-  cashInvolved: boolean,
-): { roundedDue: number; delta: number } {
-  if (!cashInvolved || mode === 'none' || !Number.isFinite(due) || due <= 0) {
-    return { roundedDue: +due.toFixed(2), delta: 0 }
-  }
-  const step = mode === '0.05' ? 0.05 : 0.1
-  const roundedDue = +roundToNearest(due, step).toFixed(2)
-  return { roundedDue, delta: +(roundedDue - due).toFixed(2) }
-}

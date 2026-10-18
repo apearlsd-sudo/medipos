@@ -7,7 +7,7 @@ import { loadBranchPrices, effectivePrice } from '@/lib/pricing'
 import { logAudit } from '@/lib/audit'
 import { recordSyncOp } from '@/lib/sync'
 import { planPackSale } from '@/lib/packs'
-import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider, resolveTier, isBirthdayInWindow, roundCashFor, parseCashRoundingMode } from '@/lib/pos-finance'
+import { creditBalance, loyaltySettings, splitInsurance, resolveRedemption, earnFor, isMomoProvider, resolveTier, isBirthdayInWindow } from '@/lib/pos-finance'
 import { sumComponentPcts, taxComponents, freezeComponentsJson } from '@/lib/tax-components'
 import { parseDateRange } from '@/lib/date-filter'
 import { nextDocNo } from '@/lib/next-doc-no'
@@ -249,15 +249,6 @@ export async function POST(req: NextRequest) {
         }))
       : []
 
-    // --- Cash rounding (coinless till) -------------------------------------
-    // When the store enables it (Settings → Commerce), the cash leg of the
-    // sale rounds to the nearest 5/10 pesewas. Tax/base/total rows stay EXACT
-    // so the VAT ledger keeps reconciling — only the amount the cash customer
-    // is asked for moves, and the signed difference is stamped on the sale as
-    // roundingDelta (+ = store collects the difference, − = customer's favor).
-    const roundingMode = parseCashRoundingMode(_settingsMap.cashRounding)
-    const cashInvolved = rawTenders.length > 0 ? rawTenders.some((t) => t.method === 'cash') : paymentMethod === 'cash' || paymentMethod === 'insurance'
-    const { roundedDue, delta: roundingDelta } = roundCashFor(due, roundingMode, cashInvolved)
     if (rawTenders.length > 0 && paymentMethod === 'credit') {
       return NextResponse.json({ error: 'Credit sales cannot be combined with split tenders.' }, { status: 400 })
     }
@@ -285,8 +276,8 @@ export async function POST(req: NextRequest) {
         clean.push({ method: t.method, amount: +t.amount.toFixed(2), ...(t.provider ? { provider: t.provider } : {}), ...(t.reference ? { reference: t.reference } : {}) })
       }
       sum = +sum.toFixed(2)
-      if (sum + 0.011 < roundedDue) {
-        return NextResponse.json({ error: `Split tenders total ${sum.toFixed(2)} — short of the ${roundedDue.toFixed(2)} due${roundingDelta !== 0 ? ` (cash rounding ${roundingDelta > 0 ? '+' : ''}${roundingDelta.toFixed(2)} applied)` : ''}.` }, { status: 400 })
+      if (sum + 0.011 < due) {
+        return NextResponse.json({ error: `Split tenders total ${sum.toFixed(2)} — short of the ${due.toFixed(2)} due.` }, { status: 400 })
       }
       if (!hasCash && sum > due + 0.011) {
         return NextResponse.json({ error: 'Only a cash tender can be overpaid (change is returned on cash).' }, { status: 400 })
@@ -298,8 +289,8 @@ export async function POST(req: NextRequest) {
         paymentReference = primary.reference ?? null
       }
       paymentStatus = momoPending ? 'pending' : 'paid'
-      paidAmount = Math.min(sum, roundedDue)
-      changeAmount = hasCash ? +Math.max(0, sum - roundedDue).toFixed(2) : 0
+      paidAmount = Math.min(sum, due)
+      changeAmount = hasCash ? +Math.max(0, sum - due).toFixed(2) : 0
       tendersJson = JSON.stringify(clean)
     }
 
@@ -308,11 +299,11 @@ export async function POST(req: NextRequest) {
     } else if (paymentMethod === 'cash' || paymentMethod === 'insurance') {
       // The cash/insurance till leg pays the ROUNDED patient share (cash
       // rounding may move it a few pesewas); everything is reconciled against
-      // roundedDue. The insurer's share is booked separately as a claim.
-      paidAmount = Number(body.paidAmount ?? roundedDue)
-      changeAmount = +Math.max(0, paidAmount - roundedDue).toFixed(2)
-      paidAmount = Math.min(paidAmount, roundedDue)
-      paymentStatus = paidAmount >= roundedDue - 0.001 ? 'paid' : paidAmount > 0 ? 'partially_paid' : 'pending'
+      // due. The insurer's share is booked separately as a claim.
+      paidAmount = Number(body.paidAmount ?? due)
+      changeAmount = +Math.max(0, paidAmount - due).toFixed(2)
+      paidAmount = Math.min(paidAmount, due)
+      paymentStatus = paidAmount >= due - 0.001 ? 'paid' : paidAmount > 0 ? 'partially_paid' : 'pending'
     } else if (paymentMethod === 'card') {
       paidAmount = due
       paymentStatus = 'paid'
@@ -426,7 +417,7 @@ export async function POST(req: NextRequest) {
         birthdayBonus = loyalty.birthdayPoints
       }
     }
-    const pointsEarned = earnsPoints && customer ? earnFor(roundedDue, loyalty, tier?.multiplier ?? 1, birthdayBonus) : 0
+    const pointsEarned = earnsPoints && customer ? earnFor(due, loyalty, tier?.multiplier ?? 1, birthdayBonus) : 0
 
     const sale = await db.$transaction(async (tx) => {
       const created = await tx.sale.create({
@@ -442,7 +433,6 @@ export async function POST(req: NextRequest) {
           taxBase,
           taxEraId: activeEra?.id ?? null,
           taxComponentsJson,
-          roundingDelta,
           paidAmount,
           changeAmount,
           paymentMethod,
@@ -556,7 +546,6 @@ export async function POST(req: NextRequest) {
       taxBase,
       taxEraId: activeEra?.id ?? null,
       taxComponentsJson,
-      roundingDelta,
       paidAmount, changeAmount,
       paymentMethod, paymentProvider, paymentReference, paymentStatus,
       tenders: tendersJson ? JSON.parse(tendersJson) : null,
@@ -614,7 +603,6 @@ export async function POST(req: NextRequest) {
         insurance: insurance ?? undefined,
         loyalty: customer ? { earned: pointsEarned, redeemed: redemption.points, value: redemption.value, balance: customer.points + pointsEarned - redemption.points, tier: tier?.name ?? null, birthdayBonus } : undefined,
         due,
-        roundedDue,
       },
       { status: 201 },
     )

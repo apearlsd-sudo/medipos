@@ -58,6 +58,19 @@ export function getCurrencyConfig(): CurrencyConfig {
   return { ...currencyConfig }
 }
 
+export interface DatetimePrefs { hour12: boolean; dateOrder: 'dmy' | 'mdy' }
+
+const datetimeConfig: DatetimePrefs = { hour12: true, dateOrder: 'dmy' }
+
+export function setDatetimeConfig(prefs: Partial<DatetimePrefs>) {
+  if (typeof prefs.hour12 === 'boolean') datetimeConfig.hour12 = prefs.hour12
+  if (prefs.dateOrder === 'dmy' || prefs.dateOrder === 'mdy') datetimeConfig.dateOrder = prefs.dateOrder
+}
+
+export function getDatetimeConfig(): DatetimePrefs {
+  return { ...datetimeConfig }
+}
+
 export function setCurrencyConfig(code: string, locale: string) {
   const def = CURRENCIES.find((c) => c.code === code.toUpperCase()) ?? CURRENCIES[0]
   currencyConfig = {
@@ -123,8 +136,9 @@ export const fmtCompact = (n: number | null | undefined) => {
 
 export const fmtDate = (d: string | Date | null | undefined) => {
   if (!d) return '—'
+  const dLocale = datetimeConfig.dateOrder === 'mdy' ? 'en-US' : 'en-GB'
   try {
-    return new Date(d).toLocaleDateString(currencyConfig.locale, { day: '2-digit', month: 'short', year: 'numeric' })
+    return new Date(d).toLocaleDateString(dLocale, { day: '2-digit', month: 'short', year: 'numeric' })
   } catch {
     return new Date(d).toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })
   }
@@ -133,18 +147,18 @@ export const fmtDate = (d: string | Date | null | undefined) => {
 export const fmtDateTime = (d: string | Date | null | undefined) => {
   if (!d) return '—'
   try {
-    return new Date(d).toLocaleString(currencyConfig.locale, { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    return new Date(d).toLocaleString(datetimeConfig.dateOrder === 'mdy' ? 'en-US' : 'en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: datetimeConfig.hour12 })
   } catch {
-    return new Date(d).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+    return new Date(d).toLocaleString('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: datetimeConfig.hour12 })
   }
 }
 
 export const fmtTime = (d: string | Date | null | undefined) => {
   if (!d) return '—'
   try {
-    return new Date(d).toLocaleTimeString(currencyConfig.locale, { hour: 'numeric', minute: '2-digit', hour12: true })
+    return new Date(d).toLocaleTimeString(currencyConfig.locale, { hour: 'numeric', minute: '2-digit', hour12: datetimeConfig.hour12 })
   } catch {
-    return new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    return new Date(d).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: datetimeConfig.hour12 })
   }
 }
 

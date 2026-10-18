@@ -69,10 +69,6 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
   const [birthdayPoints, setBirthdayPoints] = useState('20')
   const [birthdayWindowDays, setBirthdayWindowDays] = useState('3')
 
-  // Cash rounding (coinless till) — rounds the CASH leg of a sale to the
-  // nearest 5/10 pesewas; bookkeeping stays exact (roundingDelta on the sale).
-  const [cashRounding, setCashRounding] = useState<'none' | '0.05' | '0.10'>('none')
-  const [roundingSaving, setRoundingSaving] = useState(false)
 
   // Task 70 — batch numbering: default prefix for generated batch numbers
   // (PREFIX-YYYYMMDD-###) used by the Generate buttons on Medicines and GRN receiving.
@@ -107,7 +103,6 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
       setBirthdayEnabled(s.loyaltyBirthdayEnabled !== 'false')
       setBirthdayPoints(s.loyaltyBirthdayPoints ?? '20')
       setBirthdayWindowDays(s.loyaltyBirthdayWindowDays ?? '3')
-      setCashRounding(s.cashRounding === '0.05' || s.cashRounding === '0.10' ? s.cashRounding : 'none')
       setBatchPrefix(s.batchPrefix ?? '')
       try {
         const parsed = s.loyaltyTiers ? JSON.parse(s.loyaltyTiers) : null
@@ -263,22 +258,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
     toast({ title: `Prefix ${p.code} deleted`, description: 'Its products now use the store default again.' })
   }
 
-  const saveCashRounding = async () => {
-    setRoundingSaving(true)
-    try {
-      const res = await fetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cashRounding }),
-      })
-      if (!res.ok) { toast({ title: 'Save failed', variant: 'destructive' }); return }
-      await loadStoreSettings(true) // open tills re-read the rounding mode instantly
-      toast({ title: 'Cash rounding saved', description: cashRounding === 'none' ? 'Cash legs settle at the exact amount.' : `Cash legs round to the nearest GHS ${cashRounding}.` })
-    } finally {
-      setRoundingSaving(false)
-    }
-  }
-
+  
   return (
     <>
       <Card>
@@ -374,37 +354,7 @@ export function CommerceCards({ canEdit }: { canEdit: boolean }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base"><Coins className="h-4 w-4 text-teal-500" /> Cash Rounding (coinless till)</CardTitle>
-          <CardDescription>
-            Small coins are scarce — round the CASH leg of a sale to the nearest 5 or 10 pesewas. Card, MoMo and credit sales always settle exactly, and the ledger keeps the exact totals (the signed difference is reported as “cash rounding” on the Z-report and the accounting pack).
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Rounding step</Label>
-              <Select value={cashRounding} onValueChange={(v) => setCashRounding(v as 'none' | '0.05' | '0.10')} disabled={!canEdit}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Off — exact amounts</SelectItem>
-                  <SelectItem value="0.05">Nearest GHS 0.05 (5p)</SelectItem>
-                  <SelectItem value="0.10">Nearest GHS 0.10 (10p)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="flex items-end">
-              <Button onClick={saveCashRounding} disabled={!canEdit || roundingSaving} className="rounded-full bg-teal-600 hover:bg-teal-700">
-                {roundingSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save Cash Rounding
-              </Button>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Example at 5p: a GHS 10.02 cash bill charges GHS 10.00 (customer&rsquo;s favor), a GHS 10.03 bill charges GHS 10.05. Receipts print the rounding line and the cash amount due.
-          </p>
-        </CardContent>
-      </Card>
+      
 
       {/* Task 70 — batch numbering defaults */}
       <Card>

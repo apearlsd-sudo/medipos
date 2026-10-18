@@ -109,6 +109,8 @@ export async function register() {
       return { healthy: false, repaired: [] }
     })
   }
+  await applyPendingRestore()
+
   await guardGlobal.__mediposBootGuard
 
   startDailyBackupTimer()
@@ -173,5 +175,73 @@ async function dailyBackupTick() {
     const msg = (e as Error).message
     saveCloudConfig({ ...cfg, lastError: msg })
     console.error(`[auto-backup] upload failed: ${msg}`)
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// Pending-restore applier (setup backup upload). Runs before the boot guard:
+// if a staged restore exists, swap the database file over the live DATABASE_URL
+// path, then set the generated temporary admin password inside the restored DB
+// so the owner can sign in without the backup's old credentials.
+// ---------------------------------------------------------------------------
+const restoreGlobal = globalThis as unknown as { __mediposRestoreApplied?: boolean }
+
+async function applyPendingRestore() {
+  if (restoreGlobal.__mediposRestoreApplied) return
+  restoreGlobal.__mediposRestoreApplied = true
+  try {
+    const fs = await import('node:fs')
+    const path = await import('node:path')
+    const { dbFilePath } = await import('@/lib/system')
+    const markerPath = path.join(path.dirname(dbFilePath()), 'pending-restore.json')
+    if (!fs.existsSync(markerPath)) return
+    const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'))
+    const dbPath = dbFilePath()
+
+    if (!marker.stagedFile || !fs.existsSync(marker.stagedFile)) {
+      console.error('[restore] staged file missing — clearing the marker:', marker.stagedFile)
+      fs.rmSync(markerPath)
+      return
+    }
+
+    // Swap: live db (if any) moves aside into backups/, staged file becomes live.
+    try {
+      if (fs.existsSync(dbPath)) {
+        const aside = path.join(path.dirname(dbPath), 'backups', `pre-restore-${Date.now()}.db`)
+        fs.mkdirSync(path.dirname(aside), { recursive: true })
+        fs.renameSync(dbPath, aside)
+        console.log(`[restore] previous database kept as ${path.basename(aside)}`)
+      }
+      fs.copyFileSync(marker.stagedFile, dbPath)
+      fs.rmSync(marker.stagedFile)
+    } catch (e) {
+      console.error('[restore] file swap failed (continuing with the current db):', e)
+      return
+    }
+
+    // Inject the temporary admin password into the restored database.
+    const { PrismaClient } = await import('@prisma/client')
+    const prisma = new PrismaClient({ log: [] })
+    try {
+      const admin = await prisma.user.findFirst({ where: { role: 'admin' }, orderBy: { createdAt: 'asc' } })
+        ?? await prisma.user.findFirst({ where: { username: 'admin' } })
+      if (admin) {
+        await prisma.user.update({
+          where: { id: admin.id },
+          data: { passwordHash: marker.tempHash, twoFactorEnabled: false, twoFactorSecret: null },
+        })
+        console.log(`[restore] temporary password applied to admin user "${admin.username}" (shown once at staging time)`)
+      } else {
+        console.error('[restore] no admin user found in the restored database — original credentials still apply')
+      }
+    } finally {
+      await prisma.$disconnect().catch(() => {})
+    }
+
+    fs.rmSync(markerPath)
+    console.log('[restore] pending restore applied successfully')
+  } catch (e) {
+    console.error('[restore] unexpected error (server continues):', e)
   }
 }

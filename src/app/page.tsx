@@ -28,7 +28,7 @@ import { PwaRegister } from '@/components/pos/pwa-register'
 import { Login } from '@/components/pos/login'
 import { UserProvider, userCan, type AuthUser } from '@/components/pos/user-context'
 import { canAccessView, type ViewKey } from '@/components/pos/nav-config'
-import { setCurrencyConfig } from '@/lib/format'
+import { setCurrencyConfig, setDatetimeConfig } from '@/lib/format'
 import { createAppFetch } from '@/lib/offline'
 import { OfflineBanner } from '@/components/pos/offline-banner'
 import { loadStoreSettings, onStoreSettings, type StoreSettingsMap } from '@/lib/store-settings'
@@ -72,7 +72,6 @@ export default function Home() {
   const [authReady, setAuthReady] = useState(false)
   const [settings, setSettings] = useState<StoreSettingsMap | null>(null)
   const [view, setView] = useState<ViewKey>('dashboard')
-  const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [posKey, setPosKey] = useState(0)
@@ -138,6 +137,7 @@ export default function Home() {
       if (me.user) setUser(me.user)
       setSettings(store)
       setCurrencyConfig(store.currencyCode ?? 'USD', store.currencyLocale ?? 'en-US')
+          setDatetimeConfig({ hour12: (store.datetimeTime ?? '12h') !== '24h', dateOrder: (store.datetimeDate ?? 'dmy') === 'mdy' ? 'mdy' : 'dmy' })
       setAuthReady(true)
     })
     return () => {
@@ -218,6 +218,7 @@ export default function Home() {
           loadStoreSettings(true).then((s) => {
             setSettings(s)
             setCurrencyConfig(s.currencyCode ?? 'USD', s.currencyLocale ?? 'en-US')
+            setDatetimeConfig({ hour12: (s.datetimeTime ?? '12h') !== '24h', dateOrder: (s.datetimeDate ?? 'dmy') === 'mdy' ? 'mdy' : 'dmy' })
           })
           loadAlerts()
         }}
@@ -235,8 +236,6 @@ export default function Home() {
         <Sidebar
           view={activeView}
           onNavigate={navigate}
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((c) => !c)}
           alertCount={alerts.length}
           mobileOpen={mobileOpen}
           onMobileClose={() => setMobileOpen(false)}
@@ -246,7 +245,7 @@ export default function Home() {
           userName={user.name}
         />
 
-        <div className={`flex min-h-screen flex-col transition-all duration-200 ${collapsed ? 'lg:pl-[72px]' : 'lg:pl-64'}`}>
+        <div className="flex min-h-screen flex-col lg:pl-64">
           <Header
             title={VIEW_TITLES[activeView]}
             onMenuClick={() => setMobileOpen(true)}
@@ -285,6 +284,7 @@ export default function Home() {
               const s = await loadStoreSettings(true)
               setSettings(s)
               setCurrencyConfig(s.currencyCode ?? 'USD', s.currencyLocale ?? 'en-US')
+            setDatetimeConfig({ hour12: (s.datetimeTime ?? '12h') !== '24h', dateOrder: (s.datetimeDate ?? 'dmy') === 'mdy' ? 'mdy' : 'dmy' })
             }} />}
           </main>
 

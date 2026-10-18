@@ -404,6 +404,20 @@ model StoreSetting {
   value String
 }
 
+// --- hardware devices (universal-driver console) -----------------------------
+model Device {
+  id        String   @id @default(cuid())
+  name      String
+  type      String // receipt | label | drawer
+  protocol  String // escpos | starprnt | zpl | epl | raw
+  address   String // host:port (network devices)
+  enabled   Boolean  @default(true)
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([type])
+}
+
 // --- multi-node sync (offline-first replication) -----------------------------
 
 model SyncOp {

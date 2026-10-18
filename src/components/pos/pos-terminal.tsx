@@ -21,7 +21,6 @@ import { StartShiftDialog } from '@/components/pos/shift-dialogs'
 import type { ShiftRecord } from '@/components/pos/shift-report'
 import { fmtMoney, PAYMENT_METHODS, currencySymbol } from '@/lib/format'
 import { discountPolicyFromSettings, requiresDiscountApproval } from '@/lib/discount-approval'
-import { parseCashRoundingMode, roundCashFor } from '@/lib/pos-finance'
 import { THERMAL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import type { StoreSettingsMap } from '@/lib/store-settings'
 import { sumComponentPcts, taxComponents } from '@/lib/tax-components'
@@ -352,6 +351,12 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   // A5 — short-dated stock window (days). 0 disables the FEFO warnings.
   const fefoWarnDays = Math.max(0, Math.trunc(Number(storeSettings?.fefoWarnDays ?? 90) || 0))
 
+
+  // F1 — pack vs piece: tapping a piece-sellable tile asks how to sell it.
+  const [sellDialog, setSellDialog] = useState<{ med: Medicine } | null>(null)
+  const [sellQty, setSellQty] = useState(1)
+  const [sellUnit, setSellUnit] = useState<'pack' | 'inner'>('pack')
+
   const addToCart = useCallback((m: Medicine, qty = 1, unit: 'pack' | 'inner' = 'pack') => {
     const dte = daysToExpiry(m)
     if (dte !== null && dte <= 0) {
@@ -506,11 +511,6 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
     return { points, value: +(points * pointsSettings.pointValue).toFixed(2) }
   }, [pointsInput, selectedCustomer, patientTotal, pointsSettings])
   const payable = useMemo(() => Math.max(0, +(patientTotal - redemption.value).toFixed(2)), [patientTotal, redemption.value])
-  // Cash rounding (coinless till): the CASH leg of the sale rounds to the
-  // nearest 5/10 pesewas when the store enables it. The server is
-  // authoritative — these previews drive the checkout display and validation
-  // only; the booking recomputes everything.
-  const cashRoundingMode = useMemo(() => parseCashRoundingMode(storeSettings?.cashRounding), [storeSettings])
   const splitEligible = paymentMethod === 'cash' || paymentMethod === 'card' || paymentMethod === 'momo'
   // Mirror the server's detection exactly: when split-tender rows will be sent
   // (splitMode + eligible + at least one funded row) rounding follows the
@@ -519,13 +519,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   const cashInPlay = usingSplitRows
     ? splitTenders.some((t) => t.method === 'cash' && Number(t.amount) > 0)
     : paymentMethod === 'cash' || paymentMethod === 'insurance'
-  const cashRounding = useMemo(() => roundCashFor(payable, cashRoundingMode, cashInPlay), [payable, cashRoundingMode, cashInPlay])
-  const roundedPayable = cashRounding.roundedDue
   // Split-tender math (only cash rows may overpay — change returns on cash)
   const splitSum = useMemo(() => +splitTenders.reduce((s, t) => s + (Number(t.amount) || 0), 0).toFixed(2), [splitTenders])
-  const splitRemaining = useMemo(() => +(roundedPayable - splitSum).toFixed(2), [roundedPayable, splitSum])
+  const splitRemaining = useMemo(() => +(payable - splitSum).toFixed(2), [payable, splitSum])
   const splitHasCash = splitTenders.some((t) => t.method === 'cash')
-  const splitChange = splitHasCash ? Math.max(0, +(splitSum - roundedPayable).toFixed(2)) : 0
+  const splitChange = splitHasCash ? Math.max(0, +(splitSum - payable).toFixed(2)) : 0
   const tendersPayload = useMemo(
     () =>
       splitMode && splitEligible
@@ -582,7 +580,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }, [cart, meds])
 
   const tenderedNumTier1 = Number(tendered) || 0
-  const changeTier1 = Math.max(0, +(tenderedNumTier1 - roundedPayable).toFixed(2))
+  const changeTier1 = Math.max(0, +(tenderedNumTier1 - payable).toFixed(2))
   const rxInCart = cart.some((l) => l.prescriptionRequired)
   const tenderedNum = Number(tendered) || 0
   const change = Math.max(0, +(tenderedNum - total).toFixed(2))
@@ -623,12 +621,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           createdAt: new Date().toISOString(),
           subtotal, discount: discountValue, tax: taxValue, total,
           taxBase: chargeTax && taxValue > 0 ? +(subtotal - discountValue).toFixed(2) : null,
-          roundingDelta: cashRounding.delta,
-          insuranceAmount: insuranceEstimate > 0 ? insuranceEstimate : undefined,
+                    insuranceAmount: insuranceEstimate > 0 ? insuranceEstimate : undefined,
           insurerName: insurer?.name ?? null,
           insuranceCoveragePct: insuranceEstimate > 0 ? coveragePct : null,
-          paidAmount: tendersPayload ? Math.min(splitSum, roundedPayable) : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.min(tenderedNum, roundedPayable) : total,
-          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.max(0, +(tenderedNum - roundedPayable).toFixed(2)) : 0,
+          paidAmount: tendersPayload ? Math.min(splitSum, payable) : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.min(tenderedNum, payable) : total,
+          changeAmount: tendersPayload ? splitChange : paymentMethod === 'cash' || paymentMethod === 'insurance' ? Math.max(0, +(tenderedNum - payable).toFixed(2)) : 0,
           paymentMethod, paymentProvider: paymentMethod === 'momo' ? momoProvider : null,
           paymentStatus: 'pending',
           offlineQueued: true,
@@ -665,6 +662,11 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         birthdayBonus: json.loyalty?.birthdayBonus ?? 0,
         customerCreditBalance: json.sale?.paymentMethod === 'credit' && selectedCustomer ? +( (selectedCustomer.balance ?? 0) + payable ).toFixed(2) : undefined,
       })
+      // Hardware: direct receipt print + drawer kick (silent on failure/offline)
+      if (json.sale?.id) {
+        fetch('/api/hardware/print-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ saleId: json.sale.id }) }).catch(() => {})
+      }
+      fetch('/api/hardware/kick', { method: 'POST' }).catch(() => {})
       if (json.claimNo) toast({ title: `Insurance claim ${json.claimNo} created`, description: `${fmtMoney(json.insurance?.insuranceAmount ?? 0)} billed to ${json.insurance?.insurerName ?? 'the insurer'}.` })
       if (json.loyalty && (json.loyalty.earned > 0 || json.loyalty.redeemed > 0)) {
         toast({ title: json.loyalty.tier ? `Loyalty updated — ${json.loyalty.tier} member` : 'Loyalty updated', description: `${json.loyalty.redeemed > 0 ? `Redeemed ${json.loyalty.redeemed} pts · ` : ''}Earned ${json.loyalty.earned} pts${json.loyalty.birthdayBonus > 0 ? ' (incl. birthday bonus)' : ''} · balance ${json.loyalty.balance} pts.` })
@@ -696,7 +698,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
         toast({ title: 'Add at least one tender', description: 'Split payment needs at least one tender with an amount.', variant: 'destructive' }); return
       }
       if (splitRemaining > 0.009) {
-        toast({ title: 'Split tenders are short', description: `${fmtMoney(splitRemaining)} of ${fmtMoney(roundedPayable)} is still uncovered — add or top up a tender.`, variant: 'destructive' }); return
+        toast({ title: 'Split tenders are short', description: `${fmtMoney(splitRemaining)} of ${fmtMoney(payable)} is still uncovered — add or top up a tender.`, variant: 'destructive' }); return
       }
       if (!splitHasCash && splitSum > payable + 0.009) {
         toast({ title: 'Overpayment not allowed', description: 'Only a cash tender can be overpaid — change is returned on cash.', variant: 'destructive' }); return
@@ -707,8 +709,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
       if (rows.some((t) => t.reference.trim() && !/^[A-Za-z0-9.\-]{6,}$/.test(t.reference.trim()))) {
         toast({ title: 'Check the MoMo reference', description: 'Transaction IDs are 6+ letters/digits.', variant: 'destructive' }); return
       }
-    } else if ((paymentMethod === 'cash' || paymentMethod === 'insurance') && tenderedNumTier1 < roundedPayable) {
-      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(roundedPayable)}.`, variant: 'destructive' })
+    } else if ((paymentMethod === 'cash' || paymentMethod === 'insurance') && tenderedNumTier1 < payable) {
+      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(payable)}.`, variant: 'destructive' })
       return
     }
     if (paymentMethod === 'credit') {
@@ -738,8 +740,8 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
   }
 
   const authorizeAndComplete = async (approval: { username: string; password: string }): Promise<boolean> => {
-    if (!(splitMode && splitEligible) && (paymentMethod === 'cash' || paymentMethod === 'insurance') && tenderedNumTier1 < roundedPayable) {
-      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(roundedPayable)}.`, variant: 'destructive' })
+    if (!(splitMode && splitEligible) && (paymentMethod === 'cash' || paymentMethod === 'insurance') && tenderedNumTier1 < payable) {
+      toast({ title: 'Insufficient cash', description: `Tendered ${fmtMoney(tenderedNumTier1)} is less than amount due ${fmtMoney(payable)}.`, variant: 'destructive' })
       return false
     }
     return await completeSale({ approval })
@@ -925,7 +927,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
               return (
                 <button
                   key={m.id}
-                  onClick={() => addToCart(m)}
+                  onClick={() => ((m.innerQty ?? 1) > 1 ? setSellDialog({ med: m }) : addToCart(m))}
                   disabled={out}
                   className={`group relative flex flex-col rounded-xl border bg-card p-3.5 text-left transition ${out ? 'cursor-not-allowed opacity-50' : 'hover:-translate-y-0.5 hover:border-teal-400 hover:shadow-lg dark:hover:border-teal-700'}`}
                 >
@@ -954,7 +956,10 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                   <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{m.genericName ?? m.brand ?? m.sku}</p>
                   <div className="mt-2 flex items-end justify-between">
                     <div>
-                      <p className="text-base font-bold text-teal-600 dark:text-teal-400">{fmtMoney(m.effectiveSellingPrice ?? m.sellingPrice)}</p>
+                      <p className="text-base font-bold text-teal-600 dark:text-teal-400">{fmtMoney(m.effectiveSellingPrice ?? m.sellingPrice)}{!out && <span className="text-[11px] font-semibold text-muted-foreground"> / {m.unit}</span>}</p>
+                      {(m.innerQty ?? 1) > 1 && m.innerUnit && !out && (
+                        <p className="text-[11px] font-medium text-teal-600/90 dark:text-teal-400/90">{fmtMoney(+(((m.effectiveSellingPrice ?? m.sellingPrice) / (m.innerQty || 1)).toFixed(2)))} / {m.innerUnit} · tap for pack or piece</p>
+                      )}
                       <p className={`text-[11px] font-medium ${out ? 'text-red-500' : low ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
                         {out ? 'Out of stock' : `${m.stockQty} ${m.unit}`}
                       </p>
@@ -1187,17 +1192,12 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           <div className="space-y-4">
             <div className="rounded-xl bg-muted/60 p-4 text-center">
               <p className="text-xs uppercase tracking-wider text-muted-foreground">Amount Due</p>
-              <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(roundedPayable)}</p>
+              <p className="text-3xl font-bold tabular-nums text-teal-600 dark:text-teal-400">{fmtMoney(payable)}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {cart.reduce((n, l) => n + l.qty, 0)} items · {chargeTax ? `incl. ${fmtMoney(taxValue)} tax` : 'tax exempt'}
                 {insuranceEstimate > 0 && <> · insurer pays {fmtMoney(insuranceEstimate)}</>}
                 {redemption.value > 0 && <> · points −{fmtMoney(redemption.value)}</>}
               </p>
-              {cashRounding.delta !== 0 && (
-                <p className="mt-0.5 text-xs font-medium text-amber-600 tabular-nums dark:text-amber-400">
-                  Cash rounding {cashRounding.delta > 0 ? '+' : '−'}{fmtMoney(Math.abs(cashRounding.delta))} on the cash leg
-                </p>
-              )}
             </div>
 
             <div className="grid grid-cols-5 gap-2">
@@ -1433,7 +1433,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {[roundedPayable, 10, 20, 50, 100].map((v, i) => (
+                    {[payable, 10, 20, 50, 100].map((v, i) => (
                       <Button key={i} variant="outline" size="sm" className="flex-1 rounded-full text-xs tabular-nums" onClick={() => setTendered(String(i === 0 ? Math.ceil(v * 100) / 100 : v))}>
                         {i === 0 ? 'Exact' : `${currencySymbol()}${v}`}
                       </Button>
@@ -1449,7 +1449,7 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
             </div>
 
             <Button className="w-full rounded-full bg-teal-600 hover:bg-teal-700" size="lg" onClick={checkout} disabled={submitting} title="Keyboard: Ctrl+Enter">
-              {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(roundedPayable)}</>}
+              {submitting ? 'Processing…' : <>Confirm Payment · {fmtMoney(payable)}</>}
             </Button>
             <p className="text-center text-[11px] text-muted-foreground">Press <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Ctrl</kbd>+<kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Enter</kbd> to confirm · <kbd className="rounded border bg-muted px-1 py-0.5 font-mono text-[10px]">Esc</kbd> to close</p>
           </div>
@@ -1692,6 +1692,74 @@ export function POSTerminal({ quickSearch, onSalesRecorded, storeSettings }: { q
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* F1 — Sell dialog: pack vs piece */}
+      <Dialog open={!!sellDialog} onOpenChange={(open) => { if (!open) setSellDialog(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Sell {sellDialog?.med.name}</DialogTitle>
+            <DialogDescription>
+              Stock: {sellDialog ? sellDialog.med.stockQty : 0} {sellDialog?.med.unit} + {sellDialog?.med.looseUnits ?? 0} loose {sellDialog?.med.innerUnit ?? 'unit'}(s)
+            </DialogDescription>
+          </DialogHeader>
+          {sellDialog && (() => {
+            const m = sellDialog.med
+            const innerQty = Math.max(1, m.innerQty ?? 1)
+            const packPrice = m.effectiveSellingPrice ?? m.sellingPrice
+            const piecePrice = +(packPrice / innerQty).toFixed(2)
+            return (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSellUnit('pack')}
+                    className={`rounded-xl border p-3 text-left transition ${sellUnit === 'pack' ? 'border-teal-500 bg-teal-50 dark:bg-teal-500/10' : 'hover:border-teal-300'}`}
+                  >
+                    <p className="text-sm font-semibold">Full {m.unit}</p>
+                    <p className="text-xs text-muted-foreground">{fmtMoney(packPrice)} / {m.unit}</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSellUnit('inner')}
+                    className={`rounded-xl border p-3 text-left transition ${sellUnit === 'inner' ? 'border-teal-500 bg-teal-50 dark:bg-teal-500/10' : 'hover:border-teal-300'}`}
+                  >
+                    <p className="text-sm font-semibold">Loose {m.innerUnit ?? 'Tablet'}</p>
+                    <p className="text-xs text-muted-foreground">{fmtMoney(piecePrice)} / {m.innerUnit}</p>
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="sell-qty">Quantity ({sellUnit === 'pack' ? m.unit : m.innerUnit ?? 'piece'})</Label>
+                  <Input
+                    id="sell-qty"
+                    type="number"
+                    min={1}
+                    value={sellQty}
+                    onChange={(e) => setSellQty(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Line total: <span className="font-semibold text-foreground">{fmtMoney(+(sellQty * (sellUnit === 'pack' ? packPrice : piecePrice)).toFixed(2))}</span>
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSellDialog(null)}>Cancel</Button>
+            <Button
+              className="rounded-full bg-teal-600 hover:bg-teal-700"
+              onClick={() => {
+                if (!sellDialog) return
+                addToCart(sellDialog.med, sellQty, sellUnit)
+                setSellDialog(null)
+                setSellQty(1)
+                setSellUnit('pack')
+              }}
+            >
+              <Plus className="h-4 w-4" /> Add to cart
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

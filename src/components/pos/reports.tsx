@@ -215,7 +215,6 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
           [`Accounting pack — ${ap.month}`],
           [],
           ['Net sales', ap.summary.net, '', 'VAT collected', ap.vat.taxCollected],
-          ['Cash rounding (net)', ap.summary.cashRounding, '', 'Taxable base', ap.vat.taxableBase],
           ['Gross sales', ap.summary.gross, '', 'Taxable base', ap.vat.taxableBase],
           ['Discounts', ap.summary.discounts, '', 'Transactions', ap.summary.transactions],
           ['Expenses', ap.summary.expensesTotal, '', 'Purchases', ap.summary.purchasesTotal],
@@ -1619,7 +1618,7 @@ function DayCloseSection() {
 // ---------------- C2: accounting export pack ----------------
 interface AccountingPackData {
   month: string
-  summary: { transactions: number; gross: number; discounts: number; tax: number; net: number; taxableBase: number; cashRounding: number; expensesTotal: number; purchasesTotal: number; refundsTotal: number }
+  summary: { transactions: number; gross: number; discounts: number; tax: number; net: number; taxableBase: number; expensesTotal: number; purchasesTotal: number; refundsTotal: number }
   daily: Array<{ date: string; transactions: number; gross: number; discounts: number; tax: number; net: number }>
   byMethod: Array<{ method: string; count: number; amount: number }>
   byTender: Array<{ tender: string; count: number; amount: number }>
@@ -1688,7 +1687,7 @@ function AccountingSection() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stat('Net sales', data.summary.net, 'text-teal-600 dark:text-teal-400', `${data.summary.transactions} transactions · discounts ${fmtMoney(data.summary.discounts)}${data.summary.cashRounding !== 0 ? ` · cash rounding ${data.summary.cashRounding > 0 ? '+' : ''}${fmtMoney(data.summary.cashRounding)}` : ''}`)}
+        {stat('Net sales', data.summary.net, 'text-teal-600 dark:text-teal-400', `${data.summary.transactions} transactions · discounts ${fmtMoney(data.summary.discounts)}`)}
         {stat('VAT collected', data.vat.taxCollected, undefined, `taxable base ${fmtMoney(data.summary.taxableBase)}`)}
         {stat('Expenses', data.summary.expensesTotal, 'text-amber-600 dark:text-amber-400', `${data.expensesByCategory.length} categor(ies) · refunds ${fmtMoney(data.summary.refundsTotal)}`)}
         {stat('Purchases', data.summary.purchasesTotal, undefined, `${data.purchasesBySupplier.length} supplier(s) · credit out ${fmtMoney(data.creditAging.totalOutstanding)}`)}

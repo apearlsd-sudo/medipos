@@ -1,18 +1,33 @@
 'use client'
 
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Activity, Eye, EyeOff, Lock, Loader2, ShieldCheck, LogIn, Pill, ReceiptText, BarChart3, KeyRound, ArrowLeft } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { AuthUser } from '@/components/pos/user-context'
 
-const DEMO_ACCOUNTS = [
-  { username: 'admin', password: 'admin123', role: 'Administrator', desc: 'Full system access & user management' },
-  { username: 'pharmacist', password: 'pharm123', role: 'Pharmacist', desc: 'Inventory, prescriptions & reports' },
-  { username: 'cashier', password: 'cash123', role: 'Cashier', desc: 'POS terminal, sales & customers' },
-]
+// ---------------------------------------------------------------------------
+// Branding (rebuilt) — the customer's pharmacy owns the sign-in form side:
+// logo + store name + slogan sit directly above "Welcome back" on BOTH steps,
+// full-screen width. MediPOS Pro (the product) brands the left marketing
+// panel. A theme-aware ghost-pill watermark fades into the form corner.
+// ---------------------------------------------------------------------------
+
+interface BrandMeta {
+  brandName: string
+  slogan: string
+  logoVersion: number
+  hasLogo: boolean
+}
+
+const formWatermark = (
+  <div
+    aria-hidden
+    className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 bg-contain bg-center bg-no-repeat bg-[url(/login/pills-light.webp)] dark:bg-[url(/login/pills-dark.webp)] opacity-25 mix-blend-multiply dark:opacity-[0.16] sm:h-96 sm:w-96 lg:h-[420px] lg:w-[420px] dark:mix-blend-normal"
+    style={{ transform: 'scaleX(-1)', maskImage: 'radial-gradient(closest-side, black 30%, transparent 98%)', WebkitMaskImage: 'radial-gradient(closest-side, black 30%, transparent 98%)' }}
+  />
+)
 
 export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
   const [username, setUsername] = useState('')
@@ -26,6 +41,15 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
   const [challengeUser, setChallengeUser] = useState('')
   const [otp, setOtp] = useState('')
   const [useRecovery, setUseRecovery] = useState(false)
+
+  // Public branding (no credentials required — it's the storefront identity)
+  const [brand, setBrand] = useState<BrandMeta | null>(null)
+  useEffect(() => {
+    fetch('/api/branding', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => j?.brand && setBrand(j.brand))
+      .catch(() => {})
+  }, [])
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,22 +102,28 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
     }
   }
 
-  const quickFill = (u: string, p: string) => {
-    setUsername(u)
-    setPassword(p)
-    setError('')
-  }
-
   const branding = (
     <div className="relative hidden w-1/2 overflow-hidden bg-gradient-to-br from-teal-700 via-teal-800 to-teal-950 lg:flex lg:flex-col lg:justify-between lg:p-12">
+      {/* pharmacy-flavored photo layers (edge-masked, text stays readable) */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-cover bg-center bg-[url(/login/pills-teal.webp)] opacity-45 mix-blend-soft-light"
+        style={{ transform: 'scaleX(-1)', maskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)', WebkitMaskImage: 'radial-gradient(ellipse at center, black 40%, transparent 85%)' }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-cover bg-center bg-[url(/login/pills-teal.webp)] opacity-[0.15] mix-blend-screen"
+        style={{ transform: 'scaleY(-1)', maskImage: 'radial-gradient(circle at 85% 12%, black 0%, transparent 45%)', WebkitMaskImage: 'radial-gradient(circle at 85% 12%, black 0%, transparent 45%)' }}
+      />
       <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full bg-teal-500/10 blur-3xl" />
       <div className="absolute -bottom-32 -left-16 h-96 w-96 rounded-full bg-emerald-400/10 blur-3xl" />
 
+      {/* Product identity — fixed, not driven by store settings */}
       <div className="relative flex items-center gap-3">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br from-teal-400 to-teal-600 shadow-lg shadow-teal-500/30">
           <Activity className="h-6 w-6 text-white" />
         </div>
-        <div>
+        <div className="min-w-0">
           <p className="text-lg font-bold tracking-tight text-white">MediPOS <span className="text-teal-300">Pro</span></p>
           <p className="text-[11px] uppercase tracking-widest text-teal-400/80">Pharmacy Management Suite</p>
         </div>
@@ -127,6 +157,27 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
     </div>
   )
 
+  const companyBlock = (
+    <div className="flex items-center gap-3">
+      {brand?.hasLogo ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`/api/branding/logo?v=${brand.logoVersion}`} alt="Pharmacy logo" className="h-12 w-12 shrink-0 rounded-xl bg-white object-contain p-1 shadow-sm ring-1 ring-border" />
+      ) : (
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-teal-400 to-teal-600 shadow-sm">
+          <Activity className="h-6 w-6 text-white" />
+        </span>
+      )}
+      <div className="min-w-0">
+        <p className="truncate text-xl font-bold tracking-tight">
+          {brand?.brandName || <>MediPOS <span className="text-teal-500">Pro</span></>}
+        </p>
+        {brand?.slogan ? (
+          <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-teal-600/90 dark:text-teal-400/90">{brand.slogan}</p>
+        ) : null}
+      </div>
+    </div>
+  )
+
   // ---------------------------------------------------------------------------
   // Step 2 — two-factor verification
   // ---------------------------------------------------------------------------
@@ -135,16 +186,18 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
       <div className="flex min-h-screen bg-background">
         {branding}
         <div className="flex w-full items-center justify-center p-6 lg:w-1/2">
-          <div className="w-full max-w-md space-y-6">
-            <div className="flex items-center gap-3 lg:hidden">
+          <div className="relative w-full max-w-md space-y-6 overflow-hidden">
+            {formWatermark}
+            <div className="relative flex items-center gap-3 lg:hidden">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-teal-400 to-teal-600">
                 <Activity className="h-5 w-5 text-white" />
               </div>
               <p className="text-lg font-bold">MediPOS <span className="text-teal-500">Pro</span></p>
             </div>
 
-            <div>
-              <button onClick={() => { setChallenge(null); setOtp(''); setError('') }} className="mb-4 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition hover:text-foreground">
+            <div className="relative">
+              {companyBlock}
+              <button onClick={() => { setChallenge(null); setOtp(''); setError('') }} className="mb-4 mt-5 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition hover:text-foreground">
                 <ArrowLeft className="h-4 w-4" /> Back to sign in
               </button>
               <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-teal-600/10 text-teal-600 dark:text-teal-400">
@@ -156,7 +209,7 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
               </p>
             </div>
 
-            <form onSubmit={submitOtp} className="space-y-4">
+            <form onSubmit={submitOtp} className="relative space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="otp">{useRecovery ? 'Recovery code' : 'Authentication code'}</Label>
                 <Input
@@ -202,20 +255,24 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
 
       {/* Login form */}
       <div className="flex w-full items-center justify-center p-6 lg:w-1/2">
-        <div className="w-full max-w-md space-y-6">
-          <div className="flex items-center gap-3 lg:hidden">
+        <div className="relative w-full max-w-md space-y-6 overflow-hidden">
+          {formWatermark}
+          <div className="relative flex items-center gap-3 lg:hidden">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-teal-400 to-teal-600">
               <Activity className="h-5 w-5 text-white" />
             </div>
             <p className="text-lg font-bold">MediPOS <span className="text-teal-500">Pro</span></p>
           </div>
 
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Welcome back</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Sign in to your pharmacy workspace.</p>
+          <div className="relative space-y-4">
+            {companyBlock}
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Welcome back</h2>
+              <p className="mt-1 text-sm text-muted-foreground">Sign in to your pharmacy workspace.</p>
+            </div>
           </div>
 
-          <form onSubmit={submit} className="space-y-4">
+          <form onSubmit={submit} className="relative space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="username">Username</Label>
               <Input
@@ -261,30 +318,6 @@ export function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
               {busy ? 'Signing in…' : 'Sign In'}
             </Button>
           </form>
-
-          <Card className="border-dashed">
-            <CardContent className="p-4">
-              <p className="mb-3 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <ShieldCheck className="h-3.5 w-3.5 text-teal-500" /> Demo accounts — click to fill
-              </p>
-              <div className="grid gap-2">
-                {DEMO_ACCOUNTS.map((a) => (
-                  <button
-                    key={a.username}
-                    type="button"
-                    onClick={() => quickFill(a.username, a.password)}
-                    className="flex items-center justify-between gap-3 rounded-lg border p-2.5 text-left transition hover:border-teal-400 hover:bg-teal-50 dark:hover:border-teal-700 dark:hover:bg-teal-500/10"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold">{a.role}</p>
-                      <p className="truncate text-xs text-muted-foreground">{a.desc}</p>
-                    </div>
-                    <code className="shrink-0 rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">{a.username} / {a.password}</code>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
     </div>

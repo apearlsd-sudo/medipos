@@ -51,7 +51,16 @@ export type AuditAction =
   | 'transfer.completed'
   | 'transfer.cancelled'
   | 'inventory.imported'
+  | 'medicine.imported'
   | 'inventory.catalog_copied'
+  // branding
+  | 'branding.updated'
+  // hardware console
+  | 'hardware.tested'
+  | 'hardware.printed'
+  | 'hardware.labeled'
+  | 'hardware.kicked'
+  | 'hardware.FAILED'
   // tier 4 — data hygiene & system care
   | 'system.cleaned'
   | 'system.backup'
@@ -100,6 +109,15 @@ export interface AuditChanges {
   deleted?: Record<string, number>
   backupFile?: string
   retentionDays?: Record<string, number>
+  // branding
+  brandingKey?: string
+  // hardware
+  device?: string
+  // CSV import
+  created?: number
+  rejected?: number
+  categoriesCreated?: number
+  suppliersCreated?: number
   // tier 1 — cloud backup
   endpoint?: string
   bucket?: string

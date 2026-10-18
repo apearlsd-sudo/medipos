@@ -3,7 +3,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -21,7 +21,7 @@ import { useUser } from '@/components/pos/user-context'
 import { fmtDate, fmtMoney, currencySymbol, UNITS } from '@/lib/format'
 import { LABEL_PAGE_CSS, printWithPageStyle } from '@/lib/print'
 import { useStoreSettings } from '@/lib/store-settings'
-import { Barcode, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, ShieldCheck, Tag, Trash2, Upload, Wand2, X } from 'lucide-react'
+import { Barcode, Building2, History, Loader2, Download, Minus, MoreHorizontal, Pencil, Pill, Plus, Printer, Search, ShieldCheck, Tag, Trash2, Upload, Wand2, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -96,6 +96,10 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
   const [labelSearch, setLabelSearch] = useState('')
   const [labelItems, setLabelItems] = useState<Array<{ med: Med; qty: number }>>([])
   const [labelSize, setLabelSize] = useState<LabelSize>('medium')
+  const [labelDest, setLabelDest] = useState<string>('browser')
+  const [labelDevices, setLabelDevices] = useState<Array<{ id: string; name: string }>>([])
+  const [labelMeta, setLabelMeta] = useState(false)
+  const [labelBusy, setLabelBusy] = useState(false)
   // Task 71 — prefix registry for the Batch Prefix selector on the product form.
   const [prefixRows, setPrefixRows] = useState<BatchPrefixRow[]>([])
 
@@ -246,6 +250,10 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
 
   // ---------- Barcode label printing ----------
   const openLabels = (med?: Med) => {
+    fetch('/api/hardware/devices', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setLabelDevices((j?.devices ?? []).filter((d: { type: string; enabled: boolean }) => d.type === 'label' && d.enabled)))
+      .catch(() => setLabelDevices([]))
     if (med) {
       setLabelItems((prev) => (prev.some((p) => p.med.id === med.id) ? prev : [...prev, { med, qty: 12 }]))
     }
@@ -261,6 +269,110 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
 
   const totalLabels = labelItems.reduce((n, l) => n + l.qty, 0)
 
+  // F3 — CSV import
+  const [importOpen, setImportOpen] = useState(false)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importReport, setImportReport] = useState<{ created: number; rejected: number; rejectedRows: Array<{ row: number; reason: string }> } | null>(null)
+
+  /** RFC-ish quoted CSV parser (handles quoted fields with commas/escapes). */
+  const parseCSV = (text: string): string[][] => {
+    const rows: string[][] = []
+    let cur: string[] = []
+    let field = ''
+    let inQ = false
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i]
+      if (inQ) {
+        if (c === '"' && text[i + 1] === '"') { field += '"'; i++ }
+        else if (c === '"') inQ = false
+        else field += c
+      } else if (c === '"') inQ = true
+      else if (c === ',') { cur.push(field); field = '' }
+      else if (c === '\n') { cur.push(field); rows.push(cur); cur = []; field = '' }
+      else if (c === '\r') { /* skip */ }
+      else field += c
+    }
+    if (field || cur.length) { cur.push(field); rows.push(cur) }
+    return rows.filter((r) => r.some((x) => x.trim()))
+  }
+
+  const runImport = async (file: File) => {
+    setImportBusy(true)
+    try {
+      const text = await file.text()
+      const table = parseCSV(text)
+      if (table.length < 2) { toast({ title: 'Import failed', description: 'The file needs a header row plus at least one product row.', variant: 'destructive' }); return }
+      const norm = (h: string) => h.trim().toLowerCase().replace(/[^a-z]/g, '')
+      const headers = table[0].map(norm)
+      const alias: Record<string, string> = { product: 'name', productname: 'name', drug: 'name', generics: 'genericname', genericname: 'genericname', category: 'category', supplier: 'supplier', unit: 'unit', innerunit: 'innerunit', piecesperpack: 'innerqty', innerqty: 'innerqty', qty: 'stockqty', stock: 'stockqty', stockqty: 'stockqty', cost: 'costprice', costprice: 'costprice', price: 'sellingprice', sellingprice: 'sellingprice', selling: 'sellingprice', barcode: 'barcode', sku: 'sku', batch: 'batchnumber', batchnumber: 'batchnumber', expiry: 'expiry', expirydate: 'expiry', location: 'location', rx: 'prescriptionrequired', prescription: 'prescriptionrequired', prescriptionrequired: 'prescriptionrequired', insurance: 'insurancecovered', insurancecovered: 'insurancecovered' }
+      const rows = table.slice(1).map((cells) => {
+        const row: Record<string, string> = {}
+        headers.forEach((h, i) => { const key = alias[h] ?? h; row[key] = (cells[i] ?? '').trim() })
+        return row
+      })
+      const res = await fetch('/api/medicines/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }) })
+      const j = await res.json()
+      if (res.ok) {
+        setImportReport({ created: j.created, rejected: j.rejected, rejectedRows: j.rejectedRows ?? [] })
+        toast({ title: `Imported ${j.created} medicine(s)`, description: j.rejected > 0 ? `${j.rejected} row(s) need attention.` : 'Everything parsed cleanly.' })
+        load()
+      } else {
+        toast({ title: 'Import failed', description: j.error, variant: 'destructive' })
+      }
+    } catch (err) {
+      toast({ title: 'Import failed', description: (err as Error).message, variant: 'destructive' })
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
+  // med-audit — per-medicine history
+  const [historyFor, setHistoryFor] = useState<Med | null>(null)
+  const [historyBusy, setHistoryBusy] = useState(false)
+  const [historyRows, setHistoryRows] = useState<Array<{ id: string; action: string; actorName: string; summary: string; createdAt: string }>>([])
+  const openHistory = (m: Med) => {
+    setHistoryFor(m)
+    setHistoryRows([])
+    setHistoryBusy(true)
+    fetch(`/api/medicines/${m.id}/audit`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('failed'))))
+      .then((j) => setHistoryRows(j.entries ?? []))
+      .catch(() => toast({ title: 'History unavailable', variant: 'destructive' }))
+      .finally(() => setHistoryBusy(false))
+  }
+
+  // F4 — cross-branch stock lookup
+  const [branchFor, setBranchFor] = useState<Med | null>(null)
+  const [branchBusy, setBranchBusy] = useState(false)
+  const [branchRows, setBranchRows] = useState<Array<{ medicineId: string; branchName: string; branchCode: string; stockQty: number; looseUnits: number; unit: string }>>([])
+  const [transferBusy, setTransferBusy] = useState<string | null>(null)
+  const openBranchStock = (m: Med) => {
+    setBranchFor(m)
+    setBranchRows([])
+    setBranchBusy(true)
+    fetch(`/api/medicines/availability?medicineId=${m.id}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('failed'))))
+      .then((j) => setBranchRows(j.rows ?? []))
+      .catch(() => toast({ title: 'Branch lookup unavailable', variant: 'destructive' }))
+      .finally(() => setBranchBusy(false))
+  }
+  const requestTransfer = async (row: { medicineId: string; branchName: string }) => {
+    if (!branchFor) return
+    setTransferBusy(row.medicineId)
+    try {
+      const res = await fetch('/api/transfers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromMedicineId: row.medicineId, toMedicineId: branchFor.id, qty: 1, note: `Restock request from ${branchFor.name} lookup` }),
+      })
+      const j = await res.json()
+      if (res.ok) toast({ title: 'Transfer requested', description: `1 × ${branchFor.name} from ${row.branchName} — pending approval.` })
+      else toast({ title: 'Transfer failed', description: j.error, variant: 'destructive' })
+    } finally {
+      setTransferBusy(null)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <PageHeader
@@ -269,6 +381,9 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
         actions={
           <>
             <CopyCatalogButton onChanged={load} />
+            {canManage && (
+              <Button variant="outline" onClick={() => { setImportOpen(true); setImportReport(null) }} className="rounded-full"><Upload className="h-4 w-4" /> Import</Button>
+            )}
             <Button variant="outline" onClick={() => openLabels()} className="rounded-full"><Barcode className="h-4 w-4" /> Print Labels</Button>
             <Button variant="outline" onClick={exportCSV} className="rounded-full"><Download className="h-4 w-4" /> Export</Button>
             {canManage && (
@@ -395,6 +510,8 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem onClick={() => openLabels(m)}><Tag className="h-4 w-4" /> Print Labels</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openHistory(m)}><History className="h-4 w-4" /> History</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openBranchStock(m)}><Building2 className="h-4 w-4" /> Stock at branches</DropdownMenuItem>
                             {canManage && <DropdownMenuItem onClick={() => openEdit(m)}><Pencil className="h-4 w-4" /> Edit</DropdownMenuItem>}
                             {canManage && <DropdownMenuItem onClick={() => remove(m)} className="text-red-500 focus:text-red-600"><Trash2 className="h-4 w-4" /> Delete</DropdownMenuItem>}
                           </DropdownMenuContent>
@@ -645,8 +762,29 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
               </div>
             </div>
 
-            {/* Preview */}
+            {/* Destination + extras */}
             <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Destination</Label>
+                  <Select value={labelDest} onValueChange={setLabelDest}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="browser">Browser print sheet</SelectItem>
+                      {labelDevices.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>Direct: {d.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-end justify-between pb-1">
+                  <div>
+                    <Label className="text-xs">Batch &amp; expiry on label</Label>
+                    <p className="text-[11px] text-muted-foreground">Adds the batch / expiry line</p>
+                  </div>
+                  <Switch checked={labelMeta} onCheckedChange={setLabelMeta} />
+                </div>
+              </div>
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Label Preview · {totalLabels} label(s)</p>
               <div className="flex max-h-64 flex-wrap gap-2 overflow-y-auto rounded-lg border bg-muted/30 p-3">
                 {labelItems.slice(0, 1).flatMap((l) =>
@@ -666,9 +804,41 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setLabelOpen(false)}>Close</Button>
-            <Button onClick={() => printWithPageStyle(LABEL_PAGE_CSS)} disabled={labelItems.length === 0} className="rounded-full bg-teal-600 hover:bg-teal-700 print:hidden">
-              <Printer className="h-4 w-4" /> Print {totalLabels} Label{totalLabels === 1 ? '' : 's'}
-            </Button>
+            {labelDest === 'browser' ? (
+              <Button onClick={() => printWithPageStyle(LABEL_PAGE_CSS)} disabled={labelItems.length === 0} className="rounded-full bg-teal-600 hover:bg-teal-700 print:hidden">
+                <Printer className="h-4 w-4" /> Print {totalLabels} Label{totalLabels === 1 ? '' : 's'}
+              </Button>
+            ) : (
+              <Button
+                disabled={labelBusy || labelItems.length === 0}
+                className="rounded-full bg-teal-600 hover:bg-teal-700"
+                onClick={async () => {
+                  setLabelBusy(true)
+                  let ok = 0
+                  let fail = ''
+                  try {
+                    for (const l of labelItems) {
+                      const res = await fetch('/api/hardware/print-label', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ medicineId: l.med.id, qty: l.qty, destination: labelDest, withMeta: labelMeta }),
+                      })
+                      const j = await res.json().catch(() => ({}))
+                      if (res.ok) ok += j.printed ?? l.qty
+                      else fail = j.error ?? `HTTP ${res.status}`
+                    }
+                    if (ok > 0 && !fail) toast({ title: `${ok} label(s) sent to the printer` })
+                    else if (ok > 0) toast({ title: `${ok} label(s) printed, then stopped`, description: fail, variant: 'destructive' })
+                    else toast({ title: 'Direct print failed', description: fail, variant: 'destructive' })
+                    if (ok > 0 && !fail) setLabelOpen(false)
+                  } finally {
+                    setLabelBusy(false)
+                  }
+                }}
+              >
+                {labelBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />} Print {totalLabels} to device
+              </Button>
+            )}
           </div>
 
           {/* Hidden print sheet */}
@@ -681,6 +851,117 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
               )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* F3 — CSV import dialog */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-teal-500" /> Import medicines from CSV</DialogTitle>
+            <DialogDescription>
+              Header row required — recognized columns: name/product, category, supplier, unit, innerUnit, innerQty, stockQty/qty, costPrice, sellingPrice/price, barcode, sku, batch, expiry, location, rx, insurance. Categories &amp; suppliers are auto-created by name.
+            </DialogDescription>
+          </DialogHeader>
+          {importReport ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border bg-muted/40 p-3 text-sm">
+                <p className="font-semibold text-emerald-600 dark:text-emerald-400">{importReport.created} created</p>
+                <p className={importReport.rejected > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>{importReport.rejected} row(s) rejected</p>
+              </div>
+              {importReport.rejectedRows.length > 0 && (
+                <div className="max-h-40 space-y-1 overflow-y-auto rounded-lg border p-2 text-xs" style={{ scrollbarWidth: 'thin' }}>
+                  {importReport.rejectedRows.map((r) => (
+                    <p key={r.row}><span className="font-semibold">Row {r.row}:</span> <span className="text-muted-foreground">{r.reason}</span></p>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <label className="flex cursor-pointer flex-col items-center gap-2 rounded-xl border border-dashed p-6 text-center transition hover:border-teal-400 hover:bg-teal-50/50 dark:hover:border-teal-700 dark:hover:bg-teal-500/5">
+                <Upload className="h-6 w-6 text-teal-500" />
+                <span className="text-sm font-medium">{importBusy ? 'Importing…' : 'Choose a .csv file'}</span>
+                <span className="text-xs text-muted-foreground">Up to 2000 rows per import</span>
+                <input type="file" accept=".csv,text/csv" className="hidden" disabled={importBusy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) runImport(f) }} />
+              </label>
+              <Button
+                variant="outline"
+                className="w-full rounded-full"
+                onClick={() => {
+                  const header = 'Name,Generic Name,Category,Supplier,Unit,Inner Unit,Inner Qty,Stock Qty,Cost Price,Selling Price,Barcode,SKU,Batch,Expiry,Location,Rx,Insurance'
+                  const sample = 'Paracetamol 500mg,Acetaminophen,Pain Relief,Kinapharma,Box,Tablet,10,120,18,30.89,880123410001,PM-500,B-2026,2027-06-30,A-01,yes,yes'
+                  const blob = new Blob([header + '\n' + sample + '\n'], { type: 'text/csv' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = 'medipos-import-template.csv'
+                  a.click()
+                  URL.revokeObjectURL(url)
+                }}
+              >
+                <Download className="h-4 w-4" /> Download template
+              </Button>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* med-audit — medicine history dialog */}
+      <Dialog open={!!historyFor} onOpenChange={(open) => { if (!open) setHistoryFor(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><History className="h-5 w-5 text-teal-500" /> {historyFor?.name} — history</DialogTitle>
+            <DialogDescription>Every audited touch of this product: creations, edits, imports, labels, stock movements.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-80 space-y-1.5 overflow-y-auto rounded-lg border p-2.5" style={{ scrollbarWidth: 'thin' }}>
+            {historyBusy && <p className="text-sm text-muted-foreground">Loading…</p>}
+            {!historyBusy && historyRows.length === 0 && <p className="text-sm text-muted-foreground">No audited events for this medicine yet.</p>}
+            {historyRows.map((h) => (
+              <div key={h.id} className="rounded-lg border px-2.5 py-2 text-xs">
+                <p className="flex items-center justify-between gap-2">
+                  <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[10px]">{h.action}</span>
+                  <span className="text-muted-foreground">{new Date(h.createdAt).toLocaleString()}</span>
+                </p>
+                <p className="mt-1">{h.summary}</p>
+                <p className="text-muted-foreground">by {h.actorName}</p>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setHistoryFor(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* F4 — stock at branches dialog */}
+      <Dialog open={!!branchFor} onOpenChange={(open) => { if (!open) setBranchFor(null) }}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Building2 className="h-5 w-5 text-teal-500" /> {branchFor?.name} — stock at branches</DialogTitle>
+            <DialogDescription>Same product across your other branches (matched by barcode or name+unit). Request 1 to pull stock in.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-72 space-y-1.5 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+            {branchBusy && <p className="text-sm text-muted-foreground">Checking other branches…</p>}
+            {!branchBusy && branchRows.length === 0 && <p className="text-sm text-muted-foreground">No sibling stock found in other branches.</p>}
+            {branchRows.map((r) => (
+              <div key={r.medicineId} className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm">
+                <div className="min-w-0">
+                  <p className="font-semibold">{r.branchName} <span className="text-xs font-normal text-muted-foreground">({r.branchCode})</span></p>
+                  <p className="text-xs text-muted-foreground">{r.stockQty} {r.unit}{r.looseUnits > 0 ? ` + ${r.looseUnits} loose` : ''}</p>
+                </div>
+                <Button variant="outline" size="sm" className="rounded-full" disabled={transferBusy !== null || r.stockQty <= 0} onClick={() => requestTransfer(r)}>
+                  {transferBusy === r.medicineId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />} Request 1 →
+                </Button>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBranchFor(null)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -703,6 +984,7 @@ function BarcodeLabel({ med, size, storeName }: { med: Med; size: LabelSize; sto
         <span className="truncate font-mono">{med.sku}</span>
         <span>{fmtMoney(med.sellingPrice)}</span>
       </div>
+
     </div>
   )
 }

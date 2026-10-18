@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     const sales = await db.sale.findMany({
       where: { createdAt: { gte: start, lt: end }, saleStatus: 'completed', ...branchWhere },
       select: {
-        createdAt: true, subtotal: true, discount: true, tax: true, taxBase: true, total: true, roundingDelta: true,
+        createdAt: true, subtotal: true, discount: true, tax: true, taxBase: true, total: true,
         paymentMethod: true, paymentProvider: true, tenders: true,
       },
     })
@@ -42,8 +42,6 @@ export async function GET(req: NextRequest) {
     const tax = +sales.reduce((s, x) => s + x.tax, 0).toFixed(2)
     const net = +(gross - tax).toFixed(2)
     const taxableBase = +sales.reduce((s, x) => s + (x.taxBase ?? 0), 0).toFixed(2)
-    // Net cash rounding booked on the month's cash legs (signed; + store, − customer favor)
-    const cashRounding = +sales.reduce((s, x) => s + (x.roundingDelta ?? 0), 0).toFixed(2)
 
     // Daily breakdown
     const dayMap = new Map<string, { transactions: number; gross: number; discounts: number; tax: number; net: number }>()
@@ -176,7 +174,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       month: raw,
       branchLabel: scope.branchId ? undefined : 'All branches',
-      summary: { transactions: sales.length, gross, discounts, tax, net, taxableBase, cashRounding, expensesTotal, purchasesTotal, refundsTotal },
+      summary: { transactions: sales.length, gross, discounts, tax, net, taxableBase, expensesTotal, purchasesTotal, refundsTotal },
       daily,
       byMethod,
       byTender,

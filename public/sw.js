@@ -21,7 +21,7 @@
 // category card → products deep-link that actually filters.
 // v22: responsive mobile fit — cards/inputs shrinkable in grids, scrollable tab bars, responsive table min-widths + mobile column sets (dashboard/inventory/users/settings/shifts/notifications/suppliers/branches + all ledger tables)
 // v24: date-range preset filters (Today / 7 days / 30 days / This month) collapsed into a dropdown on every ledger page + owner digest
-const CACHE_VERSION = "medipos-v46"; // v46: recovery baseline after workspace reset (Task-82 checkpoint) + Phase 2 cloud backup + Electron desktop scaffold (main.js with updater, pack hooks, pwa-register Electron guard)
+const CACHE_VERSION = "medipos-v47"; // v47: REBUILD BATCH — avatar trim, sidebar no-collapse, cash rounding removal, brand-in-app (logo/slogan/datetime), login redesign, hardware console + universal drivers, F1 per-tablet UX, F2 direct label printing, F3 CSV import, F4 branch stock lookup, med-audit history, setup restore + temp admin // v46: recovery baseline after workspace reset (Task-82 checkpoint) + Phase 2 cloud backup + Electron desktop scaffold (main.js with updater, pack hooks, pwa-register Electron guard)
 // v19: date picker filters — from/to on every event ledger (sales, purchases, expenses, prescriptions, quotations, transfers, shifts, returns, stock takes, inventory logs)
 const SHELL_ASSETS = [
   '/offline.html',
