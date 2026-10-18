@@ -24,6 +24,13 @@ interface BootGuardResult {
 const guardGlobal = globalThis as unknown as { __mediposBootGuard?: Promise<BootGuardResult> }
 
 async function runBootGuard(): Promise<BootGuardResult> {
+  // Operator kill-switch: MEDIPOS_BOOT_GUARD=off skips the auto-repair chain
+  // entirely (first-run restores / disaster drills / controlled recoveries
+  // where the empty database is EXPECTED and must not be auto-seeded).
+  if (process.env.MEDIPOS_BOOT_GUARD === 'off') {
+    console.log('[boot-guard] disabled via MEDIPOS_BOOT_GUARD=off')
+    return { healthy: true, repaired: [] }
+  }
   const { PrismaClient } = await import('@prisma/client')
   const { spawnSync } = await import('node:child_process')
   const fs = await import('node:fs')

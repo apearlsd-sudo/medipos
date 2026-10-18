@@ -6,7 +6,7 @@ import http.server
 import os
 
 PORT = 19101
-STORE = '/tmp/fake-printer'
+STORE = os.environ.get('MEDIPOS_PRINTER_STORE', '/tmp/fake-printer')
 os.makedirs(STORE, exist_ok=True)
 
 
