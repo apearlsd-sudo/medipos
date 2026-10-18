@@ -1345,3 +1345,17 @@ Work Log:
 
 Stage Summary:
 - Remote now carries the entire security deployment-gate + auto-update feed. Remaining 5/9 commits await one token permission: Settings → Developer settings → Fine-grained tokens → (the current token) Edit → Repository permissions → Workflows: Read and write → Update — the token VALUE stays the same, no re-paste needed (or a classic PAT with repo+workflow scopes). After that: push main, then tag v0.3.1 (pkg version 0.3.0) to exercise the NSIS CI pipeline end-to-end.
+
+---
+Task ID: roadmap-push-token4
+Agent: main
+Task: (update) token Workflows permission granted → full push + v0.3.1 tag + CI trigger.
+
+Work Log:
+- User edited the same fine-grained PAT in place (Workflows: Read and write) — token value unchanged, no re-paste.
+- Push 2/2: 61af779 → 647ff9f fast-forward (ci workflow yml, branch analytics + low-stock, pilot kit, SW v48 deploy, worklog) — remote main = 647ff9f, local↔remote 0/0 in sync.
+- Version bump 0.3.0 → 0.3.1 (workflow yml mandates tag↔pkg sync), commit d8c84af, annotated tag v0.3.1.
+- Pushed main + tag; desktop-release workflow AUTO-TRIGGERED on windows-latest (run 39124457716): npm ci → prisma generate → db push + seed (CI-minted first-run DB) → next build → electron-builder --win nsis --publish always (GITHUB_TOKEN, contents:write) → Release + latest.yml + blockmap.
+
+Stage Summary:
+- GitHub now carries the complete roadmap implementation; CI is minting the first real Windows installer. Pending: verify run conclusion + Release assets (exe/latest.yml/blockmap); installed desktop builds auto-update once the feed is live. Update smoke on real Windows still recommended after install.
