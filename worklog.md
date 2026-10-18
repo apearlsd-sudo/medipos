@@ -1511,3 +1511,14 @@ Work Log:
 
 Stage Summary:
 - Desktop auto-update root-caused and fixed end-to-end: deterministic space-free artifact names (kills the 3-way sanitization 404), CI guard + pack-hook insurance so a broken feed can never ship silently, hourly checks with generic-feed fallback, and a live Software updates card so update state is visible in-app. CRITICAL migration note: installs on ≤v0.3.5 can never self-update (their updater 404s forever) — v0.3.6 must be installed ONCE manually, after which updates flow automatically. Release v0.3.6 next: bump → tag → CI.
+---
+Task ID: autoupdate-fix
+Agent: main
+Task: (update) v0.3.6 released.
+
+Work Log:
+- version 0.3.5→0.3.6, commit 817d2a9 + 0979baa, tag v0.3.6 pushed → CI 39172869735 GREEN (~8min) — including the NEW "Verify update-feed consistency" step (first release gated by it).
+- Release verified: v0.3.6 published, 3 assets — MediPOS-Pro-Setup-0.3.6.exe 120.1MB + latest.yml (version 0.3.6) + .blockmap. FEED INVARIANT HOLDS: asset name == latest.yml path == MediPOS-Pro-Setup-0.3.6.exe (v0.3.5 was MediPOS.Pro-… vs MediPOS-Pro-…) and the exact updater download URL returns HTTP 200 (was 404 on every prior release).
+
+Stage Summary:
+- v0.3.6 live on the auto-update feed. USER ACTION REQUIRED (one-time): installs on v0.3.5 or older can never self-update — their baked updater 404s on every check. Download MediPOS-Pro-Setup-0.3.6.exe from the releases page and run it over the existing install (data preserved in %APPDATA%\MediPOSPro). From v0.3.6 on, updates are hourly, self-installing on quit/restart, and visible in Settings → App & Data → Software updates.
