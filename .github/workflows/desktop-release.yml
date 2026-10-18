@@ -57,6 +57,32 @@ jobs:
       - name: Package NSIS (no publish)
         run: npx electron-builder --win nsis --publish never
 
+      # Update-feed guard: v0.3.1..v0.3.5 shipped installers whose auto-updates
+      # silently 404'd because the artifact name sanitized differently in three
+      # places (on-disk "MediPOS Pro-Setup-x.exe" / GitHub asset
+      # "MediPOS.Pro-Setup-x.exe" / latest.yml path "MediPOS-Pro-Setup-x.exe").
+      # electron-updater downloads the latest.yml path — so it must match a real
+      # packaged artifact, byte-for-byte, or this release must not ship.
+      - name: Verify update-feed consistency
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const yml = fs.readFileSync('desktop-dist/latest.yml', 'utf8');
+            const m = yml.match(/^path:\s*(.+)$/m);
+            const p = m && m[1].trim();
+            if (!p) { console.error('FATAL: latest.yml has no path field'); process.exit(1); }
+            if (!fs.existsSync('desktop-dist/' + p)) {
+              console.error('FATAL: latest.yml path ' + p + ' does not match any packaged artifact — updater would 404');
+              process.exit(1);
+            }
+            if (!fs.existsSync('desktop-dist/win-unpacked/resources/app-update.yml')) {
+              console.error('FATAL: app-update.yml missing — updater would be disabled in the installer');
+              process.exit(1);
+            }
+            console.log('FEED_OK ' + p);
+          "
+
       # One atomic upload — electron-builder's parallel GitHub publisher races
       # itself into TWO release objects with split assets (exe+yml / blockmap,
       # seen on v0.3.1 and v0.3.2); a single gh-release step creates exactly one

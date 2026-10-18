@@ -12,6 +12,7 @@ import { TwoFactorCard } from '@/components/pos/security-settings'
 import { CommerceCards } from '@/components/pos/commerce-settings'
 import { DataHygieneCard } from '@/components/pos/data-hygiene'
 import { CloudBackupCard } from '@/components/pos/cloud-backup'
+import { SoftwareUpdatesCard } from '@/components/pos/software-updates'
 import { HardwareConsoleCard } from '@/components/pos/hardware-console'
 import { NetworkSyncCard } from '@/components/pos/network-sync'
 import { DeviceDiscoveryCard } from '@/components/pos/device-discovery'
@@ -627,6 +628,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               </Card>
 
               <DataHygieneCard />
+              <SoftwareUpdatesCard />
               <CloudBackupCard />
             </div>
           )}

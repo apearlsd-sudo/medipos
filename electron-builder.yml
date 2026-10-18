@@ -75,7 +75,13 @@ nsis:
   oneClick: true
   perMachine: false
   deleteAppDataOnUninstall: false   # never destroy the pharmacy's data on uninstall
-  artifactName: ${productName}-Setup-${version}.${ext}
+  # Space-free LITERAL name — do NOT use ${productName} here ("MediPOS Pro" has a
+  # space, and electron-builder / GitHub / latest.yml sanitize that space three
+  # different ways: on-disk "MediPOS Pro-Setup-x.exe", GitHub asset
+  # "MediPOS.Pro-Setup-x.exe", latest.yml path "MediPOS-Pro-Setup-x.exe".
+  # electron-updater downloads the latest.yml path → GitHub 404 → every auto-update
+  # silently failed up to v0.3.5. A literal dash name makes all three identical.
+  artifactName: MediPOS-Pro-Setup-${version}.${ext}
   shortcutName: ${productName}
 
 linux:

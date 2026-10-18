@@ -1492,3 +1492,22 @@ Work Log:
 
 Stage Summary:
 - v0.3.5 live on the auto-update feed — installed desktop apps pick up the speed/isolation/copy-stock work on next restart. User setup after update: on each branch device, Settings → Network & Sync → Sync role & pairing → "This device's store" → pick the store → Save; on the HQ, Stock Control → Copy stock to push inventory into a branch.
+---
+Task ID: autoupdate-fix
+Agent: main
+Task: user report — "the installed app is not updating from github if new updates are pushed" — diagnose + add functionality to make it work.
+
+Work Log:
+- ROOT CAUSE (feed 404): artifact name "MediPOS Pro-Setup-x.exe" (from ${productName} with a space) sanitized THREE different ways — on-disk keeps the space, GitHub rewrites space→dot in the asset name (MediPOS.Pro-Setup-x.exe), latest.yml path gets space→dash (MediPOS-Pro-Setup-x.exe). electron-updater downloads the latest.yml path → releases/download/vX/MediPOS-Pro-Setup-x.exe → 404 → every auto-update failed silently (error only in main.log) on ALL released versions. Proven by local electron-builder 26 NSIS cross-build + released v0.3.5 latest.yml vs asset names.
+- Verified app-update.yml IS generated on the nsis target (updater initialized; the 404 was the killer) — --dir builds skip that codepath (PublishManager gates on isSuitableWindowsTarget).
+- FIX (builder): electron-builder.yml nsis.artifactName = space-free literal "MediPOS-Pro-Setup-${version}.${ext}" → on-disk == GitHub asset == latest.yml path, all three identical by construction.
+- INSURANCE (pack hook): pack-hooks.cjs afterPack now verifies resources/app-update.yml exists and logs its content; writes a canonical GitHub-feed fallback (owner/repo/provider/releaseType/updaterCacheDirName) if a future electron-builder change ever omits it.
+- INSURANCE (CI): desktop-release.yml gains "Verify update-feed consistency" step — fails the release if latest.yml path doesn't match a packaged artifact or app-update.yml is missing. No dead feed can ship again.
+- APP (main.js): initUpdater rewritten — hourly checks (was 6h) + 30s boot check + powerMonitor resume; sticky GENERIC-feed fallback (releases/latest/download/, no api.github.com) when the GitHub provider errors; autoInstallOnAppQuit explicit; download-progress broadcast; update-downloaded → native dialog when window visible else system Notification; all state changes mirrored to renderer via medipos:update-status. initDesktopBridge() registers ipcMain handlers (medipos:info/update-status/update-check/update-install/releases-open). NEW electron/preload.js contextBridge (window.mediposDesktop) — sandbox-safe; webProperties.preload wired.
+- UI: NEW src/components/pos/software-updates.tsx SoftwareUpdatesCard in Settings → App & Data: installed version + feed badge + last check, live states (checking / up-to-date / downloading with % bar / downloaded → "Restart to update" / error with message + guidance / disabled), Check now + Releases page buttons; browser/PWA fallback explains service-worker updates. declare-global Window.mediposDesktop typed in the component.
+- Fixed mangled [hub]/[hub:err] log prefixes in main.js (cosmetic).
+- Docs: NEW docs/auto-update.md (pipeline, fallback feed, naming invariant, debugging incl. log paths + updater cache reset, one-time manual v0.3.6 install note for pre-3.6 builds).
+- VERIFY: node --check main/preload/pack-hooks; SW v55→v56 (single const); build rc=0, standalone carries v56; 139/139 regression (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 32); relaunch HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY; desktop smoke under Xvfb DESKTOP_SMOKE_OK (boot clean with preload); scripts/verify-updates-ui.py 7/7 (card renders, web fallback, desktop controls hidden, 390px zero overflow, no page errors).
+
+Stage Summary:
+- Desktop auto-update root-caused and fixed end-to-end: deterministic space-free artifact names (kills the 3-way sanitization 404), CI guard + pack-hook insurance so a broken feed can never ship silently, hourly checks with generic-feed fallback, and a live Software updates card so update state is visible in-app. CRITICAL migration note: installs on ≤v0.3.5 can never self-update (their updater 404s forever) — v0.3.6 must be installed ONCE manually, after which updates flow automatically. Release v0.3.6 next: bump → tag → CI.

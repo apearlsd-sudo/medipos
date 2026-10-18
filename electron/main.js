@@ -15,14 +15,15 @@
 //   5. The BrowserWindow is a plain Chromium client of the local server —
 //      contextIsolation + sandbox on, nodeIntegration off, navigation and
 //      window.open locked to the app origin.
-//   6. Auto-update (Phase 2): electron-updater against a generic feed
-//      (userData/update-feed.json or MEDIPOS_UPDATE_URL); disabled silently
-//      when no feed is configured — offline-first default.
+//   6. Auto-update: electron-updater against GitHub Releases (feed baked as
+//      resources/app-update.yml) with a generic-feed fallback, hourly checks
+//      and status mirrored into Settings → App & Data → Software updates —
+//      update problems are visible in-app, never silent again.
 //
 // Offline-first by construction: everything above runs on the machine.
 // ---------------------------------------------------------------------------
 
-const { app, BrowserWindow, Tray, Menu, dialog, utilityProcess, shell } = require('electron')
+const { app, BrowserWindow, Tray, Menu, dialog, utilityProcess, shell, ipcMain, Notification, powerMonitor } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
@@ -259,6 +260,7 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: true,
       spellcheck: false,
+      preload: path.join(__dirname, 'preload.js'),
     },
   })
 
@@ -332,15 +334,71 @@ function createTray() {
 // Feed resolution order:
 //   1. MEDIPOS_UPDATE_URL / userData/update-feed.json — generic HTTPS feed
 //   2. Packaged app with resources/app-update.yml — the GitHub Releases feed
-//      baked in by electron-builder's `publish` config (owner apearlsd-sudo,
-//      repo medipos); electron-updater reads it automatically
+//      (baked by electron-builder's publish config, re-verified by the pack
+//      hook; owner apearlsd-sudo, repo medipos)
 //   3. Nothing ⇒ silently disabled (offline-first default; MEDIPOS_UPDATE_OFF=1
 //      force-disables even a configured feed).
-// electron-updater does differential downloads, so patches cost a fraction of
-// the full installer. Failures only ever log — an offline POS is never nagged.
+// v0.3.6 hardening: checks run at boot, then HOURLY (was 6h) and on system
+// resume; when the GitHub API is unreachable the updater falls back to the
+// generic `releases/latest/download/` feed (github.com only, no api.github.com).
+// Every state change is mirrored into the renderer so Settings → App & Data →
+// Software updates shows the live status — updates are never silent again.
+const RELEASES_URL = 'https://github.com/apearlsd-sudo/medipos/releases/latest'
+const GENERIC_FEED_URL = 'https://github.com/apearlsd-sudo/medipos/releases/latest/download/'
+const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000 // hourly — POS terminals stay on for days
+
+let activeUpdater = null
+let updateFeedMode = null // 'github' | 'generic'
+let lastProgressPct = -1
+let updateStatus = {
+  state: 'idle', // idle|disabled|checking|available|not-available|downloading|downloaded|error
+  version: null,
+  percent: 0,
+  error: null,
+  feed: null,
+  checkedAt: null,
+}
+
+function setUpdateStatus(patch) {
+  updateStatus = { ...updateStatus, ...patch }
+  try {
+    mainWindow?.webContents?.send('medipos:update-status', updateStatus)
+  } catch {}
+}
+
+async function runUpdateCheck(reason) {
+  if (!activeUpdater) return
+  if (updateStatus.state === 'downloading' || updateStatus.state === 'downloaded') return // already have it
+  log(`UPDATE_CHECK reason=${reason} feed=${updateFeedMode}`)
+  setUpdateStatus({ state: 'checking', error: null, checkedAt: new Date().toISOString(), feed: updateFeedMode })
+  try {
+    await activeUpdater.checkForUpdates()
+  } catch (err) {
+    log(`UPDATE_CHECK_FAILED feed=${updateFeedMode}: ${err.message}`)
+    if (updateFeedMode === 'github') {
+      // The GitHub provider needs api.github.com — blocked on some networks and
+      // rate-limited on shared IPs. The generic feed needs only github.com.
+      updateFeedMode = 'generic'
+      try {
+        activeUpdater.setFeedURL({ provider: 'generic', url: GENERIC_FEED_URL })
+        log(`UPDATE_FEED_FALLBACK generic ${GENERIC_FEED_URL}`)
+        setUpdateStatus({ feed: updateFeedMode })
+        await activeUpdater.checkForUpdates()
+        return
+      } catch (err2) {
+        log(`UPDATE_CHECK_FAILED generic: ${err2.message}`)
+        setUpdateStatus({ state: 'error', error: err2.message, feed: updateFeedMode })
+        return
+      }
+    }
+    setUpdateStatus({ state: 'error', error: err.message, feed: updateFeedMode })
+  }
+}
+
 function initUpdater() {
   if (process.env.MEDIPOS_UPDATE_OFF === '1') {
     log('AUTOUPDATE_DISABLED MEDIPOS_UPDATE_OFF=1')
+    setUpdateStatus({ state: 'disabled', error: 'Auto-updates are turned off on this device (MEDIPOS_UPDATE_OFF).' })
     return
   }
   let feedUrl = process.env.MEDIPOS_UPDATE_URL || ''
@@ -354,6 +412,7 @@ function initUpdater() {
     IS_PACKAGED && fs.existsSync(path.join(process.resourcesPath || '', 'app-update.yml'))
   if (!feedUrl && !hasBakedFeed) {
     log('AUTOUPDATE_DISABLED no feed (app-update.yml / MEDIPOS_UPDATE_URL / update-feed.json)')
+    setUpdateStatus({ state: 'disabled', error: 'No update feed configured on this install.' })
     return
   }
   let autoUpdater
@@ -361,48 +420,110 @@ function initUpdater() {
     autoUpdater = require('electron-updater').autoUpdater
   } catch (e) {
     log(`AUTOUPDATE_UNAVAILABLE ${e.message}`)
+    setUpdateStatus({ state: 'disabled', error: `electron-updater unavailable: ${e.message}` })
     return
   }
   try {
     if (!IS_PACKAGED) autoUpdater.forceDevUpdateConfig = true
-    if (feedUrl) autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
-    // else: no explicit feed → electron-updater loads resources/app-update.yml
-    // (GitHub provider baked by electron-builder publish config)
+    if (feedUrl) {
+      autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
+      updateFeedMode = 'generic'
+    } else {
+      updateFeedMode = 'github' // resources/app-update.yml baked by electron-builder + pack hook
+    }
     autoUpdater.autoDownload = true
-    autoUpdater.on('checking-for-update', () => log('UPDATE_CHECK'))
-    autoUpdater.on('update-available', (i) => log(`UPDATE_AVAILABLE version=${i && i.version}`))
-    autoUpdater.on('update-not-available', () => log('UPDATE_NOT_AVAILABLE'))
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.on('checking-for-update', () => setUpdateStatus({ state: 'checking' }))
+    autoUpdater.on('update-available', (i) => {
+      log(`UPDATE_AVAILABLE version=${i && i.version}`)
+      setUpdateStatus({ state: 'available', version: (i && i.version) || null, percent: 0 })
+    })
+    autoUpdater.on('update-not-available', (i) => {
+      log(`UPDATE_NOT_AVAILABLE current=${app.getVersion()} latest=${i && i.version}`)
+      setUpdateStatus({ state: 'not-available', version: (i && i.version) || app.getVersion(), percent: 0 })
+    })
     autoUpdater.on('download-progress', (p) => {
       const pct = Math.round((p && p.percent) || 0)
+      if (pct === lastProgressPct) return
+      lastProgressPct = pct
       if (pct % 25 === 0) log(`UPDATE_PROGRESS ${pct}%`)
+      setUpdateStatus({ state: 'downloading', percent: pct })
     })
-    autoUpdater.on('update-downloaded', async (i) => {
+    autoUpdater.on('update-downloaded', (i) => {
       log(`UPDATE_DOWNLOADED version=${i && i.version}`)
-      try {
-        const r = await dialog.showMessageBox(mainWindow, {
-          type: 'info',
-          message: 'MediPOS Pro update ready',
-          detail: `Version ${i && i.version} has been downloaded. Restart now to install it?`,
-          buttons: ['Restart now', 'Later'],
-          defaultId: 0,
-          cancelId: 1,
-        })
-        if (r.response === 0) {
-          isQuitting = true
-          autoUpdater.quitAndInstall()
-        }
-      } catch {}
+      setUpdateStatus({ state: 'downloaded', version: (i && i.version) || null, percent: 100 })
+      // Native surface: dialog when the window is on screen, notification when
+      // it's parked in the tray. The in-app card always reflects the state.
+      if (mainWindow && mainWindow.isVisible()) {
+        dialog
+          .showMessageBox(mainWindow, {
+            type: 'info',
+            message: 'MediPOS Pro update ready',
+            detail: `Version ${i && i.version} has been downloaded. Restart now to install it?`,
+            buttons: ['Restart now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+          })
+          .then((r) => {
+            if (r.response === 0) {
+              isQuitting = true
+              autoUpdater.quitAndInstall()
+            }
+          })
+          .catch(() => {})
+      } else if (Notification.isSupported()) {
+        try {
+          new Notification({
+            title: 'MediPOS Pro update ready',
+            body: `Version ${i && i.version} downloaded — restart the app to install it.`,
+          }).show()
+        } catch {}
+      }
     })
-    autoUpdater.on('error', (e) => log(`UPDATE_ERROR ${e && e.message}`))
-    updaterCheck = () => {
-      autoUpdater.checkForUpdates().catch((err) => log(`UPDATE_CHECK_FAILED ${err.message}`))
-    }
-    log(`AUTOUPDATE_OK feed=${feedUrl || 'github(app-update.yml)'}`)
-    setTimeout(() => updaterCheck?.(), 30_000) // first check 30s after boot
-    setInterval(() => updaterCheck?.(), 6 * 60 * 60 * 1000) // then every 6h
+    autoUpdater.on('error', (e) => {
+      log(`UPDATE_ERROR ${e && e.message}`)
+      if (updateStatus.state !== 'downloaded') {
+        setUpdateStatus({ state: 'error', error: (e && e.message) || 'update error' })
+      }
+    })
+    activeUpdater = autoUpdater
+    updaterCheck = () => runUpdateCheck('scheduled')
+    log(`AUTOUPDATE_OK feed=${updateFeedMode} interval=${UPDATE_CHECK_INTERVAL / 60000}min`)
+    setTimeout(() => runUpdateCheck('startup'), 30_000) // first check 30s after boot
+    setInterval(() => runUpdateCheck('interval'), UPDATE_CHECK_INTERVAL) // then hourly
+    powerMonitor.on('resume', () => runUpdateCheck('resume'))
   } catch (e) {
     log(`AUTOUPDATE_SETUP_FAILED ${e.message}`)
+    setUpdateStatus({ state: 'error', error: e.message })
   }
+}
+
+// Renderer bridge — Settings → App & Data → Software updates talks to these.
+// Registered unconditionally so app info works even when the updater is off.
+function initDesktopBridge() {
+  ipcMain.handle('medipos:info', () => ({
+    desktop: true,
+    version: app.getVersion(),
+    platform: process.platform,
+    lanMode: LAN_MODE,
+    feed: updateFeedMode,
+    updateStatus,
+  }))
+  ipcMain.handle('medipos:update-status', () => updateStatus)
+  ipcMain.handle('medipos:update-check', () => {
+    runUpdateCheck('manual')
+    return true
+  })
+  ipcMain.handle('medipos:update-install', () => {
+    if (!activeUpdater || updateStatus.state !== 'downloaded') return false
+    isQuitting = true
+    activeUpdater.quitAndInstall()
+    return true
+  })
+  ipcMain.handle('medipos:releases-open', () => {
+    shell.openExternal(RELEASES_URL)
+    return true
+  })
 }
 
 // --- lifecycle -------------------------------------------------------------------
@@ -443,6 +564,7 @@ if (!app.requestSingleInstanceLock()) {
     prepareData()
     serverChild = forkServer()
     startHub()
+    initDesktopBridge()
 
     try {
       await waitReady()

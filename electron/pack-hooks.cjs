@@ -95,6 +95,29 @@ exports.default = async function afterPack(context) {
     console.log(`[pack-hooks] pruned @prisma/client/runtime: ${(pruned / 1048576).toFixed(1)} MB (kept library.js)`)
   }
 
+  // Auto-update feed insurance: electron/main.js only enables electron-updater
+  // when resources/app-update.yml exists (the GitHub Releases feed). electron-
+  // builder writes it on the NSIS target, but only when its publish-config
+  // resolution succeeds — a silent config/env change (e.g. a missing token in a
+  // future builder version) would disable updates in every shipped installer.
+  // Verify it, and write a canonical fallback if absent, so the updater gate
+  // can never silently fail again.
+  const updateYml = path.join(resourcesDir, 'app-update.yml')
+  const canonicalFeed = [
+    'owner: apearlsd-sudo',
+    'repo: medipos',
+    'provider: github',
+    'releaseType: release',
+    'updaterCacheDirName: medipos-updater',
+    '',
+  ].join('\n')
+  if (fs.existsSync(updateYml)) {
+    console.log(`[pack-hooks] app-update.yml present: ${fs.readFileSync(updateYml, 'utf8').trim().split('\n').join(' | ')}`)
+  } else {
+    fs.writeFileSync(updateYml, canonicalFeed)
+    console.log('[pack-hooks] app-update.yml MISSING from builder — wrote canonical GitHub feed fallback')
+  }
+
   size = dirSize(serverDir)
   console.log(`[pack-hooks] resources/server final: ${(size / 1048576).toFixed(0)} MB`)
 }
