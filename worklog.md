@@ -1481,3 +1481,14 @@ Work Log:
 
 Stage Summary:
 - LAN sync is now ~1s in every direction (0s observed in tier1), branch devices can be locked to their own store from the role card (other stores' documents stop replicating into them and admin views are scoped), and HQ inventory reaches branches in-app via Copy stock. Sync stack hardened against config collisions and log replay. Release v0.3.5 next: bump → tag → CI.
+---
+Task ID: sync-speed-isolation-inventory-copy
+Agent: main
+Task: (update) v0.3.5 released.
+
+Work Log:
+- version 0.3.4→0.3.5, commit 6fcd0fa, tag v0.3.5 pushed → CI 39169329641 GREEN (~8min, atomic softprops publish path).
+- Release verified: v0.3.5 published (not draft), 3 assets — MediPOS.Pro-Setup-0.3.5.exe 125.9MB + latest.yml (version 0.3.5, sha512, 125906859 bytes) + .blockmap; anonymous latest.yml readable (electron-updater feed live).
+
+Stage Summary:
+- v0.3.5 live on the auto-update feed — installed desktop apps pick up the speed/isolation/copy-stock work on next restart. User setup after update: on each branch device, Settings → Network & Sync → Sync role & pairing → "This device's store" → pick the store → Save; on the HQ, Stock Control → Copy stock to push inventory into a branch.
