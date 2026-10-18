@@ -16,8 +16,10 @@ import { useUser } from '@/components/pos/user-context'
 import { fmtCompact, fmtDate, fmtMoney, paymentMethodLabel } from '@/lib/format'
 import { toast } from '@/hooks/use-toast'
 import type { StoreSettingsMap } from '@/lib/store-settings'
+import type { BranchComparisonData, ComparisonRange } from '@/lib/branch-comparison'
+import type { LowStockDigest } from '@/lib/low-stock'
 import {
-  Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, Check, ChevronDown, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingDown, TrendingUp, Truck, Users, Wallet,
+  AlertTriangle, Banknote, BarChart3, Boxes, Building2, CalendarCheck, CalendarClock, Check, ChevronDown, DollarSign, Download, FileSpreadsheet, FileText, HandCoins, Newspaper, Percent, PiggyBank, Plus, ReceiptText, Send, ShieldCheck, ShoppingCart, Smartphone, Target, TrendingDown, TrendingUp, Truck, Users, Wallet,
 } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -552,6 +554,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
               </CardContent>
             </Card>
           </div>
+          <LowStockSection />
         </>
       )}
 
@@ -601,6 +604,7 @@ export function Reports({ storeSettings }: { storeSettings?: StoreSettingsMap | 
             </Card>
           </div>
 
+          <BranchComparisonSection />
           <BranchBreakdownTable data={data} />
         </>
       )}
@@ -687,6 +691,214 @@ function SectionShell({ title, sub, children, loading }: { title: string; sub: s
       </CardHeader>
       <CardContent>{loading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading…</p> : children}</CardContent>
     </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Branch comparison (roadmap 5a) — this window vs the previous one, per branch.
+// ---------------------------------------------------------------------------
+
+const COMPARISON_RANGE_OPTIONS: Array<{ value: ComparisonRange; label: string }> = [
+  { value: 'today', label: 'Today' },
+  { value: 'week', label: 'This week' },
+  { value: 'month', label: 'This month' },
+]
+
+function DeltaChip({ pct }: { pct: number | null }) {
+  if (pct === null) return <span className="text-xs text-muted-foreground">new</span>
+  const up = pct >= 0
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${up ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400' : 'bg-red-500/10 text-red-600 dark:text-red-400'}`}>
+      {up ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+      {up ? '+' : ''}{pct}%
+    </span>
+  )
+}
+
+function BranchComparisonSection() {
+  const [range, setRange] = useState<ComparisonRange>('week')
+  const [data, setData] = useState<BranchComparisonData | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let dead = false
+    fetch(`/api/reports/branch-comparison?range=${range}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('failed'))))
+      .then((j) => { if (!dead) { setData(j.comparison); setFailed(false) } })
+      .catch(() => { if (!dead) { setData(null); setFailed(true) } })
+    return () => { dead = true }
+  }, [range])
+
+  // Loading is derived: data absent or from a different range than the one
+  // currently selected means the fresh window is still in flight.
+  const loading = !failed && (!data || data.range !== range)
+  const t = data?.total
+  return (
+    <SectionShell
+      title="Branch comparison — window vs previous"
+      sub={data && data.range === range ? `${data.label} vs ${data.prevLabel}` : ''}
+      loading={loading}
+    >
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="rounded-md bg-muted px-2 py-1 font-medium">Chain: {fmtMoney(t?.revenue ?? 0)}</span>
+          <DeltaChip pct={t?.deltaPct ?? null} />
+          <span className="text-muted-foreground">{t?.txns ?? 0} txns · avg {fmtMoney(t?.avgBasket ?? 0)}</span>
+        </div>
+        <Select value={range} onValueChange={(v) => setRange(v as ComparisonRange)}>
+          <SelectTrigger className="h-8 w-[140px] text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {COMPARISON_RANGE_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      {!failed && !data ? null : !data ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">No comparison data available.</p>
+      ) : data.branches.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">No branches to compare.</p>
+      ) : (
+        <div className="space-y-3">
+          {data.branches.map((b) => (
+            <div key={b.branchId} className="rounded-lg border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-semibold">{b.branchName}</span>
+                  {b.code && <Badge variant="outline" className="text-[10px]">{b.code}</Badge>}
+                </div>
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-medium">{fmtMoney(b.revenue)}</span>
+                  <DeltaChip pct={b.deltaPct} />
+                </div>
+              </div>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
+                <div className="h-full rounded-full bg-teal-500" style={{ width: `${Math.min(100, b.sharePct)}%` }} />
+              </div>
+              <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                <span>share {b.sharePct}%</span>
+                <span>{b.txns} txns (prev {b.prevTxns})</span>
+                <span>avg basket {fmtMoney(b.avgBasket)}</span>
+                <span>{b.items} items sold</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </SectionShell>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Low-stock watchlist (roadmap 5b) — out / critical / low with send-to-channels.
+// ---------------------------------------------------------------------------
+
+function LowStockSection() {
+  const [digest, setDigest] = useState<LowStockDigest | null>(null)
+  const [canSend, setCanSend] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [sending, setSending] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    fetch('/api/reports/low-stock')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('failed'))))
+      .then((j) => { setDigest(j.digest); setCanSend(!!j.canSend) })
+      .catch(() => setDigest(null))
+      .finally(() => setLoading(false))
+  }, [])
+  useEffect(load, [load])
+
+  const send = async () => {
+    setSending(true)
+    try {
+      const res = await fetch('/api/reports/low-stock', { method: 'POST' })
+      const j = await res.json()
+      if (res.ok) toast({ title: 'Low-stock digest sent', description: j.sends?.map((s: { channel: string; sent: number }) => `${s.channel}: ${s.sent}`).join(' · ') })
+      else toast({ title: 'Send failed', description: j.error, variant: 'destructive' })
+    } catch {
+      toast({ title: 'Send failed', description: 'Network error', variant: 'destructive' })
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const downloadCsv = () => {
+    if (!digest) return
+    const rows: string[] = ['severity,name,sku,unit,stockQty,reorderLevel,category,supplier']
+    const esc = (s: unknown) => `"${String(s ?? '').replace(/"/g, '""')}"`
+    const push = (severity: string, list: LowStockDigest['groups']['out']) =>
+      list.forEach((r) => rows.push([severity, r.name, r.sku, r.unit, r.stockQty, r.reorderLevel, r.category ?? '', r.supplierName ?? ''].map(esc).join(',')))
+    push('out', digest.groups.out)
+    push('critical', digest.groups.critical)
+    push('low', digest.groups.low)
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `low-stock-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  const c = digest?.counts
+  const cap = expanded ? 25 : 5
+  const group = (title: string, rows: LowStockDigest['groups']['out'], total: number, cls: string) =>
+    total === 0 ? null : (
+      <div>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide">{title} ({total})</p>
+        <div className="space-y-1">
+          {rows.slice(0, cap).map((r) => (
+            <div key={r.medicineId} className={`flex items-center justify-between gap-2 rounded-md px-2 py-1 text-xs ${cls}`}>
+              <span className="truncate font-medium">{r.name} <span className="text-muted-foreground">· {r.sku}</span></span>
+              <span className="shrink-0">{r.stockQty} {r.unit} / reorder at {r.reorderLevel}{r.supplierName ? ` · ${r.supplierName}` : ''}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+
+  return (
+    <SectionShell
+      title="Low-stock watchlist"
+      sub={digest ? `checked ${fmtDate(new Date(digest.generatedAt))}` : ''}
+      loading={loading}
+    >
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm">
+          <AlertTriangle className="h-4 w-4 text-amber-500" />
+          <Badge variant="destructive">Out {c?.out ?? 0}</Badge>
+          <Badge className="bg-amber-500/15 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400">Critical {c?.critical ?? 0}</Badge>
+          <Badge variant="secondary">Low {c?.low ?? 0}</Badge>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={downloadCsv} disabled={!digest || digest.counts.total === 0}>
+            <FileSpreadsheet className="mr-1 h-3.5 w-3.5" /> CSV
+          </Button>
+          {canSend && (
+            <Button size="sm" onClick={send} disabled={sending || !digest || digest.counts.total === 0}>
+              <Send className="mr-1 h-3.5 w-3.5" /> {sending ? 'Sending…' : 'Send to channels'}
+            </Button>
+          )}
+        </div>
+      </div>
+      {!digest ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">Watchlist unavailable.</p>
+      ) : digest.counts.total === 0 ? (
+        <p className="py-6 text-center text-sm text-teal-600 dark:text-teal-400">Every product is at or above its reorder level. ✓</p>
+      ) : (
+        <>
+          <div className="space-y-4">
+            {group('Out of stock', digest.groups.out, digest.counts.out, 'bg-red-500/5 dark:bg-red-500/10')}
+            {group('Critical — ≤25% of reorder level', digest.groups.critical, digest.counts.critical, 'bg-amber-500/5 dark:bg-amber-500/10')}
+            {group('Low', digest.groups.low, digest.counts.low, 'bg-muted/60')}
+          </div>
+          {(digest.previewCapped || digest.counts.total > 15) && (
+            <button className="mt-3 text-xs font-medium text-teal-600 hover:underline dark:text-teal-400" onClick={() => setExpanded((e) => !e)}>
+              {expanded ? 'Show less' : `Show up to 25 per group (${digest.counts.total} total)`}
+            </button>
+          )}
+        </>
+      )}
+    </SectionShell>
   )
 }
 
