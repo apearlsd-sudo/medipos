@@ -15,7 +15,10 @@ ok()  { echo "PASS: $1"; PASS=$((PASS+1)); }
 bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 trap 'kill "$(cat /tmp/t1-branch.pid 2>/dev/null)" 2>/dev/null; kill_port 3100; rm -f db/t1-branch.db db/t1-branch.db-journal /tmp/t1h.txt /tmp/t1b.txt' EXIT
 
-KEYHASH=$(python3 -c "import hashlib; print(hashlib.sha256(b'medipos-hq-sync-key').hexdigest()[:16])")
+# Live sync key (relaunch.sh persists it in .secrets/sync-key; the old
+# hardcoded default is retired).
+SYNC_KEY_VAL="$(cat /home/z/my-project/.secrets/sync-key 2>/dev/null || echo medipos-hq-sync-key)"
+KEYHASH=$(python3 -c "import hashlib; print(hashlib.sha256(b'$SYNC_KEY_VAL').hexdigest()[:16])")
 BRPORT=3100
 BDB=db/t1-branch.db
 
@@ -32,7 +35,7 @@ python3 -c "import sqlite3; c=sqlite3.connect('db/t1-branch.db'); c.execute('PRA
 nohup env NODE_ENV=production PORT=$BRPORT HOSTNAME=0.0.0.0 \
   DATABASE_URL=file:/home/z/my-project/$BDB \
   SYNC_ROLE=branch SYNC_NODE_ID=T1 SYNC_NODE_NAME="Tier1 Branch" \
-  SYNC_KEY=medipos-hq-sync-key SYNC_HQ_URL=http://127.0.0.1:3003 \
+  SYNC_KEY="$SYNC_KEY_VAL" SYNC_HQ_URL=http://127.0.0.1:3003 \
   SYNC_INTERVAL_MS=15000 SYNC_DISCOVERY_PORT=47803 SYNC_DISCOVERY_TARGETS=127.0.0.1:47800 \
   node .next/standalone/server.js > /tmp/t1-branch.log 2>&1 &
 echo $! > /tmp/t1-branch.pid

@@ -102,12 +102,12 @@ grep -q '\[restore\] temporary password applied' "$LOG" && ok "applyPendingResto
 grep -q 'previous database kept as' "$LOG" && ok "pre-restore db kept aside (reversibility)" || say "note: no previous db to keep aside (scratch was empty)"
 
 # 6. Sign in with the one-time password ------------------------------------------
-LC=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:$PORT/api/auth/login" \
+LC=$(curl -s -c "$ROOT/db/.drill-cookies" -o /dev/null -w '%{http_code}' -X POST "http://localhost:$PORT/api/auth/login" \
   -H 'Content-Type: application/json' -d "{\"username\":\"admin\",\"password\":\"$TP\"}")
 [ "$LC" = "200" ] && ok "login with temp admin password → 200" || bad "temp-password login → $LC"
 
 # 7. Restored data visible ---------------------------------------------------------
-MC=$(curl -s "http://localhost:$PORT/api/medicines?take=1" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('medicines',[])))" 2>/dev/null)
+MC=$(curl -s -b "$ROOT/db/.drill-cookies" "http://localhost:$PORT/api/medicines?take=1" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('medicines',[])))" 2>/dev/null)
 [ "$MC" -ge 1 ] 2>/dev/null && ok "restored catalogue served ($MC row(s) on page 1)" || bad "restored data not reachable"
 
 say "================================"

@@ -28,7 +28,12 @@ code=$(curl -s --max-time 3 -o /dev/null -w '%{http_code}' http://localhost:3000
 mkdir -p "$STORE"
 MEDIPOS_PRINTER_STORE="$STORE" python3 scripts/fake-printer.py >/dev/null 2>&1 &
 sleep 1
-h=$(curl -s --max-time 2 "http://127.0.0.1:$PORT/" 2>/dev/null)
+h=$(python3 -c "
+import socket
+try:
+    s = socket.create_connection(('127.0.0.1', $PORT), timeout=2); s.close(); print('ok')
+except Exception as e:
+    print('down')")
 [ "$h" = "ok" ] || { bad "fake printer health failed"; exit 1; }
 ok "fake printer listening on :$PORT"
 
@@ -64,8 +69,12 @@ done
 say "pipeline: $sent sent, $failed failed (labels + kicks)"
 
 # 5. Device-level test endpoint (driver self-check) --------------------------------
+TESTID=$(curl -s -b "/tmp/.soak-cookies-$$" http://localhost:3000/api/hardware/devices | python3 -c "
+import json,sys
+for d in json.load(sys.stdin).get('devices', []):
+    if d.get('type') == 'label' and 'Soak' in d.get('name',''): print(d['id']); break" 2>/dev/null)
 T=$(curl -s -b "/tmp/.soak-cookies-$$" -X POST "http://localhost:3000/api/hardware/test" \
-  -H 'Content-Type: application/json' -d "{\"type\":\"label\"}")
+  -H 'Content-Type: application/json' -d "{\"id\":\"$TESTID\"}")
 echo "$T" | rg -q '"ok":true' && ok "device test endpoint green" || bad "device test: $T"
 
 # 6. Byte tally --------------------------------------------------------------------
@@ -74,7 +83,7 @@ TOTAL=$(python3 -c "
 import re
 n = 0
 for line in open('$LOG'):
-    m = re.match(r'(\d+) bytes', line.strip())
+    m = re.search(r'(\d+) bytes', line)
     if m: n += int(m.group(1))
 print(n)" 2>/dev/null || echo 0)
 LINES=$(wc -l < "$LOG" 2>/dev/null || echo 0)

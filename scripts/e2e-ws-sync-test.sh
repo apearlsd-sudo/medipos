@@ -27,7 +27,10 @@ bad() { echo "FAIL: $1"; FAIL=$((FAIL+1)); }
 # 2026-10-16 before this probe isolation existed).
 trap 'kill "$(cat /tmp/branch-ws.pid 2>/dev/null)" 2>/dev/null; kill_port 3100; rm -f db/branch-ws-test.db db/branch-ws-test.db-journal /tmp/wsbj.txt /tmp/wshj.txt; node scripts/cleanup-ws-sync-probe.js 2>/dev/null || true' EXIT
 
-KEYHASH=$(python3 -c "import hashlib; print(hashlib.sha256(b'medipos-hq-sync-key').hexdigest()[:16])")
+# Live sync key (relaunch.sh persists it in .secrets/sync-key; the old
+# hardcoded default is retired).
+SYNC_KEY_VAL="$(cat /home/z/my-project/.secrets/sync-key 2>/dev/null || echo medipos-hq-sync-key)"
+KEYHASH=$(python3 -c "import hashlib; print(hashlib.sha256(b'$SYNC_KEY_VAL').hexdigest()[:16])")
 BRPORT=3100
 BDB=db/branch-ws-test.db
 
@@ -69,7 +72,7 @@ nohup env NODE_ENV=production NODE_OPTIONS=--unhandled-rejections=warn \
   PORT=$BRPORT HOSTNAME=0.0.0.0 \
   DATABASE_URL=file:/home/z/my-project/$BDB \
   SYNC_ROLE=branch SYNC_NODE_ID=WS-1 SYNC_NODE_NAME="WS Test Branch" \
-  SYNC_KEY=medipos-hq-sync-key \
+  SYNC_KEY="$SYNC_KEY_VAL" \
   SYNC_HQ_URL=http://127.0.0.1:3003 \
   SYNC_INTERVAL_MS=15000 \
   SYNC_DISCOVERY_PORT=47802 SYNC_DISCOVERY_TARGETS=127.0.0.1:47800 \
