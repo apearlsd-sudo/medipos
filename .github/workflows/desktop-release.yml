@@ -54,15 +54,22 @@ jobs:
       - name: Build Next.js standalone
         run: npm run build
 
-      - name: Package + publish (tag / manual publish)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish == true }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --publish always
-
-      - name: Package (dry-run)
-        if: ${{ !(startsWith(github.ref, 'refs/tags/v') || inputs.publish == true) }}
+      - name: Package NSIS (no publish)
         run: npx electron-builder --win nsis --publish never
+
+      # One atomic upload — electron-builder's parallel GitHub publisher races
+      # itself into TWO release objects with split assets (exe+yml / blockmap,
+      # seen on v0.3.1 and v0.3.2); a single gh-release step creates exactly one
+      # published release with all three files.
+      - name: Publish to GitHub Releases (tag / manual publish)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish == true }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop-dist/*.exe
+            desktop-dist/latest.yml
+            desktop-dist/*.blockmap
+          fail_on_unmatched_files: true
 
       - name: Upload dry-run artifacts
         if: ${{ !(startsWith(github.ref, 'refs/tags/v') || inputs.publish == true) }}
