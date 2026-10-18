@@ -51,6 +51,9 @@ publish:
   provider: github
   owner: apearlsd-sudo
   repo: medipos
+  # releaseType release = publish immediately (draft/default + the split-draft
+  # assets quirk were fixed manually for v0.3.1); updater needs a visible release.
+  releaseType: release
 
 afterPack: electron/pack-hooks.cjs
 

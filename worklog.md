@@ -1374,3 +1374,19 @@ Work Log:
 
 Stage Summary:
 - Windows path-legal chunk names confirmed locally; CI re-run in flight. On green: Release v0.3.1 gets the NSIS exe + latest.yml + blockmap — the electron-updater feed goes live and installed desktop apps gain auto-update.
+
+---
+Task ID: ci-windows-fix
+Agent: main
+Task: (update) CI run 3 GREEN → Release v0.3.1 live, auto-update feed operational.
+
+Work Log:
+- Run 3 (39125427412, tag b9eb4cd): "Build Next.js standalone" PASSED on windows-latest for the first time (both fixes confirmed), electron-builder NSIS + publish PASSED → Release v0.3.1.
+- RUN 2 post-mortem: next build itself SUCCEEDED on Windows (route table printed) — the exit-1 came from the npm script's `cp -r public .next/standalone/`: public/ contained ONE tracked dangling symlink (public/ref_dashboard.png → absolute container path, junk from the screenshot pipeline; survived the history rewrite because the strip pattern didn't match the public/ path). GNU cp preserves symlinks on Linux; MSYS cp cannot create them → fatal. Removed via git rm (b9eb4cd).
+- (Local lesson: `npm run build | tail` masks exit codes via the pipe — CI caught what the local check missed.)
+- electron-builder created TWO drafts for v0.3.1 with assets split (exe+latest.yml / blockmap); published the first (PATCH draft:false 200), merged the blockmap into it (download→delete 204→upload 201), second draft removed.
+- electron-builder.yml publish gains releaseType: release — future CI publishes directly (no draft, no split).
+- FINAL STATE: github.com/apearlsd-sudo/medipos/releases/tag/v0.3.1 published — MediPOS-Pro-Setup-0.3.1.exe (118.23 MB) + latest.yml (version 0.3.1, sha512, 123975218 bytes) + .blockmap, all anonymously downloadable; electron-updater feed LIVE.
+
+Stage Summary:
+- End-to-end closed: push → tag v* → windows-latest CI → NSIS installer on GitHub Releases → installed desktop apps auto-update. Roadmaps #1-#5 fully delivered AND publicly shipped. Next natural step: install v0.3.1 on a real Windows machine (first true validation of the Electron net-stack updater path), then future releases are just: bump version → tag → push.
