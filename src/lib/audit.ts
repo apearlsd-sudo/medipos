@@ -55,6 +55,13 @@ export type AuditAction =
   // tier 4 — data hygiene & system care
   | 'system.cleaned'
   | 'system.backup'
+  // tier 1 — cloud backup
+  | 'system.cloudBackup.configured'
+  | 'system.cloudBackup.cleared'
+  | 'system.cloudBackup.tested'
+  | 'system.cloudBackup.uploaded'
+  | 'system.cloudBackup.FAILED'
+  | 'system.cloudBackup.downloaded'
 
 export type AuditTargetType = 'role' | 'user' | 'discount_request' | 'branch' | 'sale' | 'sale_return' | 'medicine' | 'expense' | 'quotation' | 'system' | 'notification' | 'inventory' | 'stock_transfer' | 'settings' | 'sales_target'
 
@@ -93,6 +100,17 @@ export interface AuditChanges {
   deleted?: Record<string, number>
   backupFile?: string
   retentionDays?: Record<string, number>
+  // tier 1 — cloud backup
+  endpoint?: string
+  bucket?: string
+  prefix?: string
+  enabled?: boolean
+  ok?: boolean
+  key?: string
+  bytes?: number
+  error?: string
+  localFile?: string
+  auto?: boolean
   // inventory import / catalog copy
   imported?: number
   catalog?: { created: number; existing: number; priceUpdated: number }

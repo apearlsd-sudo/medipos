@@ -1241,3 +1241,23 @@ Work Log:
 
 Stage Summary:
 - Per-tablet till pricing, direct ZPL/EPL shelf-label printing, bulk CSV onboarding, cross-branch stock visibility with one-click transfers. Was deployed as SW v44 with 139/139 green — CODE LOST in the workspace reset; needs re-implementation (all four specs above are complete).
+
+---
+Task ID: phase2-cloud-backup-autoupdate
+Agent: main
+Task: "phase 2" — auto-update + cloud backup (Tier 1), delivered on top of the recovery baseline after the workspace reset.
+
+Work Log:
+- CLOUD BACKUP LIB (src/lib/cloud-backup.ts): dependency-free S3-compatible client — hand-rolled AWS SigV4 (canonical request, signing key chain, URI encoding), path-style PUT/LIST(ListObjectsV2 XML)/GET + 30s abortable timeouts. Config lives in a local JSON file NEXT TO THE DATABASE (db/cloud-backup.json on web, userData/data/cloud-backup.json on desktop; 0600) — deliberately not in the DB so credentials never replicate to branch nodes. Masked reads (****+last4); PUT with empty/masked secret keeps the stored one.
+- API (5 routes under /api/system/cloud-backup, all settings:edit gated): config GET/PUT/DELETE, test (ListObjectsV2 max-keys=1 probe), upload (VACUUM INTO via shared createLocalBackup() in system.ts → PUT → meta update → audit), files list, download (prefix+.. guarded key → writes into db/backups where the normal backup tooling takes over). New audit actions: system.cloudBackup.configured/cleared/tested/uploaded/FAILED/downloaded (AuditAction + AuditChanges unions extended).
+- DAILY AUTO-BACKUP (src/instrumentation.ts): production-only timer (6h tick, ≥24h guard on newest snapshot mtime, boot pass at +2min) — creates the local VACUUM INTO snapshot and, when cloud config enabled, uploads it; failures recorded in config meta (lastError) and never thrown into the server loop.
+- UI (src/components/pos/cloud-backup.tsx, mounted under Settings → App & Data next to Data & Backup): status grid (enabled/last upload/last size/last error), endpoint/bucket/region/accessKey/secret(prefix-masked)/prefix form, Daily auto-upload switch (saves instantly), Test & save, Save, Back up now, cloud files list with per-file "fetch" (download → local backups). Works with AWS S3 path-style, Cloudflare R2, MinIO, B2.
+- DESKTOP AUTO-UPDATE (electron/main.js): electron-updater (dep, asar closure re-included via explicit files patterns after the zero-dep exclude) initialized only when a feed is configured (MEDIPOS_UPDATE_URL or userData/update-feed.json {"url":...}); generic provider, autoDownload, update-downloaded → "Restart now / Later" dialog → quitAndInstall; tray gains "Check for updates"; checks at boot+30s then 6h; every failure logs only — offline POS is never nagged. No feed ⇒ AUTOUPDATE_DISABLED (offline-first default).
+- TEST RIG: scripts/fake-s3.py (path-style S3 subset on :19002, store kept across respawns) + fake-s3-supervisor.sh (the platform reaps ad-hoc listeners between tool calls, so E2E ran self-contained per call).
+- E2E VERIFIED: API cycle — config PUT (masked response) → test OK → upload (VACUUM INTO 3.77MB → SigV4 PUT lands in store) → ListObjectsV2 parse → download into db/backups; UI cycle (agent-browser, admin) — card renders with saved/masked config, Test & save → "Connection OK" toast, Back up now → object in store + "Cloud backup uploaded" toast, Refresh lists the cloud object, fetch → system.cloudBackup.downloaded audit; all six audit actions present in DB. Screenshot scripts/task97-cloud-backup.png.
+- UPDATER VERIFICATION: packaged run logs AUTOUPDATE_OK (module loaded from pruned asar, feed set, events + tray wired); the 30s live check is not observable in this headless container (Electron net stack degraded — GPU/dbus errors same class); first real validation on Windows/CI. Packaged smoke of the rebuilt scaffold green (BOOT → DB_SEEDED → SERVER_READY <1s); pack 344MB unpacked, prisma runtime = library.js only.
+- DEPLOY: SW v46 (recovery baseline) built+verified → kill :3000 → relaunch.sh HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY. tsc clean on src (stock-take.ts error pre-existing at Task-82 baseline); eslint clean on touched files.
+- REGRESSION: 139/139 green (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 32; cleanup probes=0 sales=0 logs=0).
+
+Stage Summary:
+- Tier 1 "online" layer shipped on the offline-first desktop/web stack: any S3-compatible bucket becomes the pharmacy's off-site copy (manual + daily automatic), restore path = cloud → local backups list → existing tooling; desktop shell gains standard electron-updater with zero-config silence when unconfigured. Delivered post-recovery; recovery incident + lost-feature inventory recorded separately (see incident-workspace-reset-20261018).
