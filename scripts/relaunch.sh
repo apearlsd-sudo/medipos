@@ -7,7 +7,25 @@ LOG=/home/z/my-project/server.log
 PIDFILE=/home/z/my-project/.server.pid
 HUBLOG=/home/z/my-project/hub.log
 HUBPIDFILE=/home/z/my-project/.hub.pid
-SYNC_KEY_VAL="${SYNC_KEY:-medipos-hq-sync-key}"
+
+# Secrets: persisted strong values, generated once (0600). The old hardcoded
+# defaults (medipos-hq-sync-key / medipos-pro-dev-secret-*) became public when
+# the repo went to GitHub, so they are gone — first run mints fresh secrets.
+SECRETS_DIR=/home/z/my-project/.secrets
+mkdir -p "$SECRETS_DIR" && chmod 700 "$SECRETS_DIR" 2>/dev/null
+if [ -z "$AUTH_SECRET" ]; then
+  if [ ! -f "$SECRETS_DIR/auth-secret" ]; then
+    (umask 077 && head -c 48 /dev/urandom | base64 -w0 > "$SECRETS_DIR/auth-secret")
+  fi
+  AUTH_SECRET="$(cat "$SECRETS_DIR/auth-secret")"
+fi
+if [ -z "$SYNC_KEY" ]; then
+  if [ ! -f "$SECRETS_DIR/sync-key" ]; then
+    (umask 077 && head -c 32 /dev/urandom | base64 -w0 > "$SECRETS_DIR/sync-key")
+  fi
+  SYNC_KEY="$(cat "$SECRETS_DIR/sync-key")"
+fi
+SYNC_KEY_VAL="$SYNC_KEY"
 
 # 1. Already healthy? Nothing to do.
 code=$(curl -s --max-time 2 -o /dev/null -w '%{http_code}' http://localhost:3000/ 2>/dev/null)
@@ -42,6 +60,7 @@ else
 fi
 nohup env NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 \
   DATABASE_URL=file:/home/z/my-project/db/custom.db \
+  AUTH_SECRET="$AUTH_SECRET" \
   SYNC_NODE_ID=HQ SYNC_NODE_NAME="Headquarters" \
   SYNC_KEY="$SYNC_KEY_VAL" \
   "$RUNNER" .next/standalone/server.js >> "$LOG" 2>&1 &

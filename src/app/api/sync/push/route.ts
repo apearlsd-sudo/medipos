@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import crypto from 'crypto'
 import { syncConfig, createKeyHash } from '@/lib/sync'
 import { processSyncPush, type SyncPushBody } from '@/lib/sync-gateway'
 
@@ -7,7 +8,12 @@ export const dynamic = 'force-dynamic'
 /** Branch → HQ replication endpoint. Authenticated with the shared SYNC_KEY. */
 export async function POST(req: NextRequest) {
   const cfg = syncConfig()
-  if (!cfg.syncKey || req.headers.get('x-sync-key') !== cfg.syncKey) {
+  const presented = req.headers.get('x-sync-key') ?? ''
+  // Constant-time comparison (hash both sides to fixed length first) — the
+  // pre-hardening `!==` string compare leaked key prefix timing.
+  const a = crypto.createHash('sha256').update(presented).digest()
+  const b = crypto.createHash('sha256').update(cfg.syncKey ?? '\u0000-disabled').digest()
+  if (!cfg.syncKey || presented.length !== cfg.syncKey.length || !crypto.timingSafeEqual(a, b)) {
     return NextResponse.json({ error: 'Invalid sync key' }, { status: 401 })
   }
   try {

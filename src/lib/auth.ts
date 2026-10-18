@@ -25,7 +25,20 @@ export function verifyPassword(password: string, stored: string): boolean {
 // Signed session tokens (HMAC-SHA256, stateless)
 // ---------------------------------------------------------------------------
 
-const SECRET = process.env.AUTH_SECRET ?? 'medipos-pro-dev-secret-key-2026'
+// Session-signing secret. AUTH_SECRET is REQUIRED in any real deployment —
+// the pre-hardening static dev fallback became public knowledge when the repo
+// went to GitHub, so a missing secret now falls back to an EPHEMERAL random
+// key (safe: nothing is forgeable; sessions reset on restart) with a loud
+// warning telling the operator to set AUTH_SECRET.
+const PROVIDED_SECRET = (process.env.AUTH_SECRET ?? '').trim()
+const SECRET = PROVIDED_SECRET || crypto.randomBytes(48).toString('base64url')
+if (!PROVIDED_SECRET && process.env.NODE_ENV === 'production') {
+  console.warn(
+    '[auth] AUTH_SECRET is not set — using an ephemeral random signing secret. ' +
+      'Sessions will not survive restarts. Persist one via relaunch.sh (.secrets/auth-secret) ' +
+      'or export AUTH_SECRET explicitly.',
+  )
+}
 const COOKIE_NAME = 'medipos_session'
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
