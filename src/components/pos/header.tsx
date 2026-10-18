@@ -8,8 +8,9 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-context'
 import { fmtDuration } from '@/components/pos/shifts'
-import { Bell, Building2, Check, ChevronsUpDown, LogOut, Menu, Moon, PackageX, Percent, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
+import { Bell, Building2, Check, ChevronsUpDown, Lock, LogOut, Menu, Moon, PackageX, Percent, ShoppingCart, Sun, Timer, TimerReset, UserRound } from 'lucide-react'
 import { useTheme } from 'next-themes'
+import { loadDeviceBranch } from '@/lib/device-branch'
 import { useEffect, useState } from 'react'
 
 interface ActiveShiftChip {
@@ -57,6 +58,8 @@ export function Header({ title, onMenuClick, onGotoPOS, onGotoShifts, onGotoAppr
   // Branch state (super admin switcher)
   const [branches, setBranches] = useState<HeaderBranch[]>([])
   const [branchSel, setBranchSel] = useState('all')
+  // Device bound to one store (sync isolation) — switcher becomes a locked pill
+  const [deviceLocked, setDeviceLocked] = useState<HeaderBranch | null>(null)
 
   // Pending discount approvals badge
   const [pendingApprovals, setPendingApprovals] = useState(0)
@@ -77,14 +80,29 @@ export function Header({ title, onMenuClick, onGotoPOS, onGotoShifts, onGotoAppr
     return () => { alive = false; clearInterval(t) }
   }, [])
 
-  // Branch switcher data — super admins only
+  // Branch switcher data — super admins only. On devices bound to a store
+  // (Settings → Sync role → "This device's store") the switcher is replaced
+  // with a locked pill and the scope is forced to the bound store.
   useEffect(() => {
     if (!user.isSuperAdmin) return
     setBranchSel(getSelectedBranch())
-    fetch('/api/branches', { cache: 'no-store' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => setBranches((j?.branches ?? []).filter((b: HeaderBranch) => b.isActive)))
-      .catch(() => {})
+    let alive = true
+    Promise.all([
+      fetch('/api/branches', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      loadDeviceBranch(),
+    ]).then(([j, dev]) => {
+      if (!alive) return
+      const active = (j?.branches ?? []).filter((b: HeaderBranch) => b.isActive)
+      setBranches(active)
+      if (dev) {
+        const hit = active.find((b: HeaderBranch) => b.code === dev.branchCode)
+        if (hit) {
+          setDeviceLocked(hit)
+          pickBranch(hit.id)
+        }
+      }
+    })
+    return () => { alive = false }
   }, [user.isSuperAdmin])
 
   // Pending approvals poll — approvers only
@@ -138,8 +156,17 @@ export function Header({ title, onMenuClick, onGotoPOS, onGotoShifts, onGotoAppr
           </button>
         )}
 
-        {/* Branch switcher — super admin */}
-        {user.isSuperAdmin ? (
+        {/* Branch switcher — super admin (locked pill on store-bound devices) */}
+        {user.isSuperAdmin && deviceLocked ? (
+          <span
+            className="hidden items-center gap-1.5 rounded-full border border-teal-300 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-700 lg:inline-flex dark:border-teal-500/30 dark:bg-teal-500/10 dark:text-teal-300"
+            title={`This device is bound to ${deviceLocked.name} (sync isolation) — switch the store in Settings → Network & Sync if this device moves.`}
+            data-testid="branch-locked-pill"
+          >
+            <Lock className="h-3.5 w-3.5" />
+            {deviceLocked.name}
+          </span>
+        ) : user.isSuperAdmin ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button

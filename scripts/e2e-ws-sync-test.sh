@@ -71,6 +71,7 @@ ok "branch DB snapshot created (VACUUM INTO, journal reset)"
 nohup env NODE_ENV=production NODE_OPTIONS=--unhandled-rejections=warn \
   PORT=$BRPORT HOSTNAME=0.0.0.0 \
   DATABASE_URL=file:/home/z/my-project/$BDB \
+  MEDIPOS_CONFIG_FILE=/tmp/ws-branch.config.json \
   SYNC_ROLE=branch SYNC_NODE_ID=WS-1 SYNC_NODE_NAME="WS Test Branch" \
   SYNC_KEY="$SYNC_KEY_VAL" \
   SYNC_HQ_URL=http://127.0.0.1:3003 \

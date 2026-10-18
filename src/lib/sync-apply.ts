@@ -14,6 +14,7 @@ import { db } from '@/lib/db'
 import { publishLive } from '@/lib/live'
 import { planPackSale } from '@/lib/packs'
 import { deriveSkuForBranch, findDestMedicine } from '@/lib/stock-transfer'
+import { syncConfig } from '@/lib/sync'
 
 export interface WireOp {
   id: string
@@ -26,6 +27,27 @@ export interface WireOp {
 }
 
 export type ApplyResult = 'ok' | 'duplicate' | 'skipped'
+
+// --- branch store isolation ----------------------------------------------------
+// A device bound to one store (Settings → Sync role → "This device's store")
+// must not absorb OTHER stores' business documents from the replicated log:
+// they stay on the owning branch + the HQ shadow. Shared/reference data
+// (customers, catalog, transfers, ledger…) still applies everywhere.
+const BRANCH_PRIVATE_OPS = new Set([
+  'sale.created', 'sale.verified',
+  'expense.created', 'expense.voided',
+  'quotation.updated', 'quotation.status',
+])
+
+let boundBranchCache: { code: string; id: string | null } | null = null
+async function boundBranchId(): Promise<string | null> {
+  const code = syncConfig().branchCode
+  if (!code) return null
+  if (boundBranchCache?.code === code && boundBranchCache.id) return boundBranchCache.id
+  const row = await db.branch.findFirst({ where: { code }, select: { id: true } })
+  if (row) boundBranchCache = { code, id: row.id }
+  return row?.id ?? null
+}
 
 const str = (v: unknown, fallback = ''): string => (typeof v === 'string' ? v : fallback)
 const num = (v: unknown, fallback = 0): number => (typeof v === 'number' && Number.isFinite(v) ? v : fallback)
@@ -40,6 +62,16 @@ export async function applySyncOp(
   opts: { asHQ: boolean; peerName?: string },
 ): Promise<ApplyResult> {
   const p = op.payload ?? {}
+  // Fanout echo: the HQ re-logged this op for the other peers — if it
+  // originated on THIS node the data is already local; never re-apply.
+  const originNode = typeof p.__originNode === 'string' ? p.__originNode : ''
+  if (originNode && originNode === syncConfig().nodeId) return 'duplicate'
+  // Branch isolation: drop other stores' business documents on bound devices.
+  if (!opts.asHQ && BRANCH_PRIVATE_OPS.has(op.op) && syncConfig().branchCode) {
+    const bid = str(p.branchId)
+    const mine = await boundBranchId()
+    if (bid && mine && bid !== mine) return 'skipped'
+  }
   switch (op.op) {
     case 'sale.created':
       return applySaleCreated(op, p, opts)
@@ -332,7 +364,11 @@ async function applyCatalogUpsertBySku(
       categoryId,
       branchId,
       status: 'active',
+      // Inventory copies create rows WITH their stock/batch/expiry (the
+      // emitting side passes initialQty + optional batch fields).
       stockQty: Math.max(0, Math.floor(num(p.initialQty, num(p.stockQty, 0)))),
+      batchNumber: p.batchNumber !== undefined ? (str(p.batchNumber) || null) : undefined,
+      expiryDate: p.expiryDate !== undefined ? date(p.expiryDate) : undefined,
     },
   })
   publishLive(['medicine', 'sync'], note, 'sync')
@@ -352,8 +388,13 @@ async function applyStockOpBySku(op: WireOp, p: Record<string, unknown>): Promis
     ? Math.max(0, Math.floor(num(p.qty, med.stockQty)))
     : Math.max(0, med.stockQty + Math.floor(num(p.delta, 0)))
   const applied = nextQty - med.stockQty
+  // Inventory copies may carry batch/expiry alongside the quantity — apply
+  // them only when the emitter explicitly included the fields.
+  const medData: Record<string, unknown> = { stockQty: nextQty }
+  if (p.batchNumber !== undefined) medData.batchNumber = str(p.batchNumber) || null
+  if (p.expiryDate !== undefined) medData.expiryDate = date(p.expiryDate)
   await db.$transaction([
-    db.medicine.update({ where: { id: med.id }, data: { stockQty: nextQty } }),
+    db.medicine.update({ where: { id: med.id }, data: medData }),
     db.inventoryLog.create({
       data: {
         medicineId: med.id,
@@ -422,6 +463,15 @@ async function applyLedgerEntry(op: WireOp, p: Record<string, unknown>): Promise
   const id = str(p.id) || op.id
   const dup = await db.customerLedger.findUnique({ where: { id } }).catch(() => null)
   if (dup) return 'duplicate'
+  // Belt-and-braces: a credit sale's charge is unique per sale. The emitting
+  // row may carry a different id than this op (e.g. a locally-created charge
+  // plus a replayed op for the same sale) — never double-charge one sale.
+  const saleId = str(p.saleId)
+  const chargeType = str(p.type, 'charge') === 'charge'
+  if (saleId && chargeType) {
+    const sameSale = await db.customerLedger.findFirst({ where: { saleId, type: 'charge' }, select: { id: true } })
+    if (sameSale) return 'duplicate'
+  }
   const customerId = str(p.customerId)
   const customer = await db.customer.findUnique({ where: { id: customerId } })
   if (!customer) return 'skipped'

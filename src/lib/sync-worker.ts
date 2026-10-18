@@ -227,6 +227,36 @@ export function ensureSyncWorker(): void {
   g.__mediposSyncTimer = setInterval(tick, cfg.intervalMs)
 }
 
+// --- low-latency poke ---------------------------------------------------------
+// recordSyncOp() pokes this ~400ms after every business mutation, so branch→HQ
+// latency is ~1s instead of "whenever the next poll tick fires". Runs at most
+// one cycle at a time; a poke arriving mid-cycle queues exactly one follow-up.
+const pokeG = globalThis as unknown as { __mediposPokeRunning?: boolean; __mediposPokeQueued?: boolean }
+export function pokeSyncCycle(): void {
+  if (!isBranchNode()) return
+  if (pokeG.__mediposPokeRunning) {
+    pokeG.__mediposPokeQueued = true
+    return
+  }
+  setTimeout(() => {
+    void (async () => {
+      pokeG.__mediposPokeRunning = true
+      try {
+        const r = await runSyncCycle()
+        if (r.ok && r.summary !== 'in sync') console.log('[sync] poke push:', r.summary)
+      } catch {
+        /* runSyncCycle logs its own failures */
+      } finally {
+        pokeG.__mediposPokeRunning = false
+        if (pokeG.__mediposPokeQueued) {
+          pokeG.__mediposPokeQueued = false
+          pokeSyncCycle()
+        }
+      }
+    })()
+  }, 400)
+}
+
 /**
  * Stop the interval worker (role switched away from branch in the Settings UI).
  * The live link is handled separately via ws-link's stopWsLink().

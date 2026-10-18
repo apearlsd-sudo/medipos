@@ -15,8 +15,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useUser } from '@/components/pos/user-context'
-import { Building2, Check, CheckCircle2, Copy, Eye, EyeOff, KeyRound, Loader2, MonitorSmartphone, Network, RefreshCw, TriangleAlert, Wand2 } from 'lucide-react'
+import { Building2, Check, CheckCircle2, Copy, Eye, EyeOff, KeyRound, Loader2, Lock, MonitorSmartphone, Network, RefreshCw, TriangleAlert, Wand2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -29,6 +30,8 @@ interface SyncRoleConfig {
   hqUrl: string | null
   hqUrlSource: string | null
   intervalMs: number
+  branchCode: string | null
+  branchName: string | null
   configPath: string
   configFileExists: boolean
   desktop: boolean
@@ -37,7 +40,9 @@ interface SyncRoleConfig {
   savedAt: string | null
 }
 
-const emptyForm = { role: 'hq' as 'hq' | 'branch', nodeId: '', nodeName: '', hqUrl: '', syncKey: '' }
+interface StoreLite { id: string; name: string; code: string; isActive: boolean }
+
+const emptyForm = { role: 'hq' as 'hq' | 'branch', nodeId: '', nodeName: '', hqUrl: '', syncKey: '', branchCode: '' }
 
 export function SyncRoleCard() {
   const { user } = useUser()
@@ -58,7 +63,7 @@ export function SyncRoleCard() {
       if (res.ok) {
         const json = (await res.json()) as SyncRoleConfig
         setCfg(json)
-        setForm({ role: json.role, nodeId: json.nodeId, nodeName: json.nodeName, hqUrl: json.hqUrl ?? '', syncKey: '' })
+        setForm({ role: json.role, nodeId: json.nodeId, nodeName: json.nodeName, hqUrl: json.hqUrl ?? '', syncKey: '', branchCode: json.branchCode ?? '' })
       }
     } finally {
       setLoading(false)
@@ -71,7 +76,7 @@ export function SyncRoleCard() {
 
   const dirty =
     !!cfg &&
-    (form.role !== cfg.role || form.nodeId !== cfg.nodeId || form.nodeName !== cfg.nodeName || (form.role === 'branch' && (form.hqUrl !== (cfg.hqUrl ?? '') || form.syncKey.length > 0)))
+    (form.role !== cfg.role || form.nodeId !== cfg.nodeId || form.nodeName !== cfg.nodeName || (form.role === 'branch' && (form.hqUrl !== (cfg.hqUrl ?? '') || form.syncKey.length > 0 || form.branchCode !== (cfg.branchCode ?? ''))))
 
   const save = async (extra?: Record<string, unknown>) => {
     setSaving(true)
@@ -80,7 +85,7 @@ export function SyncRoleCard() {
         role: form.role,
         nodeId: form.nodeId,
         nodeName: form.nodeName,
-        ...(form.role === 'branch' ? { hqUrl: form.hqUrl } : {}),
+        ...(form.role === 'branch' ? { hqUrl: form.hqUrl, branchCode: form.branchCode } : {}),
         ...(form.role === 'branch' && form.syncKey.trim() ? { syncKey: form.syncKey.trim() } : {}),
         ...extra,
       }
@@ -335,7 +340,7 @@ function LanModeHint({ lanModeFlag }: { lanModeFlag: boolean }) {
   )
 }
 
-// --- Branch panel: HQ endpoint + shared key + test connection ------------------
+// --- Branch panel: store binding + HQ endpoint + shared key + test -----------
 
 function BranchPanel({ cfg, form, setForm, canManage, testResult, testing, onTest }: {
   cfg: SyncRoleConfig
@@ -346,8 +351,48 @@ function BranchPanel({ cfg, form, setForm, canManage, testResult, testing, onTes
   testing: boolean
   onTest: () => void
 }) {
+  const [stores, setStores] = useState<StoreLite[]>([])
+  const bound = !!form.branchCode
+
+  useEffect(() => {
+    let alive = true
+    fetch('/api/branches', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (alive) setStores((j?.branches ?? []).filter((b: StoreLite) => b.isActive))
+      })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  const boundName = stores.find((b) => b.code === form.branchCode)?.name ?? cfg.branchName ?? form.branchCode
+
   return (
     <div className="mt-3 space-y-3 rounded-lg border bg-muted/20 p-3">
+      <div className="space-y-1">
+        <Label htmlFor="sync-branch-store" className="text-xs text-muted-foreground">This device&apos;s store</Label>
+        <Select value={form.branchCode || 'none'} onValueChange={(v) => setForm((f) => ({ ...f, branchCode: v === 'none' ? '' : v }))} disabled={!canManage}>
+          <SelectTrigger id="sync-branch-store" className="h-8 text-sm" data-testid="sync-branch-store">
+            <SelectValue placeholder="Which store does this device belong to?" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="none"><span className="text-muted-foreground">Not bound — see every store (old behaviour)</span></SelectItem>
+            {stores.map((b) => (
+              <SelectItem key={b.id} value={b.code}>
+                {b.name} <span className="ml-1 text-[10px] text-muted-foreground">{b.code}</span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {bound ? (
+          <p className="flex items-start gap-1.5 text-[11px] text-teal-700 dark:text-teal-300">
+            <Lock className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>Locked to <span className="font-semibold">{boundName}</span> — this device shows only its own store&apos;s sales, expenses and quotations. Other stores&apos; documents stay on the HQ.</span>
+          </p>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">Optional but recommended: pick the store this device runs so it only sees its own data. Staff accounts were always limited to their branch — this also isolates admin views on the device.</p>
+        )}
+      </div>
       <div className="space-y-1">
         <Label htmlFor="sync-hq-url" className="text-xs text-muted-foreground">HQ URL</Label>
         <Input

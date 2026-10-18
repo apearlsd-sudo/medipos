@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 import { db } from '@/lib/db'
-import { HQ_NODE_ID } from '@/lib/sync'
+import { HQ_NODE_ID, nudgeHub } from '@/lib/sync'
 import { applySyncOp, type WireOp } from '@/lib/sync-apply'
 import { publishLive } from '@/lib/live'
 
@@ -31,11 +31,24 @@ export interface SyncPushAck {
   hqLanUrls: string[]
 }
 
+// Ops re-logged under the HQ node so OTHER branches pull them. Branch-private
+// documents (sales, expenses, quotations, stock movements) stay on the owning
+// branch + HQ shadow — every other op kind is shared/reference data that must
+// converge across the network (customers, ledger/loyalty, catalog edits made
+// at a branch, inter-branch transfers).
+const FANOUT_OPS = new Set([
+  'customer.updated', 'insurer.updated', 'claim.status',
+  'ledger.entry', 'loyalty.entry',
+  'medicine.updated', 'medicine.created', 'medicine.upsert',
+  'transfer.created', 'transfer.completed', 'transfer.cancelled',
+])
+
 export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> {
   let applied = 0
   let skipped = 0
   const errors: Array<{ op: string; error: string }> = []
   let maxSeq = 0
+  const appliedOps: WireOp[] = []
 
   for (const op of body.ops ?? []) {
     if (!op?.id || !op.op || !Number.isFinite(op.seq)) {
@@ -45,8 +58,10 @@ export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> 
     maxSeq = Math.max(maxSeq, op.seq)
     try {
       const r = await applySyncOp(op, { asHQ: true, peerName: body.nodeName })
-      if (r === 'ok') applied++
-      else skipped++
+      if (r === 'ok') {
+        applied++
+        appliedOps.push(op)
+      } else skipped++
     } catch (e) {
       skipped++
       errors.push({ op: `${op.op}#${op.seq}`, error: e instanceof Error ? e.message : 'apply failed' })
@@ -63,18 +78,59 @@ export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> 
     await db.syncNode.update({ where: { id: body.nodeId }, data: { lastPushSeq: maxSeq } })
   }
 
-  // HQ outbox → the branch's pull cursor
+  // --- cross-branch fanout -------------------------------------------------
+  // Branch ops applied above exist only in the HQ database; peers discover
+  // them exclusively through the HQ op-log. Re-log the shared ones here so
+  // every branch converges (recipients skip their own echoes via __originNode
+  // and dedupe everything else by stable ids).
+  let fanouted = 0
+  if (appliedOps.length > 0) {
+    const toFan = appliedOps.filter((o) => FANOUT_OPS.has(o.op))
+    if (toFan.length > 0) {
+      const head = await db.syncOp.findFirst({ where: { nodeId: HQ_NODE_ID }, orderBy: { seq: 'desc' }, select: { seq: true } })
+      let seq = head?.seq ?? 0
+      for (const op of toFan) {
+        seq++
+        await db.syncOp.create({
+          data: {
+            nodeId: HQ_NODE_ID,
+            seq,
+            op: op.op,
+            targetKey: op.targetKey,
+            payload: JSON.stringify({ ...(op.payload ?? {}), __originNode: body.nodeId }),
+          },
+        })
+        fanouted++
+      }
+    }
+  }
+
+  // HQ outbox → the branch's pull cursor. Ops this branch itself emitted are
+  // dropped from its view (its data is already local) — only fanout echoes
+  // carry __originNode, so a plain `includes` check is exact.
   const hqHead = await db.syncOp.findFirst({ where: { nodeId: HQ_NODE_ID }, orderBy: { seq: 'desc' }, select: { seq: true } })
-  const hqSeq = hqHead?.seq ?? 0
-  const outbox = await db.syncOp.findMany({
+  const outboxAll = await db.syncOp.findMany({
     where: { nodeId: HQ_NODE_ID, seq: { gt: body.pullSince } },
     orderBy: { seq: 'asc' },
     take: 500,
   })
+  const echoTag = `"__originNode":"${body.nodeId}"`
+  const outbox = outboxAll.filter((o) => !o.payload.includes(echoTag))
+  // Cursor = the highest seq actually handed over — never past what the
+  // branch has seen, so a >500-op backlog continues on the next cycle.
+  // (Own echo ops count as seen: the branch already holds that data.)
+  const lastSeenSeq = outbox.length > 0
+    ? outbox[outbox.length - 1].seq
+    : outboxAll.length > 0
+      ? outboxAll[outboxAll.length - 1].seq
+      : body.pullSince
+  const hqSeq = outboxAll.length === 500 ? lastSeenSeq : hqHead?.seq ?? 0
 
   if (applied > 0) {
     publishLive(['sync', 'sale', 'stock', 'medicine'], `${body.nodeName} synced ${applied} change(s) into HQ`, 'sync')
   }
+  // Live branches pull the freshly fanned-out ops within ~1s.
+  if (fanouted > 0) void nudgeHub()
 
   const { selfTunnelUrl, selfHubUrl, selfLanUrls } = await selfEndpoints()
   return {

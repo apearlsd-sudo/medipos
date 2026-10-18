@@ -21,6 +21,12 @@ export async function POST(req: NextRequest) {
     if (!body?.nodeId || !Array.isArray(body.ops)) {
       return NextResponse.json({ error: 'Malformed push body' }, { status: 400 })
     }
+    // Only branch nodes push. The HQ never pushes to itself — a push claiming
+    // the HQ identity is a misconfigured node (e.g. one reading another
+    // device's config file) trying to replay the HQ log back into it.
+    if (body.nodeId.trim().toUpperCase() === 'HQ') {
+      return NextResponse.json({ error: 'HQ nodes do not push — check this node\'s sync config' }, { status: 400 })
+    }
     const ack = await processSyncPush(body)
     return NextResponse.json(ack)
   } catch (e) {

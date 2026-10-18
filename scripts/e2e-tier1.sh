@@ -34,6 +34,7 @@ python3 -c "import sqlite3; s=sqlite3.connect('db/custom.db'); s.execute(\"VACUU
 python3 -c "import sqlite3; c=sqlite3.connect('db/t1-branch.db'); c.execute('PRAGMA journal_mode=DELETE'); c.close()"
 nohup env NODE_ENV=production PORT=$BRPORT HOSTNAME=0.0.0.0 \
   DATABASE_URL=file:/home/z/my-project/$BDB \
+  MEDIPOS_CONFIG_FILE=/tmp/t1-branch.config.json \
   SYNC_ROLE=branch SYNC_NODE_ID=T1 SYNC_NODE_NAME="Tier1 Branch" \
   SYNC_KEY="$SYNC_KEY_VAL" SYNC_HQ_URL=http://127.0.0.1:3003 \
   SYNC_INTERVAL_MS=15000 SYNC_DISCOVERY_PORT=47803 SYNC_DISCOVERY_TARGETS=127.0.0.1:47800 \

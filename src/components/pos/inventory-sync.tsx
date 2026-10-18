@@ -8,7 +8,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useUser } from '@/components/pos/user-context'
 import { fmtDate } from '@/lib/format'
-import { Building2, CheckCircle2, CopyPlus, Download, FileJson, Loader2, TriangleAlert, Upload } from 'lucide-react'
+import { Boxes, Building2, CheckCircle2, CopyPlus, Download, FileJson, Loader2, TriangleAlert, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from '@/hooks/use-toast'
 
@@ -517,6 +517,224 @@ export function CopyCatalogButton({ onChanged, featured }: { onChanged?: () => v
                 <Button onClick={doCopy} disabled={!canCopy || copying || previewing} className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700">
                   {copying ? <Loader2 className="h-4 w-4 animate-spin" /> : <CopyPlus className="h-4 w-4" />}
                   {preview ? `Copy ${preview.wouldCreate} product(s)` : 'Copy catalog'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// CopyStockButton — push a store's ACTUAL inventory (quantities, optionally
+// batch/expiry) onto another branch over the LAN sync. The stock counterpart
+// of CopyCatalogButton: catalog copy ships products at zero quantity, this
+// action fills the real stock — e.g. copying the HQ store's inventory onto a
+// branch device without USB files.
+// ---------------------------------------------------------------------------
+
+interface StockCopyPreview {
+  sourceBranch: { id: string; name: string; code: string }
+  targetBranch: { id: string; name: string; code: string }
+  sourceCount: number
+  alreadyExist: number
+  wouldCreate: number
+  totalUnits: number
+}
+
+interface StockCopyReport {
+  created: number
+  updated: number
+  existing: number
+  unitsCopied: number
+  total: number
+  mode: string
+}
+
+export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
+  const { user } = useUser()
+  const isSuper = user.isSuperAdmin
+
+  const [open, setOpen] = useState(false)
+  const [branches, setBranches] = useState<BranchLite[]>([])
+  const [sourceBranchId, setSourceBranchId] = useState('')
+  const [targetBranchId, setTargetBranchId] = useState('')
+  const [mode, setMode] = useState<'set' | 'missing'>('set')
+  const [copyBatch, setCopyBatch] = useState(true)
+  const [preview, setPreview] = useState<StockCopyPreview | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [copying, setCopying] = useState(false)
+  const [report, setReport] = useState<{ report: StockCopyReport; sourceBranch: { name: string }; targetBranch: { name: string } } | null>(null)
+
+  const effectiveTarget = isSuper ? targetBranchId : (user.branchId ?? '')
+  const sourceOptions = branches.filter((b) => b.id !== effectiveTarget)
+
+  const openDialog = async () => {
+    setOpen(true)
+    setReport(null)
+    setPreview(null)
+    setMode('set')
+    if (branches.length === 0) {
+      try {
+        const res = await fetch('/api/branches', { cache: 'no-store' })
+        if (!res.ok) throw new Error('branches unavailable')
+        const json = await res.json()
+        const active: BranchLite[] = (json?.branches ?? []).filter((b: BranchLite) => b.isActive)
+        setBranches(active)
+        setSourceBranchId((cur) => cur || active.find((b) => b.id !== (isSuper ? '' : user.branchId))?.id || active[0]?.id || '')
+      } catch {
+        /* branch list unavailable — selects show a loading/error state */
+      }
+    }
+  }
+
+  useEffect(() => {
+    setPreview(null)
+    if (!open || !sourceBranchId || !effectiveTarget || sourceBranchId === effectiveTarget) return
+    let cancelled = false
+    setPreviewing(true)
+    fetch(`/api/inventory/copy-stock?sourceBranchId=${encodeURIComponent(sourceBranchId)}&targetBranchId=${encodeURIComponent(effectiveTarget)}`, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('preview failed'))))
+      .then((j) => { if (!cancelled) setPreview(j) })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setPreviewing(false) })
+    return () => { cancelled = true }
+  }, [open, sourceBranchId, effectiveTarget])
+
+  const doCopy = async () => {
+    if (!sourceBranchId || !effectiveTarget) return
+    setCopying(true)
+    try {
+      const res = await fetch('/api/inventory/copy-stock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sourceBranchId, targetBranchId: effectiveTarget || undefined, mode, copyBatch }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        toast({ title: 'Copy failed', description: json.error, variant: 'destructive' })
+        return
+      }
+      setReport(json)
+      toast({ title: 'Inventory copied', description: `${json.report.created} created · ${json.report.updated} stock set · ${json.report.unitsCopied} units.` })
+      onChanged?.()
+    } finally {
+      setCopying(false)
+    }
+  }
+
+  const canCopy = !!sourceBranchId && !!effectiveTarget && sourceBranchId !== effectiveTarget
+
+  return (
+    <>
+      <Button variant="outline" onClick={openDialog} className="rounded-full">
+        <Boxes className="h-4 w-4" /> <span className="hidden sm:inline">Copy stock</span>
+      </Button>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Boxes className="h-5 w-5 text-teal-500" /> Copy inventory (stock)</DialogTitle>
+            <DialogDescription>
+              Push another store&apos;s actual stock onto a branch — quantities travel over the sync alongside prices. Use Copy catalog first if the branch has no products yet.
+            </DialogDescription>
+          </DialogHeader>
+
+          {report ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle2 className="h-5 w-5" />
+                <p className="font-semibold">Inventory copied — {report.sourceBranch.name} → {report.targetBranch.name}</p>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="rounded-xl border bg-emerald-50 p-3 dark:bg-emerald-500/10"><p className="text-2xl font-bold">{report.report.created}</p><p className="text-xs text-muted-foreground">created</p></div>
+                <div className="rounded-xl border bg-teal-50 p-3 dark:bg-teal-500/10"><p className="text-2xl font-bold">{report.report.updated}</p><p className="text-xs text-muted-foreground">stock set</p></div>
+                <div className="rounded-xl border bg-muted p-3"><p className="text-2xl font-bold">{report.report.unitsCopied}</p><p className="text-xs text-muted-foreground">units copied</p></div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {report.report.total} product(s) reviewed. Quantities sync to the branch device within seconds when it is online (queued otherwise).
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => setReport(null)}>Copy again</Button>
+                <Button className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700" onClick={() => setOpen(false)}>Done</Button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Copy stock from (source store)</Label>
+                {branches.length > 0 ? (
+                  <Select value={sourceBranchId} onValueChange={setSourceBranchId}>
+                    <SelectTrigger><SelectValue placeholder="Select source store" /></SelectTrigger>
+                    <SelectContent>
+                      {sourceOptions.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex h-9 items-center gap-2 rounded-md border bg-muted/40 px-3 text-xs text-muted-foreground">Loading stores…</div>
+                )}
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Destination branch</Label>
+                {isSuper ? (
+                  <Select value={targetBranchId} onValueChange={setTargetBranchId}>
+                    <SelectTrigger><SelectValue placeholder="Select destination branch" /></SelectTrigger>
+                    <SelectContent>
+                      {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <div className="flex h-9 items-center gap-2 rounded-md border bg-muted/40 px-3 text-sm">
+                    <Building2 className="h-3.5 w-3.5 text-teal-600" /> {user.branchName ?? 'Your branch'}
+                  </div>
+                )}
+              </div>
+
+              {canCopy && (
+                <div className="rounded-xl border p-3 text-sm">
+                  {previewing || !preview ? (
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Counting the source stock…</p>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      <span className="font-semibold text-foreground">{preview.sourceBranch.name}</span> holds <span className="font-semibold text-foreground">{preview.sourceCount}</span> product(s) with{' '}
+                      <span className="font-semibold text-foreground">{preview.totalUnits}</span> unit(s) on the shelf —{' '}
+                      <span className="font-semibold text-emerald-600 dark:text-emerald-400">{preview.wouldCreate}</span> will be created here with their stock,
+                      {' '}<span className="font-semibold text-foreground">{preview.alreadyExist}</span> already exist{preview.alreadyExist === 1 ? 's' : ''}.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <RadioGroup value={mode} onValueChange={(v) => setMode(v as 'set' | 'missing')} className="grid grid-cols-2 gap-3">
+                <label className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-3 transition ${mode === 'set' ? 'border-teal-500 bg-teal-50 dark:bg-teal-500/10' : 'hover:bg-muted'}`}>
+                  <RadioGroupItem value="set" className="mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-semibold">Overwrite quantities</span>
+                    <span className="block text-xs text-muted-foreground">Branch stock becomes exactly the source stock (full mirror).</span>
+                  </span>
+                </label>
+                <label className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-3 transition ${mode === 'missing' ? 'border-teal-500 bg-teal-50 dark:bg-teal-500/10' : 'hover:bg-muted'}`}>
+                  <RadioGroupItem value="missing" className="mt-0.5" />
+                  <span>
+                    <span className="block text-sm font-semibold">Only add missing</span>
+                    <span className="block text-xs text-muted-foreground">Create products the branch lacks (with stock); existing rows untouched.</span>
+                  </span>
+                </label>
+              </RadioGroup>
+
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input type="checkbox" checked={copyBatch} onChange={(e) => setCopyBatch(e.target.checked)} className="h-4 w-4 accent-teal-600" />
+                Also copy batch numbers &amp; expiry dates
+              </label>
+
+              <div className="flex gap-2">
+                <Button variant="outline" className="flex-1 rounded-full" onClick={() => setOpen(false)}>Cancel</Button>
+                <Button onClick={doCopy} disabled={!canCopy || copying || previewing} className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700">
+                  {copying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />}
+                  {preview ? `Copy ${preview.totalUnits} unit(s)` : 'Copy stock'}
                 </Button>
               </div>
             </div>

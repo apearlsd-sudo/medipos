@@ -37,6 +37,10 @@ export interface SyncConfig {
   intervalMs: number
   /** where the active sync key came from — UI card shows a matching hint */
   keySource: 'config-file' | 'env' | 'none'
+  /** store this branch DEVICE is bound to (isolation: other stores' business
+   *  documents are neither pulled into views nor applied from the HQ log) */
+  branchCode: string
+  branchName: string
 }
 
 export function syncConfig(): SyncConfig {
@@ -50,14 +54,21 @@ export function syncConfig(): SyncConfig {
     nodeId: (file?.nodeId || process.env.SYNC_NODE_ID || (role === 'branch' ? 'BRANCH' : HQ_NODE_ID)).trim(),
     nodeName: file?.nodeName || process.env.SYNC_NODE_NAME || (role === 'branch' ? 'Branch Node' : 'Headquarters'),
     syncKey: keyFromFile || keyFromEnv || null,
-    intervalMs: Math.max(5_000, Number(process.env.SYNC_INTERVAL_MS) || 15_000),
+    // 5s fallback cadence — the live link + push pokes make typical latency
+    // ~1s; this only bounds the worst case when the link is down.
+    intervalMs: Math.max(3_000, Number(process.env.SYNC_INTERVAL_MS) || 5_000),
     keySource: keyFromFile ? 'config-file' : keyFromEnv ? 'env' : 'none',
+    branchCode: (file?.branchCode || '').trim().toUpperCase(),
+    branchName: (file?.branchName || '').trim(),
   }
 }
 
 export function isBranchNode(): boolean {
   return syncConfig().role === 'branch'
 }
+
+// Per-process serialization chain for op recording (see recordSyncOp).
+let seqChain: Promise<void> = Promise.resolve()
 
 /**
  * Append an operation to this node's op-log. Fire-and-forget by design —
@@ -71,24 +82,50 @@ export async function recordSyncOp(
 ): Promise<void> {
   try {
     const cfg = syncConfig()
-    const head = await db.syncOp.findFirst({
-      where: { nodeId: cfg.nodeId },
-      orderBy: { seq: 'desc' },
-      select: { seq: true },
-    })
-    await db.syncOp.create({
-      data: {
-        nodeId: cfg.nodeId,
-        seq: (head?.seq ?? 0) + 1,
-        op,
-        targetKey,
-        payload: JSON.stringify(payload ?? {}),
-      },
-    })
+    // Serialize op recording per process: fire-and-forget callers (a sale
+    // emits sale.created + ledger.entry concurrently) would otherwise race
+    // the head-seq read and allocate DUPLICATE seqs, which breaks the
+    // pull cursor's monotonic `gt` stepping.
+    const prev = seqChain
+    seqChain = (async () => {
+      await prev.catch(() => {})
+      const head = await db.syncOp.findFirst({
+        where: { nodeId: cfg.nodeId },
+        orderBy: { seq: 'desc' },
+        select: { seq: true },
+      })
+      await db.syncOp.create({
+        data: {
+          nodeId: cfg.nodeId,
+          seq: (head?.seq ?? 0) + 1,
+          op,
+          targetKey,
+          payload: JSON.stringify(payload ?? {}),
+        },
+      })
+    })()
+    await seqChain
     if (cfg.role === 'hq') void nudgeHub()
+    // Branch nodes push immediately instead of waiting for the next poll
+    // tick — this is what takes branch→HQ latency from ~interval to ~1s.
+    else pokeBranchCycle()
   } catch (e) {
     console.warn('[sync] recordSyncOp failed', e instanceof Error ? e.message : e)
   }
+}
+
+// --- low-latency push poke ---------------------------------------------------
+// Debounced (coalesces bulk imports into one cycle) dynamic import — sync.ts
+// cannot statically import sync-worker (sync-worker imports this module).
+const pokeG = globalThis as unknown as { __mediposBranchPokeTimer?: ReturnType<typeof setTimeout> }
+function pokeBranchCycle(): void {
+  if (pokeG.__mediposBranchPokeTimer) clearTimeout(pokeG.__mediposBranchPokeTimer)
+  pokeG.__mediposBranchPokeTimer = setTimeout(() => {
+    pokeG.__mediposBranchPokeTimer = undefined
+    void import('@/lib/sync-worker')
+      .then((w) => w.pokeSyncCycle())
+      .catch(() => {})
+  }, 400)
 }
 
 /**
@@ -115,7 +152,7 @@ export async function enqueueSyncOp(
 }
 
 /** Tell the co-located sync hub to nudge every connected branch (~1s sync). */
-async function nudgeHub(): Promise<void> {
+export async function nudgeHub(): Promise<void> {
   try {
     const port = Math.max(1024, Number(process.env.MEDIPOS_HUB_PORT) || 3003)
     await fetch(`http://127.0.0.1:${port}/notify`, {

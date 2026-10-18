@@ -25,6 +25,10 @@ if [ -z "$SYNC_KEY" ]; then
   fi
   SYNC_KEY="$(cat "$SECRETS_DIR/sync-key")"
 fi
+# The Settings-UI config file (sync-config.ts) OVERRIDES the env key inside
+# the app — keep the hub in lockstep or nudge/live-link auth breaks silently.
+CONFIG_KEY=$(python3 -c "import json;print(json.load(open('db/medipos.config.json')).get('syncKey',''))" 2>/dev/null || true)
+[ -n "$CONFIG_KEY" ] && SYNC_KEY="$CONFIG_KEY"
 SYNC_KEY_VAL="$SYNC_KEY"
 
 # 1. Already healthy? Nothing to do.

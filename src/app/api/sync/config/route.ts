@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { requirePermission } from '@/lib/auth'
+import { db } from '@/lib/db'
 import { syncConfig } from '@/lib/sync'
 import { syncConfigFilePath, readSyncConfigFile, writeSyncConfigFile, syncConfigFileInfo } from '@/lib/sync-config'
 import { effectiveHqEndpoints, setNodeSetting } from '@/lib/mesh/core'
@@ -43,6 +44,8 @@ export async function GET(req: NextRequest) {
       hqUrl: cfg.role === 'branch' ? hq.primary : null,
       hqUrlSource: cfg.role === 'branch' ? hq.primarySource : null,
       intervalMs: cfg.intervalMs,
+      branchCode: cfg.branchCode || null,
+      branchName: cfg.branchName || null,
       configPath: info.path,
       configFileExists: info.exists,
       desktop: info.desktop,
@@ -70,6 +73,7 @@ export async function PUT(req: NextRequest) {
       generateKey?: boolean
       hqUrl?: string | null
       lanMode?: boolean
+      branchCode?: string | null
     }
 
     const patch: Parameters<typeof writeSyncConfigFile>[0] = {}
@@ -88,6 +92,11 @@ export async function PUT(req: NextRequest) {
       const id = body.nodeId.trim().toUpperCase()
       if (id && !/^[A-Z0-9_-]{1,32}$/.test(id)) {
         return NextResponse.json({ error: 'Node ID may only contain letters, numbers, dashes and underscores (max 32)' }, { status: 400 })
+      }
+      // A branch must never claim the HQ identity: the push API rejects HQ
+      // pushes, and a branch pushing under 'HQ' would replay the whole log.
+      if (id === 'HQ' && targetRole === 'branch') {
+        return NextResponse.json({ error: 'Node ID "HQ" is reserved for the headquarters — pick a unique branch id (e.g. OSU-1).' }, { status: 400 })
       }
       patch.nodeId = id || (targetRole === 'branch' ? 'BRANCH' : 'HQ')
     }
@@ -124,6 +133,25 @@ export async function PUT(req: NextRequest) {
 
     // --- desktop LAN HQ mode ---------------------------------------------------
     if (typeof body.lanMode === 'boolean') patch.lanMode = body.lanMode
+
+    // --- branch store binding (isolation) --------------------------------------
+    // Which store THIS branch device belongs to. Bound devices hide other
+    // stores' sales/expenses/quotations both at the UI and in the replicated
+    // log. Empty string/null clears the binding.
+    if (body.branchCode !== undefined) {
+      const code = String(body.branchCode ?? '').trim().toUpperCase().slice(0, 24)
+      if (code) {
+        const b = await db.branch.findFirst({ where: { code }, select: { code: true, name: true } })
+        if (!b) {
+          return NextResponse.json({ error: `No store with code "${code}" exists on this device — create it first (Setup → Branches).` }, { status: 400 })
+        }
+        patch.branchCode = b.code
+        patch.branchName = b.name
+      } else {
+        patch.branchCode = ''
+        patch.branchName = ''
+      }
+    }
 
     const before = syncConfig()
     const file = writeSyncConfigFile(patch)

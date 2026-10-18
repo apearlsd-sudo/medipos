@@ -186,12 +186,66 @@ TCP 3000/3003 + UDP 47800). Workstations then connect to
 
 ---
 
+## 6b. Store isolation (branch binding, v0.3.5+)
+
+A branch device can be bound to ONE store: Settings → Network & Sync →
+Sync role & pairing → **This device's store**. A bound device
+
+- shows a locked store pill in the header (the branch switcher is replaced),
+- never displays other stores' sales, expenses or quotations — even for
+  super admins (the request scope is forced to the bound store),
+- skips other stores' business documents when they arrive through the
+  replicated log, so they never pile up in the device database.
+
+Shared data still converges everywhere: customers, credit ledger, loyalty
+points, catalog edits made at any node, and inter-branch transfers. Leave the
+binding on "Not bound" to keep the old behaviour (device sees every store).
+To move a device to another store, re-pick the store in the same card.
+
+Staff accounts were always limited to their assigned branch (user → branch);
+the binding extends the same isolation to admin/super-admin views on that
+physical device.
+
+---
+
+## 6c. Sync speed (v0.3.5+)
+
+Typical end-to-end latency is now **~1 second** in every direction:
+
+| Direction | Trigger | Worst case |
+|---|---|---|
+| branch → HQ | every business mutation pokes the branch worker (~0.4s debounce) | ~1s |
+| HQ → branch | HQ pokes the sync hub, hub nudges connected branches over WebSocket | ~1s |
+| branch A → branch B (shared data) | HQ re-logs shared ops into its own log + nudges all branches | ~2s |
+| any direction, live link down | fallback polling every 5s (was 15s) | 5s |
+
+The fallback cadence is tunable with `SYNC_INTERVAL_MS` (minimum 3000).
+
+---
+
+## 6d. Copy inventory between stores (v0.3.5+)
+
+Stock Control → **Copy stock** pushes a store's actual inventory onto another
+branch over the sync — the stock counterpart of "Copy catalog" (which ships
+products at zero quantity). Pick source + destination, then:
+
+- **Overwrite quantities** — destination stock becomes exactly the source
+  stock (full mirror), or
+- **Only add missing** — create products the destination lacks (with their
+  stock); existing rows stay untouched.
+
+Optionally include batch numbers and expiry dates. Quantities reach the
+branch device within seconds when it is online (queued in the outbox
+otherwise). Every row is idempotent on replay — re-copying is safe.
+
+---
+
 ## 7. Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | "Live link: reconnecting" on a branch | Hub up? `curl http://hq-ip:3003/hub/health`. Same `SYNC_KEY`? Firewall TCP 3003? |
-| Branch syncs only every ~15s | Live link is down — see above; polling is doing its job. |
+| Branch syncs only every ~5s (not instantly) | Live link is down — see above; polling is doing its job. |
 | Branch shows "HQ unreachable" | HQ app down (`curl http://hq-ip:3000/api/health`) or wrong `SYNC_KEY`. |
 | Devices don't appear in the map | UDP 47800 blocked or AP/client isolation on the Wi-Fi — use manual pairing or `SYNC_DISCOVERY_TARGETS`. |
 | Internet branch can't connect | Tunnel running? URL saved on HQ? `curl https://tunnel-url/api/health`. |

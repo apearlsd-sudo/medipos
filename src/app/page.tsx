@@ -2,6 +2,7 @@
 
 import { Dashboard } from '@/components/pos/dashboard'
 import { Header, BRANCH_EVENT, BRANCH_STORAGE_KEY } from '@/components/pos/header'
+import { loadDeviceBranchId } from '@/lib/device-branch'
 import { Sidebar } from '@/components/pos/sidebar'
 import { POSTerminal } from '@/components/pos/pos-terminal'
 import { Shifts } from '@/components/pos/shifts'
@@ -94,6 +95,19 @@ export default function Home() {
   // Global 401 interceptor + branch-scoping injector:
   // any API auth failure bounces to login; GET /api/* requests carry the
   // super admin's selected branch so every module reads branch-filtered data.
+  // Branch devices bound to a store (sync isolation) override the selector:
+  // the device scope wins over localStorage and "all" is never sent.
+  const deviceBranchRef = useRef<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    void loadDeviceBranchId().then((id) => {
+      if (!alive || !id) return
+      deviceBranchRef.current = id
+      // remount data views with the device scope
+      window.dispatchEvent(new CustomEvent(BRANCH_EVENT, { detail: id }))
+    })
+    return () => { alive = false }
+  }, [])
   useEffect(() => {
     const rawFetch = window.fetch.bind(window)
     // Layer 1: branch-scoping injection for the super admin's selected branch
@@ -103,7 +117,7 @@ export default function Home() {
       if (typeof input === 'string' && input.startsWith('/api/') && method === 'GET') {
         const skip = ['/api/auth/', '/api/shifts/current', '/api/branches']
         if (!skip.some((p) => input.startsWith(p)) && !input.includes('branchId=')) {
-          const sel = localStorage.getItem(BRANCH_STORAGE_KEY)
+          const sel = deviceBranchRef.current ?? localStorage.getItem(BRANCH_STORAGE_KEY)
           if (sel && sel !== 'all') {
             req = input + (input.includes('?') ? '&' : '?') + 'branchId=' + encodeURIComponent(sel)
           }

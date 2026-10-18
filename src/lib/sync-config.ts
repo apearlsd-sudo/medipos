@@ -34,6 +34,10 @@ export interface SyncNodeConfigFile {
   syncKey?: string
   /** desktop HQ mode: shell binds 0.0.0.0:3000 and starts the sync hub on next launch */
   lanMode?: boolean
+  /** store this branch device belongs to — enables store isolation on the device */
+  branchCode?: string
+  /** human name of the bound store (mirror of Branch.name for display) */
+  branchName?: string
   /** bookkeeping */
   savedAt?: string
 }
@@ -72,6 +76,9 @@ function sanitize(raw: unknown): SyncNodeConfigFile {
   if (typeof r.nodeName === 'string' && r.nodeName.trim()) out.nodeName = r.nodeName.trim().slice(0, 60)
   if (typeof r.syncKey === 'string' && r.syncKey.trim()) out.syncKey = r.syncKey.trim().slice(0, 128)
   if (typeof r.lanMode === 'boolean') out.lanMode = r.lanMode
+  // branch binding: empty string CLEARS the binding (must survive sanitize)
+  if (typeof r.branchCode === 'string') out.branchCode = r.branchCode.trim().slice(0, 24).toUpperCase()
+  if (typeof r.branchName === 'string') out.branchName = r.branchName.trim().slice(0, 60)
   if (typeof r.savedAt === 'string') out.savedAt = r.savedAt
   return out
 }
