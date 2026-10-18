@@ -19,9 +19,10 @@
 // cart coverage badges, per-insurer "cover all products" switch.
 // v5 — categories for non-medicine products (retail categories + neutral copy),
 // category card → products deep-link that actually filters.
-// v22: responsive mobile fit — cards/inputs shrinkable in grids, scrollable tab bars, responsive table min-widths + mobile column sets (dashboard/inventory/users/settings/shifts/notifications/suppliers/branches + all ledger tables)
+// v49: Windows CI fix — unprefixed built-in imports in instrumentation (node: prefix made colon chunk filenames, EINVAL on Windows standalone copy)
+// v48: responsive mobile fit — cards/inputs shrinkable in grids, scrollable tab bars, responsive table min-widths + mobile column sets (dashboard/inventory/users/settings/shifts/notifications/suppliers/branches + all ledger tables)
 // v24: date-range preset filters (Today / 7 days / 30 days / This month) collapsed into a dropdown on every ledger page + owner digest
-const CACHE_VERSION = "medipos-v48"; // v47: REBUILD BATCH — avatar trim, sidebar no-collapse, cash rounding removal, brand-in-app (logo/slogan/datetime), login redesign, hardware console + universal drivers, F1 per-tablet UX, F2 direct label printing, F3 CSV import, F4 branch stock lookup, med-audit history, setup restore + temp admin // v46: recovery baseline after workspace reset (Task-82 checkpoint) + Phase 2 cloud backup + Electron desktop scaffold (main.js with updater, pack hooks, pwa-register Electron guard)
+const CACHE_VERSION = "medipos-v49"; // v47: REBUILD BATCH — avatar trim, sidebar no-collapse, cash rounding removal, brand-in-app (logo/slogan/datetime), login redesign, hardware console + universal drivers, F1 per-tablet UX, F2 direct label printing, F3 CSV import, F4 branch stock lookup, med-audit history, setup restore + temp admin // v46: recovery baseline after workspace reset (Task-82 checkpoint) + Phase 2 cloud backup + Electron desktop scaffold (main.js with updater, pack hooks, pwa-register Electron guard)
 // v19: date picker filters — from/to on every event ledger (sales, purchases, expenses, prescriptions, quotations, transfers, shifts, returns, stock takes, inventory logs)
 const SHELL_ASSETS = [
   '/offline.html',

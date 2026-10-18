@@ -32,9 +32,12 @@ async function runBootGuard(): Promise<BootGuardResult> {
     return { healthy: true, repaired: [] }
   }
   const { PrismaClient } = await import('@prisma/client')
-  const { spawnSync } = await import('node:child_process')
-  const fs = await import('node:fs')
-  const path = await import('node:path')
+  // NOTE: unprefixed built-in specifiers on purpose — 'node:' prefixed imports make
+  // Next.js standalone emit chunk filenames containing ':' which are ILLEGAL on
+  // Windows (EINVAL copyfile) and break the CI NSIS build. Unprefixed = equivalent.
+  const { spawnSync } = await import('child_process')
+  const fs = await import('fs')
+  const path = await import('path')
 
   const prisma = new PrismaClient({ log: [] })
   const repaired: string[] = []
@@ -145,8 +148,8 @@ function startDailyBackupTimer() {
 }
 
 async function dailyBackupTick() {
-  const fs = await import('node:fs')
-  const path = await import('node:path')
+  const fs = await import('fs')
+  const path = await import('path')
   const { backupsDir, createLocalBackup } = await import('@/lib/system')
   const { loadCloudConfig, saveCloudConfig, dailyBackupKey, putObject } = await import('@/lib/cloud-backup')
   const { logAudit } = await import('@/lib/audit')
@@ -198,8 +201,8 @@ async function applyPendingRestore() {
   if (restoreGlobal.__mediposRestoreApplied) return
   restoreGlobal.__mediposRestoreApplied = true
   try {
-    const fs = await import('node:fs')
-    const path = await import('node:path')
+    const fs = await import('fs')
+    const path = await import('path')
     const { dbFilePath } = await import('@/lib/system')
     const markerPath = path.join(path.dirname(dbFilePath()), 'pending-restore.json')
     if (!fs.existsSync(markerPath)) return
