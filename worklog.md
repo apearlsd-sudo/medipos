@@ -1418,3 +1418,20 @@ Work Log:
 
 Stage Summary:
 - User's installed v0.3.1 will auto-update to 0.3.2 on its next 6h check (or on app restart) — first real-world exercise of the update feed. v0.3.2 carries the two fixes the user reported: IP/URL wrapping in the sync network UI and full desktop clipboard support (keyboard + right-click). Future releases: version bump → tag → push, CI handles the rest atomically.
+
+---
+Task ID: settings-top-nav
+Agent: main
+Task: user (installed app) — Settings vertical section menu should sit at the top inline and render well on all viewports.
+
+Work Log:
+- Old layout: `lg:grid-cols-[248px_1fr]` — 248px sticky vertical rail on desktop (blurb text per item), overflow-x chip scroller on mobile. Both replaced.
+- REDESIGN (settings.tsx): grid wrapper removed; nav is now a full-width horizontal bar ABOVE the section content on every viewport — `flex flex-wrap` chips (nothing ever hides behind a scrollbar), `sticky top-16 z-20` (sits exactly under the sticky h-16 app header) with `bg-background/95 backdrop-blur` so long cards scroll cleanly beneath; chip = icon + label pill, active = teal filled; blurb demoted to title tooltip; unsaved-change amber dot retained per section.
+- Tuning pass: first build wrapped at 1440px (Electron default width) with one orphan chip → tightened (px-2.5, text-[13px], gap-0.5, p-1) → 2560/1920/1440 all SINGLE ROW.
+- VERIFY (headless browser, logged in, Settings): measured 7 viewports — 2560/1920/1440: 1 row; 1280/1024/768: 2 rows; 390: 4 rows; overflowX:false at ALL; section switching works (Sync & Devices renders Network & Sync + Device Discovery + Workstation Offline cards); sticky verified scrolled (nav stuck at top:64). Screenshots: /tmp/final-{2560,1920,1440,1280,1024,768,390}.png + sticky-scroll.png.
+- SW v50→v52 (two client-visible builds this session: v51 redesign + v52 chip tightening folded into one note); builds PIPESTATUS-checked rc=0; standalone carries v52.
+- REGRESSION: 139/139 (24+17+30+36+32) on the v51 build; re-run full 139/139 green on v52 build after tightening. Deploy HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY.
+- RELEASE: version 0.3.3, tag v0.3.3 pushed → CI 39153172642 (atomic publish path from 3e74878) — delivers the new menu to installed desktop apps via auto-update.
+
+Stage Summary:
+- Settings navigation is now a top-inline horizontal menu: all seven sections always visible on any viewport, sticky during scroll, no more left rail stealing 248px of content width (cards gain the full row). v0.3.3 in flight; pending: release asset check.
