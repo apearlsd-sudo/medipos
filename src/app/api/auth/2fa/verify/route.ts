@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { parseChallengeToken, createSessionToken, sessionCookie, sanitizeUser } from '@/lib/auth'
 import { verifyTotp, matchRecoveryCode } from '@/lib/totp'
+import { rateLimitPeek, rateLimitRecord, rateLimitReset, tooMany } from '@/lib/rate-limit'
 
 /**
  * POST /api/auth/2fa/verify — redeem a login challenge with a valid
@@ -14,6 +15,10 @@ export async function POST(req: NextRequest) {
     if (!parsed) {
       return NextResponse.json({ error: 'This verification request has expired — please sign in again.' }, { status: 401 })
     }
+    // OTP guessing dampening: 6 bad codes per challenge / 5 min.
+    const otpKey = `2fa:${parsed.uid}`
+    const otpCheck = rateLimitPeek(otpKey, 6, 5 * 60_000)
+    if (!otpCheck.ok) return tooMany(otpCheck.retryAfterSec)
     const user = await db.user.findUnique({
       where: { id: parsed.uid },
       include: {
@@ -32,8 +37,10 @@ export async function POST(req: NextRequest) {
       ok = usedRecoveryIndex >= 0
     }
     if (!ok) {
+      rateLimitRecord(otpKey)
       return NextResponse.json({ error: 'Invalid code — check your authenticator app and try again.' }, { status: 400 })
     }
+    rateLimitReset(otpKey)
 
     // Consume a recovery code when one was used
     if (usedRecoveryIndex >= 0 && user.recoveryCodes) {
