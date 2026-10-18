@@ -1284,3 +1284,18 @@ Work Log:
 
 Stage Summary:
 - Everything lost in the workspace reset is rebuilt and deployed as SW v47: security/UX cleanups (avatar trim, sidebar fixed, cash rounding gone), full branding subsystem with login redesign, universal-driver hardware console with direct label/receipt printing and drawer kicks, per-tablet till UX, CSV onboarding, cross-branch stock lookup, per-medicine history, and backup-restore setup with a one-time temp admin password. Four low-spec tasks (sidebar-no-collapse, branding-datetime, med-audit, brand-inapp details) were reconstructed from titles and are flagged as such; all fully-specified features match their recovered worklog specs. 139/139 green; committed; db backed up.
+
+---
+Task ID: push-github-remote
+Agent: main
+Task: user provided https://github.com/apearlsd-sudo/medipos (empty public repo, no local remote) → wire as origin and push the project.
+
+Work Log:
+- AUDIT before push (public repo!): tracked content included .env, db/custom.db + 14 db/backups snapshots + db/cloud-backup.json (live S3 credentials), prisma/dev.db, desktop-dist/ (256MB, 191.5MB linux-unpacked binary = GitHub 100MB hard-blocker), deploy/ (37MB stale standalone copy, 1153 files), skills/ (60MB container tooling), download/ (11MB deliverables), .zscripts/, ~100 verify_*/tmp_*/ref_* root screenshots, p.jar, .server.pid, .hub.pid — 4753 files, .git 311MB.
+- SAFETY: snapshot commit → git bundle (.push-staging/pre-rewrite.bundle, full history) → physical copies of db/.env/skills/deploy/download/.zscripts/prisma-dev.db → then purge.
+- HISTORY REWRITE (git-filter-repo --invert-paths, 123 commits parsed): stripped all paths above; empty commits auto-pruned (incl. the two uuid housekeeping commits); 4753 → 509 tracked files; largest blob 191.5MB → 0.4MB (package-lock.json); .git 311MB → 7.2MB.
+- RESTORE: all stripped paths copied back to working tree (app/desktop-seed/skills keep working) and covered by new .gitignore rules; removed mangled '/skills/db/backups/' ignore line (real cause of db/backups/ exposure).
+- Origin re-added post-rewrite (filter-repo drops remotes).
+
+Stage Summary:
+- Repo is now public-safe and push-ready: no secrets, no business data (DB/backups/S3 creds), no build artifacts, no >100MB blobs; full application history preserved (Task-82 → recovery → phase2 → rebuild-all). Push pending GitHub credentials (fine-grained PAT, Contents:Read+Write on apearlsd-sudo/medipos); bundle at .push-staging/pre-rewrite.bundle is the rollback point.

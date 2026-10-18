@@ -50,6 +50,24 @@ test
 prompt
 
 server.log
-# Skills directory
-/skills/db/backups/
+
+# ---- MediPOS repo hygiene (public-remote safe) ----
+# runtime data & secrets (never publish)
+/db/
+/prisma/dev.db
+/.push-staging/
+# local environment output / container tooling
+/desktop-dist/
+/deploy/
+/download/
+/skills/
+/.zscripts/
 tool-results/
+# verification screenshots & one-off artifacts at repo root
+/verify_*.png
+/tmp_*.png
+/ref_*.png
+/ref_page.json
+/p.jar
+/.server.pid
+/.hub.pid
