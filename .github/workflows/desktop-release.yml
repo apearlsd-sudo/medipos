@@ -1,0 +1,76 @@
+# MediPOS Pro — Windows NSIS release pipeline.
+#
+# Trigger A: push a tag named v* (e.g. v0.4.0). The installer is built,
+# published to GitHub Releases, and the electron-updater feed files
+# (latest.yml + blockmap) land next to it — installed desktop apps then
+# auto-update. Keep package.json `version` in sync with the tag.
+#
+# Trigger B: manual workflow_dispatch (Publish unchecked → dry-run: the
+# installer is built and attached to the run as an artifact, nothing released).
+#
+# The seed DB is NOT in the repo (gitignored for security) — CI regenerates it
+# via prisma db push + scripts/seed.ts before electron-builder packs it as
+# resources/seed/custom.db.
+name: desktop-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to GitHub Releases (unchecked = dry-run artifact)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  windows-nsis:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Create + seed first-run database (db/custom.db)
+        env:
+          DATABASE_URL: file:../db/custom.db
+        run: |
+          npx prisma db push --accept-data-loss
+          npx -y tsx scripts/seed.ts
+
+      - name: Build Next.js standalone
+        run: npm run build
+
+      - name: Package + publish (tag / manual publish)
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish == true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish always
+
+      - name: Package (dry-run)
+        if: ${{ !(startsWith(github.ref, 'refs/tags/v') || inputs.publish == true) }}
+        run: npx electron-builder --win nsis --publish never
+
+      - name: Upload dry-run artifacts
+        if: ${{ !(startsWith(github.ref, 'refs/tags/v') || inputs.publish == true) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: |
+            desktop-dist/*.exe
+            desktop-dist/*.yml
+            desktop-dist/*.blockmap
+          if-no-files-found: error
