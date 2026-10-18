@@ -42,6 +42,16 @@ compression: maximum
 electronLanguages:
   - en-US
 
+# Update feed: GitHub Releases. electron-builder bakes this into
+# resources/app-update.yml inside every packaged build, so installed apps
+# check https://github.com/apearlsd-sudo/medipos/releases automatically
+# (electron/main.js falls back to this file when no explicit feed is set).
+# Publishing needs a GH_TOKEN with repo scope at package time (CI covers it).
+publish:
+  provider: github
+  owner: apearlsd-sudo
+  repo: medipos
+
 afterPack: electron/pack-hooks.cjs
 
 # resources/server is populated by electron/pack-hooks.cjs (afterPack) —

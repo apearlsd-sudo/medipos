@@ -257,12 +257,20 @@ function createTray() {
 }
 
 // --- auto-update (Phase 2) -----------------------------------------------------
-// Feed is either MEDIPOS_UPDATE_URL or userData/update-feed.json {"url": ...} —
-// a generic HTTPS URL hosting electron-builder output (latest.yml + Setup exe).
-// No feed configured ⇒ auto-update silently disabled (offline-first default).
+// Feed resolution order:
+//   1. MEDIPOS_UPDATE_URL / userData/update-feed.json — generic HTTPS feed
+//   2. Packaged app with resources/app-update.yml — the GitHub Releases feed
+//      baked in by electron-builder's `publish` config (owner apearlsd-sudo,
+//      repo medipos); electron-updater reads it automatically
+//   3. Nothing ⇒ silently disabled (offline-first default; MEDIPOS_UPDATE_OFF=1
+//      force-disables even a configured feed).
 // electron-updater does differential downloads, so patches cost a fraction of
 // the full installer. Failures only ever log — an offline POS is never nagged.
 function initUpdater() {
+  if (process.env.MEDIPOS_UPDATE_OFF === '1') {
+    log('AUTOUPDATE_DISABLED MEDIPOS_UPDATE_OFF=1')
+    return
+  }
   let feedUrl = process.env.MEDIPOS_UPDATE_URL || ''
   try {
     const feedFile = path.join(app.getPath('userData'), 'update-feed.json')
@@ -270,8 +278,10 @@ function initUpdater() {
       feedUrl = JSON.parse(fs.readFileSync(feedFile, 'utf8')).url || feedUrl
     }
   } catch {}
-  if (!feedUrl) {
-    log('AUTOUPDATE_DISABLED no feed configured (userData/update-feed.json {"url":...} or MEDIPOS_UPDATE_URL env)')
+  const hasBakedFeed =
+    IS_PACKAGED && fs.existsSync(path.join(process.resourcesPath || '', 'app-update.yml'))
+  if (!feedUrl && !hasBakedFeed) {
+    log('AUTOUPDATE_DISABLED no feed (app-update.yml / MEDIPOS_UPDATE_URL / update-feed.json)')
     return
   }
   let autoUpdater
@@ -283,7 +293,9 @@ function initUpdater() {
   }
   try {
     if (!IS_PACKAGED) autoUpdater.forceDevUpdateConfig = true
-    autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
+    if (feedUrl) autoUpdater.setFeedURL({ provider: 'generic', url: feedUrl })
+    // else: no explicit feed → electron-updater loads resources/app-update.yml
+    // (GitHub provider baked by electron-builder publish config)
     autoUpdater.autoDownload = true
     autoUpdater.on('checking-for-update', () => log('UPDATE_CHECK'))
     autoUpdater.on('update-available', (i) => log(`UPDATE_AVAILABLE version=${i && i.version}`))
@@ -313,7 +325,7 @@ function initUpdater() {
     updaterCheck = () => {
       autoUpdater.checkForUpdates().catch((err) => log(`UPDATE_CHECK_FAILED ${err.message}`))
     }
-    log(`AUTOUPDATE_OK feed=${feedUrl}`)
+    log(`AUTOUPDATE_OK feed=${feedUrl || 'github(app-update.yml)'}`)
     setTimeout(() => updaterCheck?.(), 30_000) // first check 30s after boot
     setInterval(() => updaterCheck?.(), 6 * 60 * 60 * 1000) // then every 6h
   } catch (e) {
