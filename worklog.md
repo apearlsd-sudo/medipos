@@ -1453,3 +1453,15 @@ Work Log:
 
 Stage Summary:
 - Devices are now designated HQ/Branch entirely from Settings → Network & Sync → Sync role & pairing: pick role, paste HQ URL + shared key, Save & connect — zero env editing, config persists beside the DB and hot-applies (worker + live link restart in-process). HQ admins reveal/copy/generate the key; installed desktop apps can become real HQs via Desktop HQ mode (LAN bind + co-located hub on next app start, own database becomes authoritative). Env vars remain the headless path and still work (file overrides env). Release v0.3.4 next: bump → tag → CI.
+---
+Task ID: sync-pairing-ui
+Agent: main
+Task: (update) v0.3.4 released.
+
+Work Log:
+- version 0.3.3→0.3.4, commit 622dd43, tag v0.3.4 pushed → CI 39157632155 GREEN (~8min, atomic softprops publish path).
+- Release verified: v0.3.4 published (not draft), 3 assets — MediPOS.Pro-Setup-0.3.4.exe 119.9MB + latest.yml + .blockmap; anonymous latest.yml readable (electron-updater feed live).
+- backup-db.sh: db/backups/medipos-20261018-191317.db (14 retained).
+
+Stage Summary:
+- v0.3.4 live on the auto-update feed — installed desktop apps pick up the pairing UI (Settings → Network & Sync → Sync role & pairing) + Desktop HQ mode on next restart/update check. Users: HQ device = pick HQ + Generate key (+ optional Enable LAN HQ mode, restart); branch devices = pick Branch, paste HQ URL + key, Save & connect.
