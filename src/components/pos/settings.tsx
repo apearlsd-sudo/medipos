@@ -86,9 +86,9 @@ const DEFAULTS: StoreSettings = {
 }
 
 // ---------------------------------------------------------------------------
-// Settings sections — the former flat card wall is grouped into six
-// categories, navigated with an inline menu (vertical rail on desktop,
-// scrollable chip row on mobile). `fields` lists the store-settings keys
+// Settings sections — the former flat card wall is grouped into seven
+// categories, navigated with an inline horizontal menu pinned to the top of
+// the page (wrapping chips on every viewport, sticky under the app header). `fields` lists the store-settings keys
 // edited inside each section so the menu can flag unsaved changes on the
 // section where they were made; the self-saving consoles (sync, commerce,
 // hygiene, tax eras) manage their own persistence and carry no fields.
@@ -232,37 +232,36 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
         }
       />
 
-      <div className="grid items-start gap-4 lg:grid-cols-[248px_minmax(0,1fr)]">
-        {/* Inline category menu — horizontal chips on mobile, sticky rail on desktop */}
-        <nav aria-label="Settings sections" className="flex gap-2 overflow-x-auto pb-1 lg:sticky lg:top-6 lg:flex-col lg:overflow-visible lg:pb-0">
-          {SECTIONS.map((s) => {
-            const Icon = s.icon
-            const active = section === s.id
-            const isDirty = s.fields?.some((f) => dirty.has(f)) ?? false
-            return (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => setSection(s.id)}
-                aria-current={active ? 'true' : undefined}
-                className={`flex shrink-0 items-center gap-3 rounded-xl border p-2.5 text-left transition lg:w-full ${active ? 'border-teal-500 bg-teal-50 dark:border-teal-500/50 dark:bg-teal-500/10' : 'border-transparent hover:bg-muted'}`}
-              >
-                <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition ${active ? 'bg-teal-600 text-white' : 'bg-muted text-muted-foreground'}`}>
-                  <Icon className="h-4 w-4" />
-                </span>
-                <span className="min-w-0">
-                  <span className="flex items-center gap-1.5 whitespace-nowrap text-sm font-semibold">
-                    <span className={active ? 'text-teal-700 dark:text-teal-300' : ''}>{s.label}</span>
-                    {isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" title="Unsaved changes in this section" />}
-                  </span>
-                  <span className="hidden truncate text-xs text-muted-foreground lg:block">{s.blurb}</span>
-                </span>
-              </button>
-            )
-          })}
-        </nav>
+      {/* Inline section menu — horizontal at the top on EVERY viewport: chips
+          wrap instead of hiding behind a scrollbar, the bar sticks under the
+          app header while long section cards scroll, and the unsaved-change
+          dot travels with its section. Descriptions live on hover (title). */}
+      <nav
+        aria-label="Settings sections"
+        className="sticky top-16 z-20 flex flex-wrap gap-0.5 rounded-2xl border bg-background/95 p-1 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80"
+      >
+        {SECTIONS.map((s) => {
+          const Icon = s.icon
+          const active = section === s.id
+          const isDirty = s.fields?.some((f) => dirty.has(f)) ?? false
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setSection(s.id)}
+              aria-current={active ? 'true' : undefined}
+              title={s.blurb}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition ${active ? 'bg-teal-600 text-white shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">{s.label}</span>
+              {isDirty && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" title="Unsaved changes in this section" />}
+            </button>
+          )
+        })}
+      </nav>
 
-        <div className="min-w-0 space-y-4">
+      <div className="min-w-0 space-y-4">
           {section === 'store' && (
             <div className="grid items-start gap-4 xl:grid-cols-2">
               <Card>
@@ -667,8 +666,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
             </div>
           )}
 
-          {!loaded && <p className="text-center text-xs text-muted-foreground">Loading settings…</p>}
-        </div>
+        {!loaded && <p className="text-center text-xs text-muted-foreground">Loading settings…</p>}
       </div>
     </div>
   )
