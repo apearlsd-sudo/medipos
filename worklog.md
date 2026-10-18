@@ -1359,3 +1359,18 @@ Work Log:
 
 Stage Summary:
 - GitHub now carries the complete roadmap implementation; CI is minting the first real Windows installer. Pending: verify run conclusion + Release assets (exe/latest.yml/blockmap); installed desktop builds auto-update once the feed is live. Update smoke on real Windows still recommended after install.
+
+---
+Task ID: ci-windows-fix
+Agent: main
+Task: v0.3.1 CI run failed on windows-latest → diagnose → fix → re-tag → re-trigger.
+
+Work Log:
+- Run 39124457716 FAILED at "Build Next.js standalone": EINVAL copyfile '.next\server\chunks\[externals]_node:child_process_261e8bca._.js' → standalone — Next.js names externalized-module chunks after the import specifier; 'node:' prefix puts a COLON in the filename, illegal on Windows. Linux dev never sees it; first Windows build did.
+- All 3 colon chunks (node:child_process/fs/path) traced to ONE file: src/instrumentation.ts (6 dynamic-import sites). mini-services/scripts are outside the Next build graph.
+- FIX: 'node:xxx' → 'xxx' (semantically identical built-in specifiers) + explanatory comment; SW v48→v49 (discipline: bump precedes build; repaired a mangled comment-chain line in sw.js — single const declaration re-verified via node --check).
+- Rebuild clean (exit 0) + standalone contains ZERO colon chunks. REGRESSION 139/139 (tier1 24 + tier2 17 + tier3 30 + tier4 36 + ws-sync 32). Relaunch HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY — production boots with modified boot-guard/restore code.
+- Pushed main (b7467bf); deleted remote v0.3.1 (first attempt used credentialless origin — retry with token URL), re-tagged at fix commit, pushed → CI run 39124988978 triggered.
+
+Stage Summary:
+- Windows path-legal chunk names confirmed locally; CI re-run in flight. On green: Release v0.3.1 gets the NSIS exe + latest.yml + blockmap — the electron-updater feed goes live and installed desktop apps gain auto-update.
