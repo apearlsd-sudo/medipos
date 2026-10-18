@@ -1404,3 +1404,17 @@ Work Log:
 
 Stage Summary:
 - Both desktop usability bugs fixed at the root (not workarounds): addresses readable at every viewport, clipboard works keyboard + mouse. v0.3.2 in CI; pending: release assets + latest.yml check, worklog final note.
+
+---
+Task ID: v0.3.2-ui-clipboard
+Agent: main
+Task: (update) v0.3.2 released; split-release race root-caused and fixed in CI.
+
+Work Log:
+- CI 39140384149 GREEN (~8min). releaseType: release published directly (no drafts) BUT electron-builder's parallel GitHub publisher raced into TWO release objects again (blockmap-only vs exe+yml) — same defect class as v0.3.1, now confirmed structural, not config.
+- Manual merge for v0.3.2 (download blockmap → delete A 204 → upload to B 201). Post-merge latest.yml returned 404 anonymously while API asset route + exe served fine — CDN negative-cache artifact from the split window; expired within ~5 min, anonymous feed then correct (verified version 0.3.2 + sha512 + size).
+- ROOT FIX (3e74878): CI no longer publishes via electron-builder — `electron-builder --win nsis --publish never` packages, then ONE softprops/action-gh-release@v2 step uploads exe + latest.yml + blockmap atomically to a single published release (fail_on_unmatched_files: true). Dry-run artifact path preserved. YAML validated.
+- Release state: v0.3.1 + v0.3.2 both published, 3 assets each; /releases/latest = v0.3.2.
+
+Stage Summary:
+- User's installed v0.3.1 will auto-update to 0.3.2 on its next 6h check (or on app restart) — first real-world exercise of the update feed. v0.3.2 carries the two fixes the user reported: IP/URL wrapping in the sync network UI and full desktop clipboard support (keyboard + right-click). Future releases: version bump → tag → push, CI handles the rest atomically.
