@@ -11,10 +11,11 @@
 // one URL; the tunnel address is advertised to branches automatically.
 // ---------------------------------------------------------------------------
 
+import { syncConfig } from '@/lib/sync'
 import { meshConfig, meshEnabled } from './core'
 
 export { ensureUdpDiscovery, udpStatus, announceNow } from './udp-beacon'
-export { ensureWsLink, wsStatus, pokeWsLink, resolveHubUrl } from './ws-link'
+export { ensureWsLink, wsStatus, pokeWsLink, stopWsLink, resolveHubUrl } from './ws-link'
 
 const g = globalThis as unknown as { __mediposMeshBooted?: boolean }
 
@@ -40,7 +41,7 @@ export function ensureMesh(): void {
 /** Live client list from the co-located sync hub (HQ nodes only; fire-safe). */
 export async function hubStatus(): Promise<{ reachable: boolean; liveNodes: number; nodes: Array<{ nodeId: string; name: string; role: string; connectedAt: number; idleMs?: number }> } | null> {
   const c = meshConfig()
-  const key = process.env.SYNC_KEY || ''
+  const key = syncConfig().syncKey || ''
   if (c.role !== 'hq' || !key) return null
   try {
     const { createHash } = await import('crypto')

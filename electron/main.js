@@ -27,9 +27,26 @@ const path = require('path')
 const fs = require('fs')
 const http = require('http')
 const crypto = require('crypto')
+const { spawn } = require('child_process')
 
 // --- configuration ----------------------------------------------------------
-const PORT = parseInt(process.env.MEDIPOS_PORT || '43117', 10)
+// Desktop HQ mode (v0.3.4): when the sync config file (written by the Settings
+// UI, stored next to the database) has lanMode=true, the embedded server binds
+// 0.0.0.0:3000 and a co-located sync hub serves ws://<lan>:3003 — branch
+// devices and LAN workstations can then reach this desktop install. The flag
+// is read at app boot; changing it applies on the next app start.
+const DATA_DIR_EARLY = path.join(app.getPath('appData'), 'MediPOSPro', 'data')
+function readLanMode() {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(DATA_DIR_EARLY, 'medipos.config.json'), 'utf8'))
+    return cfg && cfg.lanMode === true
+  } catch {
+    return false
+  }
+}
+const LAN_MODE = readLanMode()
+const HUB_PORT = parseInt(process.env.MEDIPOS_HUB_PORT || '3003', 10)
+const PORT = parseInt(process.env.MEDIPOS_PORT || (LAN_MODE ? String(process.env.MEDIPOS_LAN_PORT || 3000) : '43117'), 10)
 const APP_ORIGIN = `http://127.0.0.1:${PORT}`
 const IS_PACKAGED = app.isPackaged
 const SMOKE = process.env.MEDIPOS_SMOKE === '1'
@@ -49,6 +66,13 @@ const SERVER_DIR = IS_PACKAGED
   ? path.join(process.resourcesPath, 'server')
   : path.join(__dirname, '..', '.next', 'standalone')
 const SERVER_JS = path.join(SERVER_DIR, 'server.js')
+// Sync hub (WebSocket live link + reverse proxy) — co-located with the server
+// in LAN mode. Packaged: copied INTO resources/server by pack-hooks.cjs so
+// its `import 'ws'` resolves against the server's node_modules. Dev: project
+// tree, where the repo root node_modules provides ws.
+const HUB_JS = IS_PACKAGED
+  ? path.join(SERVER_DIR, 'sync-hub', 'index.mjs')
+  : path.join(__dirname, '..', 'mini-services', 'sync-hub', 'index.mjs')
 const SEED_DB = IS_PACKAGED
   ? path.join(process.resourcesPath, 'seed', 'custom.db')
   : path.join(__dirname, '..', 'db', 'custom.db')
@@ -111,7 +135,7 @@ function forkServer() {
     ...process.env,
     NODE_ENV: 'production',
     PORT: String(PORT),
-    HOSTNAME: '127.0.0.1',
+    HOSTNAME: LAN_MODE ? '0.0.0.0' : '127.0.0.1',
     DATABASE_URL: `file:${DB_PATH}`,
     AUTH_SECRET: ensureSecret('auth-secret', 48),
     SYNC_KEY: ensureSecret('sync-key', 32),
@@ -178,6 +202,34 @@ function waitReady(timeoutMs = 30000) {
       setTimeout(probe, 400)
     }
     probe()
+  })
+}
+
+// --- sync hub process management (LAN HQ mode) -------------------------------
+let hubChild = null
+let hubRespawnTimer = null
+
+function startHub() {
+  if (!LAN_MODE) return
+  if (!fs.existsSync(HUB_JS)) {
+    log(`HUB_MISSING ${HUB_JS} — live link unavailable (branches fall back to polling)`)
+    return
+  }
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1', // run the hub on Electron's bundled Node, not the GUI
+    MEDIPOS_HUB_PORT: String(HUB_PORT),
+    MEDIPOS_APP_URL: APP_ORIGIN,
+    SYNC_KEY: ensureSecret('sync-key', 32), // same persisted key the server uses
+  }
+  log(`HUB_FORK ${HUB_JS} port=${HUB_PORT}`)
+  hubChild = spawn(process.execPath, [HUB_JS], { env, stdio: 'pipe' })
+  hubChild.stdout.on('data', (chunk) => log(`[hub] ${String(chunk).trim()}`))
+  hubChild.stderr.on('data', (chunk) => log(`[hub:err] ${String(chunk).trim()}`))
+  hubChild.on('exit', (code) => {
+    hubChild = null
+    log(`HUB_EXIT code=${code} quitting=${isQuitting}`)
+    if (!isQuitting) hubRespawnTimer = setTimeout(startHub, 3_000)
   })
 }
 
@@ -378,7 +430,7 @@ if (!app.requestSingleInstanceLock()) {
         ],
       },
     ]))
-    log(`BOOT packaged=${IS_PACKAGED} userData=${app.getPath('userData')}`)
+    log(`BOOT packaged=${IS_PACKAGED} userData=${app.getPath('userData')} lanMode=${LAN_MODE ? 'on (0.0.0.0:' + PORT + ' + hub :' + HUB_PORT + ')' : 'off (localhost-only)'}`)
 
     if (!fs.existsSync(SERVER_JS)) {
       const msg = `Standalone build not found at ${SERVER_JS}.\nRun "npm run build" first, then relaunch.`
@@ -390,6 +442,7 @@ if (!app.requestSingleInstanceLock()) {
 
     prepareData()
     serverChild = forkServer()
+    startHub()
 
     try {
       await waitReady()
@@ -413,7 +466,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('before-quit', () => { isQuitting = true })
   app.on('will-quit', () => {
     if (respawnTimer) clearTimeout(respawnTimer)
+    if (hubRespawnTimer) clearTimeout(hubRespawnTimer)
     try { if (serverChild) serverChild.kill() } catch {}
+    try { if (hubChild) hubChild.kill() } catch {}
   })
   app.on('window-all-closed', () => app.quit())
 

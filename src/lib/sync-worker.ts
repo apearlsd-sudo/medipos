@@ -25,7 +25,7 @@ import { applySyncOp, type WireOp } from '@/lib/sync-apply'
 import { publishLive } from '@/lib/live'
 import { effectiveHqEndpoints, setNodeSetting, getNodeSetting, learnHubEndpoint } from '@/lib/mesh/core'
 
-const g = globalThis as unknown as { __mediposSyncWorker?: boolean; __mediposSyncIdleLogged?: number }
+const g = globalThis as unknown as { __mediposSyncWorker?: boolean; __mediposSyncIdleLogged?: number; __mediposSyncTimer?: ReturnType<typeof setInterval> }
 
 interface PushResponse {
   ackSeq?: number
@@ -117,7 +117,7 @@ async function tryHttpPush(hqUrl: string, body: CycleBody): Promise<{ ok: boolea
   try {
     const res = await fetch(`${hqUrl.replace(/\/$/, '')}/api/sync/push`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-sync-key': process.env.SYNC_KEY ?? '' },
+      headers: { 'Content-Type': 'application/json', 'x-sync-key': syncConfig().syncKey ?? '' },
       body: JSON.stringify(body),
       cache: 'no-store',
       signal: AbortSignal.timeout(20_000),
@@ -223,5 +223,29 @@ export function ensureSyncWorker(): void {
     }
   }
   setTimeout(tick, 3_000) // first cycle shortly after boot
-  setInterval(tick, cfg.intervalMs)
+  if (g.__mediposSyncTimer) clearInterval(g.__mediposSyncTimer)
+  g.__mediposSyncTimer = setInterval(tick, cfg.intervalMs)
+}
+
+/**
+ * Stop the interval worker (role switched away from branch in the Settings UI).
+ * The live link is handled separately via ws-link's stopWsLink().
+ */
+export function stopSyncWorker(): void {
+  if (g.__mediposSyncTimer) clearInterval(g.__mediposSyncTimer)
+  g.__mediposSyncTimer = undefined
+  if (g.__mediposSyncWorker) {
+    g.__mediposSyncWorker = false
+    console.log('[sync] branch worker stopped — this node is no longer a branch')
+  }
+}
+
+/**
+ * Re-evaluate this node's role after a Settings-UI config change: starts the
+ * worker when the node just became a branch, restarts it when branch settings
+ * (interval/node id) changed, and is a no-op for HQ nodes.
+ */
+export function restartSyncWorker(): void {
+  stopSyncWorker()
+  ensureSyncWorker()
 }

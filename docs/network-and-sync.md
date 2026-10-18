@@ -113,6 +113,27 @@ the HQ's LAN they switch to it on their own. You can also set
 
 ## 5. Branch device setup (any PC/laptop/mini-PC)
 
+### From the Settings UI (recommended — v0.3.4+)
+
+On the branch device, open **Settings → Network & Sync → Sync role & pairing**:
+
+1. Pick **Branch**.
+2. Enter the **HQ URL** — `http://<hq-ip>:3003` over the LAN (port 3000 also
+   works), or the HQ's `https://…trycloudflare.com` / named-tunnel URL across
+   the internet. Use **Test connection** to verify before saving.
+3. Paste the **shared sync key** (HQ admin: Settings → Network & Sync →
+   Sync role & pairing → Reveal/Copy).
+4. Set a unique **Node ID** (e.g. `OSU-1`) and branch name, then **Save &
+   connect** — the branch pairs, the live link comes up in ~1s, and changes
+   start flowing immediately. Everything queues offline and replays exactly
+   once when the link returns.
+
+Settings persist to a config file next to the database
+(`medipos.config.json` — `<userData>/data/` for the desktop app, `db/` for
+server mode) and **override environment variables**.
+
+### Headless / env-only setup (server mode)
+
 ```bash
 NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 \
 DATABASE_URL=file:/path/to/branch.db \
@@ -130,6 +151,8 @@ node deploy/next-standalone/server.js
   when the WebSocket is down, and the safety net in troubled networks.
 - Use the SAME `SYNC_KEY` on HQ and every branch. It protects the sync API,
   the hub handshake (sha256-derived), and the discovery namespace.
+- A manually saved HQ URL (Settings UI / device-map "Use as HQ") takes
+  precedence over `SYNC_HQ_URL`.
 
 ---
 
@@ -145,6 +168,21 @@ No server hardware required:
    adds the rules; macOS: System Settings → Firewall; Linux: ufw).
 4. Install the autostart script so a power cut self-heals
    (`scripts/install-autostart.sh` / `install-autostart-windows.ps1`).
+
+The HQ's **shared sync key** is managed in Settings → Network & Sync →
+Sync role & pairing: reveal it, copy it to branch devices, or generate a new
+one (regenerating invalidates the old key — update every branch).
+
+### Desktop app as HQ (LAN mode, v0.3.4+)
+
+The installed desktop app normally listens on localhost only. To use it as
+the HQ: **Settings → Network & Sync → Sync role & pairing → Desktop HQ mode →
+Enable LAN HQ mode**, then quit and reopen the app. The embedded server binds
+`0.0.0.0:3000`, the co-located sync hub serves `ws://<lan-ip>:3003`, and the
+app's own database (already holding your data) becomes the authoritative one.
+Allow access in the Windows firewall prompt when it appears (or pre-open
+TCP 3000/3003 + UDP 47800). Workstations then connect to
+`http://<hq-ip>:3000` and branches pair against `http://<hq-ip>:3003`.
 
 ---
 

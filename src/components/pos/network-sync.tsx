@@ -10,6 +10,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { SyncRoleCard } from '@/components/pos/sync-role-card'
 import { useUser } from '@/components/pos/user-context'
 import { fmtRelative } from '@/lib/format'
 import { Building2, Globe, Loader2, Monitor, Network, RadioTower, RefreshCw, Server, TriangleAlert, Wifi } from 'lucide-react'
@@ -106,6 +107,9 @@ export function NetworkSyncCard() {
           <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading network status…</p>
         ) : (
           <>
+            {/* Sync role & pairing (v0.3.4 — designate HQ/branch from the UI) */}
+            <SyncRoleCard />
+
             {/* This node */}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border p-3">
@@ -147,14 +151,14 @@ export function NetworkSyncCard() {
                     </div>
                   ) : (
                     <p className="mt-2 text-sm text-muted-foreground">
-                      No branch nodes yet. On a branch device, run this app with <code className="rounded bg-muted px-1 py-0.5 text-[11px]">SYNC_ROLE=branch SYNC_HQ_URL=&lt;this server&gt; SYNC_KEY=&lt;secret&gt;</code> — it will pair automatically.
+                      No branch nodes yet. On a branch device, open <span className="font-medium">Settings → Network &amp; Sync → Sync role</span>, pick <span className="font-medium">Branch</span>, enter this HQ&apos;s URL (<span className="font-mono text-[11px] break-all">http://&lt;this-pc&gt;:{status.port}</span>) and the shared key above — or start it with <code className="rounded bg-muted px-1 py-0.5 text-[11px]">SYNC_ROLE=branch SYNC_HQ_URL=… SYNC_KEY=…</code> for headless setups.
                     </p>
                   )
                 ) : (
                   <p className="mt-2 flex items-start gap-1.5 text-sm text-muted-foreground">
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                     <span>
-                      Sync is disabled. Start this server with <code className="rounded bg-muted px-1 py-0.5 text-[11px]">SYNC_KEY=&lt;shared secret&gt;</code> to accept branch nodes.
+                      No shared key is configured. Set it in the <span className="font-medium">Sync role &amp; pairing</span> card above (generate or paste a key), or start this server with <code className="rounded bg-muted px-1 py-0.5 text-[11px]">SYNC_KEY=&lt;shared secret&gt;</code>.
                     </span>
                   </p>
                 )}
@@ -192,7 +196,7 @@ export function NetworkSyncCard() {
                   <p className="mt-2 flex items-start gap-1.5 text-sm text-muted-foreground">
                     <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                     <span>
-                      Set <code className="rounded bg-muted px-1 py-0.5 text-[11px]">SYNC_ROLE=branch SYNC_HQ_URL=… SYNC_KEY=…</code> when starting this device to link it with headquarters.
+                      Pair with the HQ in the <span className="font-medium">Sync role &amp; pairing</span> card above (pick Branch, enter the HQ URL + shared key), or set <code className="rounded bg-muted px-1 py-0.5 text-[11px]">SYNC_ROLE=branch SYNC_HQ_URL=… SYNC_KEY=…</code> when starting this device.
                     </span>
                   </p>
                 )}

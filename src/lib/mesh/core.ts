@@ -32,7 +32,7 @@ export function meshConfig(): MeshConfig {
     nodeId: sc.nodeId,
     nodeName: sc.nodeName,
     role: sc.role,
-    syncKey: process.env.SYNC_KEY || null,
+    syncKey: sc.syncKey,
     intervalMs: sc.intervalMs,
   }
 }
@@ -92,6 +92,10 @@ export async function effectiveHqEndpoints(): Promise<{ primary: string | null; 
     getNodeSetting('hqUrlSource'),
     getNodeSetting('hqFallbackUrl'),
   ])
+  // A manually saved endpoint (Settings UI / device-map "Use as HQ") wins over
+  // the legacy SYNC_HQ_URL env override — the operator's latest explicit
+  // choice in the UI must never be silently shadowed by startup config.
+  if (hqUrl && hqUrlSource === 'manual') return { primary: hqUrl, primarySource: 'manual', fallback: hqFallbackUrl }
   const envUrl = (process.env.SYNC_HQ_URL || '').replace(/\/$/, '') || null
   if (envUrl) return { primary: envUrl, primarySource: 'env', fallback: hqFallbackUrl }
   if (hqUrl) return { primary: hqUrl, primarySource: (hqUrlSource as 'manual' | 'discovered') ?? 'discovered', fallback: hqFallbackUrl }

@@ -47,6 +47,32 @@ exports.default = async function afterPack(context) {
   let size = dirSize(serverDir)
   console.log(`[pack-hooks] server copied: ${(size / 1048576).toFixed(0)} MB`)
 
+  // Bundle the sync hub INTO the server tree: desktop LAN HQ mode spawns it
+  // via ELECTRON_RUN_AS_NODE, and placing it under resources/server/sync-hub
+  // lets its `import 'ws'` resolve against the server's own node_modules.
+  const hubSrc = path.join(__dirname, '..', 'mini-services', 'sync-hub')
+  const hubDst = path.join(serverDir, 'sync-hub')
+  if (fs.existsSync(hubSrc)) {
+    rmrf(hubDst)
+    fs.cpSync(hubSrc, hubDst, { recursive: true })
+    console.log(`[pack-hooks] sync-hub bundled: ${hubDst} (${(dirSize(hubDst) / 1048576).toFixed(1)} MB)`)
+  } else {
+    console.warn('[pack-hooks] mini-services/sync-hub missing — desktop LAN HQ live link will be unavailable')
+  }
+  // The Next build BUNDLES ws into its chunks (no standalone/node_modules/ws),
+  // but the standalone-spawned hub imports 'ws' directly — ship it explicitly
+  // (pure JS, zero runtime deps; bufferutil/utf-8-validate are optional peers).
+  const wsSrc = path.join(__dirname, '..', 'node_modules', 'ws')
+  const wsDst = path.join(serverDir, 'node_modules', 'ws')
+  if (fs.existsSync(wsSrc)) {
+    rmrf(wsDst)
+    fs.cpSync(wsSrc, wsDst, { recursive: true })
+    console.log(`[pack-hooks] ws bundled for sync-hub: ${(dirSize(wsDst) / 1048576).toFixed(1)} MB`)
+  } else {
+    console.warn('[pack-hooks] node_modules/ws missing — sync-hub will fail to start in packaged desktop builds')
+  }
+
+
   for (const junk of ['.env', 'db', 'scripts']) {
     const jp = path.join(serverDir, junk)
     if (fs.existsSync(jp)) {

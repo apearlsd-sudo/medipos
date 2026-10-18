@@ -16,10 +16,16 @@
 //   SYNC_HQ_WS_URL   — branch: explicit live-link endpoint override
 //   SYNC_INTERVAL_MS — branch polling cadence (default 15000)
 //   MEDIPOS_HUB_PORT — sync hub port on the HQ device (default 3003)
+//
+// Since v0.3.4 the SAME settings can be set from the Settings UI (Settings →
+// Network & Sync → Sync role); they are persisted to a config file next to
+// the database (see sync-config.ts) and OVERRIDE the environment. Env vars
+// remain the headless/server-mode path and keep working unchanged.
 // ---------------------------------------------------------------------------
 
 import { createHash } from 'crypto'
 import { db } from '@/lib/db'
+import { readSyncConfigFile } from '@/lib/sync-config'
 
 export const HQ_NODE_ID = 'HQ'
 
@@ -29,16 +35,23 @@ export interface SyncConfig {
   nodeName: string
   syncKey: string | null
   intervalMs: number
+  /** where the active sync key came from — UI card shows a matching hint */
+  keySource: 'config-file' | 'env' | 'none'
 }
 
 export function syncConfig(): SyncConfig {
-  const role = (process.env.SYNC_ROLE || 'hq').toLowerCase() === 'branch' ? 'branch' : 'hq'
+  // config file (Settings UI) overrides the process environment
+  const file = readSyncConfigFile()
+  const role = (file?.role || process.env.SYNC_ROLE || 'hq').toLowerCase() === 'branch' ? 'branch' : 'hq'
+  const keyFromFile = (file?.syncKey || '').trim()
+  const keyFromEnv = (process.env.SYNC_KEY || '').trim()
   return {
     role,
-    nodeId: (process.env.SYNC_NODE_ID || (role === 'branch' ? 'BRANCH' : HQ_NODE_ID)).trim(),
-    nodeName: process.env.SYNC_NODE_NAME || (role === 'branch' ? 'Branch Node' : 'Headquarters'),
-    syncKey: (process.env.SYNC_KEY || '').trim() || null,
+    nodeId: (file?.nodeId || process.env.SYNC_NODE_ID || (role === 'branch' ? 'BRANCH' : HQ_NODE_ID)).trim(),
+    nodeName: file?.nodeName || process.env.SYNC_NODE_NAME || (role === 'branch' ? 'Branch Node' : 'Headquarters'),
+    syncKey: keyFromFile || keyFromEnv || null,
     intervalMs: Math.max(5_000, Number(process.env.SYNC_INTERVAL_MS) || 15_000),
+    keySource: keyFromFile ? 'config-file' : keyFromEnv ? 'env' : 'none',
   }
 }
 
@@ -109,7 +122,7 @@ async function nudgeHub(): Promise<void> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-hub-key': createKeyHash(process.env.SYNC_KEY || ''),
+        'x-hub-key': createKeyHash(syncConfig().syncKey || ''),
       },
       body: JSON.stringify({ kind: 'hq-ops' }),
       signal: AbortSignal.timeout(1_500),

@@ -309,6 +309,25 @@ export function ensureWsLink(): void {
   void connect()
 }
 
+/**
+ * Tear the live link down (node stopped being a branch via the Settings UI).
+ * pokeWsLink()/ensureWsLink() will boot it fresh if the role flips back.
+ */
+export function stopWsLink(): void {
+  const s = st()
+  s.booted = false
+  if (s.reconnectTimer) {
+    clearTimeout(s.reconnectTimer)
+    s.reconnectTimer = null
+  }
+  closeSock()
+  clearTimers()
+  s.state = 'off'
+  s.endpoint = null
+  s.liveNodes = []
+  log('live link stopped — this node is no longer a branch')
+}
+
 /** Called when a new HQ endpoint was learned/paired — redial with fresh targets. */
 export function pokeWsLink(): void {
   const s = st()

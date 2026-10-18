@@ -1435,3 +1435,21 @@ Work Log:
 
 Stage Summary:
 - Settings navigation is now a top-inline horizontal menu: all seven sections always visible on any viewport, sticky during scroll, no more left rail stealing 248px of content width (cards gain the full row). v0.3.3 in flight; pending: release asset check.
+---
+Task ID: sync-pairing-ui
+Agent: main
+Task: user wants HQ/branch designation from the UI — "role card (pick HQ or Branch, type the HQ URL + shared key + branch name — saved to a config file, zero env editing), a reveal/copy sync key button on the HQ, and an optional desktop HQ mode (MEDIPOS_LAN=1)".
+
+Work Log:
+- NEW src/lib/sync-config.ts — config-file layer: medipos.config.json stored NEXT TO the SQLite DB (desktop: <userData>/data/, server: db/, override MEDIPOS_CONFIG_FILE), mtime-cached reads, atomic tmp+rename writes (0600). Schema: role/nodeId/nodeName/syncKey/lanMode/savedAt.
+- syncConfig() merge: config file > env > defaults (+ keySource field). Swept all direct env readers: sync-worker tryHttpPush x-sync-key, mesh core meshConfig().syncKey, mesh hubStatus() x-hub-key, sync.ts nudgeHub x-hub-key.
+- effectiveHqEndpoints precedence change: manual (UI/device-map saved) > env SYNC_HQ_URL > discovered — the operator's latest explicit UI choice can't be shadowed by startup env.
+- Hot role-flip: sync-worker gained stopSyncWorker/restartSyncWorker (interval handle tracked globally); ws-link gained stopWsLink(); PUT route restarts worker + pokes/stops live link in-process — no server restart needed on role switch.
+- API (settings:edit gated, superadmin bypass): GET/PUT /api/sync/config (safe view, never returns the key; PUT validates role/nodeId/name/key 8-128/hqUrl, writes file + nodeSetting hqUrl 'manual', applies flips), POST /api/sync/config/test (probes /api/health identity + /hub/health when :3003), GET /api/sync/config/key (reveal for the HQ eye button).
+- UI: new SyncRoleCard at the top of Network & Sync — HQ/Branch radio cards (teal active), node name + unique node id inputs, HQ panel (masked key + Reveal/Copy/Regenerate or Generate-key empty state), Branch panel (HQ URL + password key + Test connection + source hints), desktop LAN HQ mode hint (Enable → writes lanMode flag → applies on next app start), unsaved-changes badge; legacy env instruction texts updated to point at the card.
+- Electron desktop HQ mode: main.js reads lanMode from <userData>/data/medipos.config.json at boot → binds 0.0.0.0:3000 (MEDIPOS_LAN_PORT override) and spawns the co-located sync hub via ELECTRON_RUN_AS_NODE (process.execPath) with the same persisted sync-key; hub respawn on crash, killed on quit. pack-hooks.cjs bundles mini-services/sync-hub into resources/server/sync-hub + copies node_modules/ws (Next BUNDLES ws into chunks — no standalone/node_modules/ws, the standalone-spawned hub needs it explicit).
+- VERIFY: node --check all; SW v52→v53 (single const); build rc=0 (PIPESTATUS-style capture); standalone carries v53; zero colon chunks (Windows-safe); 139/139 regression (24+17+30+36+32); clean relaunch HTTP:200 LOGIN_CHECK:200 HUB_CHECK:200 PREVIEW_READY; UI verify script scripts/verify-sync-role-ui.py ALL PASS 26/26 (render, reveal=real env key, branch flip + test-connection detects MediPOS HQ, config file written, role=branch + manual endpoint, hot flip-back, deterministic cleanup, 390px zero overflow, no page errors) — lesson: page.click button:has-text collides across cards → data-testid; Playwright has_text STRING is case-insensitive (regex needed).
+- Electron smoke ×2: LAN off → DESKTOP_SMOKE_OK :43117; LAN on (temp lanMode config) → BOOT lanMode=on (0.0.0.0:3210 + hub :3211), HUB_FORK + "medipos-sync-hub listening on :3211 (ws /ws + proxy)", DESKTOP_SMOKE_OK :3210.
+
+Stage Summary:
+- Devices are now designated HQ/Branch entirely from Settings → Network & Sync → Sync role & pairing: pick role, paste HQ URL + shared key, Save & connect — zero env editing, config persists beside the DB and hot-applies (worker + live link restart in-process). HQ admins reveal/copy/generate the key; installed desktop apps can become real HQs via Desktop HQ mode (LAN bind + co-located hub on next app start, own database becomes authoritative). Env vars remain the headless path and still work (file overrides env). Release v0.3.4 next: bump → tag → CI.
