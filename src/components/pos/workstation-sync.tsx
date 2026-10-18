@@ -138,7 +138,7 @@ export function WorkstationSyncCard() {
                 <li key={i.id} className="flex items-start gap-2 px-3 py-2">
                   <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${i.status === 'failed' ? 'bg-red-500' : 'bg-amber-500'}`} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm"><span className="font-mono font-medium">{i.method}</span> {i.url.replace('/api/', '')}</div>
+                    <div className="break-all text-sm"><span className="font-mono font-medium">{i.method}</span> {i.url.replace('/api/', '')}</div>
                     <div className="text-xs text-muted-foreground">
                       {new Date(i.ts).toLocaleString()} · {i.status === 'failed' ? (i.error ?? 'Rejected') : 'Waiting to sync'}
                     </div>

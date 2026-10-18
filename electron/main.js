@@ -224,6 +224,26 @@ function createWindow() {
     return { action: 'deny' }
   })
 
+  // Right-click clipboard menu on editable fields / selections (keyboard
+  // accelerators alone don't help mouse-first pharmacy staff).
+  mainWindow.webContents.on('context-menu', (_e, params) => {
+    const f = params.editFlags
+    const items = []
+    if (params.isEditable) {
+      if (f.canUndo) items.push({ role: 'undo' })
+      if (f.canRedo) items.push({ role: 'redo' })
+      if (items.length) items.push({ type: 'separator' })
+      if (f.canCut) items.push({ role: 'cut' })
+      if (f.canCopy) items.push({ role: 'copy' })
+      if (f.canPaste) items.push({ role: 'paste' })
+      if (items.length && !items.at(-1)?.type) items.push({ type: 'separator' })
+      items.push({ role: 'selectAll' })
+    } else if (f.canCopy) {
+      items.push({ role: 'copy' })
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: mainWindow })
+  })
+
   if (process.env.MEDIPOS_DEVTOOLS === '1') {
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   }
@@ -340,7 +360,24 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', showWindow)
 
   app.whenReady().then(async () => {
-    Menu.setApplicationMenu(null)
+    // Minimal Edit menu: on Windows/Linux the standard editing accelerators
+    // (Ctrl+C/X/V/Z/A) are ONLY registered through the application menu —
+    // setApplicationMenu(null) silently killed copy/paste in every input.
+    // The menu bar stays hidden (autoHideMenuBar) — Alt reveals it.
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' },
+        ],
+      },
+    ]))
     log(`BOOT packaged=${IS_PACKAGED} userData=${app.getPath('userData')}`)
 
     if (!fs.existsSync(SERVER_JS)) {

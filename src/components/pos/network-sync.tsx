@@ -121,7 +121,7 @@ export function NetworkSyncCard() {
                 <p className="mt-1 text-xs text-muted-foreground">Open the POS in any browser at:</p>
                 <div className="mt-1 space-y-0.5">
                   {(status.lanAddresses.length > 0 ? status.lanAddresses : ['(no LAN address detected)']).map((ip) => (
-                    <p key={ip} className="truncate font-mono text-xs font-semibold">http://{ip}:{status.port}</p>
+                    <p key={ip} className="break-all font-mono text-xs font-semibold">http://{ip}:{status.port}</p>
                   ))}
                 </div>
               </div>

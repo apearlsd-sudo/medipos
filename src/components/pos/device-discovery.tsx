@@ -165,21 +165,21 @@ export function DeviceDiscoveryCard() {
                 {mesh?.lanDiscovery.running ? <Wifi className="h-4 w-4 shrink-0 text-emerald-500" /> : <WifiOff className="h-4 w-4 shrink-0 text-muted-foreground" />}
                 <div className="min-w-0">
                   <p className="text-xs font-semibold">LAN discovery</p>
-                  <p className="truncate text-[11px] text-muted-foreground">{mesh?.lanDiscovery.running ? `listening on udp/${mesh.lanDiscovery.port}` : 'unavailable'}</p>
+                  <p className="break-all text-[11px] text-muted-foreground">{mesh?.lanDiscovery.running ? `listening on udp/${mesh.lanDiscovery.port}` : 'unavailable'}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 rounded-xl border p-3">
                 <Zap className={`h-4 w-4 shrink-0 ${live.tone === 'on' ? 'text-emerald-500' : live.tone === 'mid' ? 'text-amber-500' : 'text-muted-foreground'}`} />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold">{live.label}</p>
-                  <p className="truncate text-[11px] text-muted-foreground" title={live.sub}>{live.sub}</p>
+                  <p className="break-all text-[11px] text-muted-foreground" title={live.sub}>{live.sub}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2 rounded-xl border p-3">
                 <Globe className={`h-4 w-4 shrink-0 ${data?.self.tunnelUrl ? 'text-emerald-500' : 'text-muted-foreground'}`} />
                 <div className="min-w-0">
                   <p className="text-xs font-semibold">Cloudflare Tunnel</p>
-                  <p className="truncate text-[11px] text-muted-foreground" title={data?.self.tunnelUrl ?? undefined}>
+                  <p className="break-all text-[11px] text-muted-foreground" title={data?.self.tunnelUrl ?? undefined}>
                     {data?.self.tunnelUrl ? data.self.tunnelUrl.replace(/^https:\/\//, '') : isHQ ? 'not configured — set it below' : data?.self.hqFallback ? 'using HQ tunnel' : 'none learned yet'}
                   </p>
                 </div>
@@ -217,7 +217,7 @@ export function DeviceDiscoveryCard() {
                           </Badge>
                           <Badge variant="outline" className="rounded-full text-[10px] text-muted-foreground">{SOURCE_LABEL[n.source] ?? n.source}</Badge>
                         </p>
-                        <p className="truncate text-[11px] text-muted-foreground">
+                        <p className="break-all text-[11px] text-muted-foreground">
                           {n.httpUrl || n.tunnelUrl || n.lanIp || 'address unknown'} · seen {fmtRelative(n.lastSeen)}
                         </p>
                       </div>
