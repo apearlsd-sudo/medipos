@@ -1174,3 +1174,70 @@ Work Log:
 
 Stage Summary:
 - Every Today / 7 days / 30 days / This month date-range preset in the app is now a dropdown: one shared DateRangeFilter Select covers all 10 ledger pages, and the owner-digest period picker joins it. Behavior (server-side from/to filtering, custom ranges, clear) is byte-identical — only the control surface changed, and filter bars are ~120px narrower on phones. 139/139 regression green, live on SW v24.
+
+---
+Task ID: incident-workspace-reset-20261018
+Agent: main
+Task: Platform workspace reset wiped everything after Task 82 (SW v24) — damage assessment + recovery.
+
+Work Log:
+- ROOT CAUSE: preview platform restored the container to an old checkpoint (auto-commit 24a49d8, Task-82 era) mid-session. .git was replaced wholesale: commits after Task 82 (SW v25→v45, tasks 83-96, Electron Phase 1) are absent from history AND the tree; ~/.config/MediPOSPro (desktop seed DB) and .secrets were wiped too (whole-container restore).
+- SURVIVED: uncommitted Phase 2 files written minutes before the reset (src/lib/cloud-backup.ts, src/app/api/system/cloud-backup/**, src/components/pos/cloud-backup.tsx + settings/instrumentation/system edits) — copied to /tmp/p2-survivors as belt-and-braces. mini-services/sync-hub, scripts/e2e-* suite (139 tests), node_modules (minus electron) intact at Task-82 state.
+- LOST (committed): all feature work SW v25→v45 — recent well-known: Electron Phase 1 scaffold (verbatim re-landed this session), pwa-register Electron guard, SW v45 bump, header avatar trim, login redesign trio (demo removal + pill backdrops + branding swap), feature pack F1-F4, hardware console, setup backup/restore + temp admin, cash-rounding removal, plus earlier v25-v37 tasks known only by title. Login webp assets gone (regenerable). DB rolled back to Task-82 checkpoint; today's db backups gone (dev-only data loss; test cycles self-cleaned, probes=0).
+- RECOVERY EXECUTED (same session): worklog re-appended from context for the 4 fully-known recent tasks; Electron Phase 1 re-landed verbatim from context (electron/main.js, pack-hooks.cjs, electron-builder.yml, icon + build scripts, package.json fields); pwa-register guard reapplied; SW bumped v24→v46 ("recovery baseline + Phase 2"); electron toolchain reinstalled.
+- PREVENTION DECISION NEEDED: platform restores beat local commits when the checkpoint is old. Recommended: push to a remote (GitHub) after every task, or verify the platform's checkpoint cadence. Forwarded to owner.
+
+Stage Summary:
+- Workspace reset incident contained: Phase 2 source 100% secured; Electron Phase 1 verbatim re-landed; SW v46 recovery baseline established. Feature work between v25-v44 requires re-implementation (scoped list handed to owner). Data loss limited to dev-test artifacts.
+
+---
+Task ID: header-avatar-trim (RECOVERED ENTRY — original work lost to workspace reset; re-recorded verbatim from context)
+Agent: main
+Task: "remove the email and settings from the avatar dropdown at the top right corner of the topbar" (was deployed as SW v39)
+
+Work Log:
+- EDIT src/components/pos/header.tsx user menu: dropped the user.email line (px-2 py-1.5 muted div) and the Settings DropdownMenuItem (window.location.hash = '#settings'), removed the now-unused Settings icon import, collapsed the resulting double separator. Menu is now: label (avatar initials, full name, @username, role badge, 2FA chip) → separator → Sign out only.
+
+Stage Summary:
+- Topbar avatar dropdown trimmed to identity + Sign out: email line and Settings shortcut removed (Settings remains reachable via the sidebar). Was deployed as SW v39 with 139/139 regression green — CODE LOST in the workspace reset; needs re-implementation.
+
+---
+Task ID: login-demo-removal-pills-backdrop (RECOVERED ENTRY — original work lost to workspace reset; re-recorded verbatim from context)
+Agent: main
+Task: "remove the demo login account from the login page. Fade images of pills in the background of the login page, should be nicely done" (was deployed as SW v42)
+
+Work Log:
+- REMOVED (src/components/pos/login.tsx): the "Demo accounts — click to fill" dashed Card with the 3 quick-fill buttons (admin/pharmacist/cashier incl. plaintext passwords), plus the DEMO_ACCOUNTS constant, the quickFill helper and the now-unused Card/CardContent imports. Login page now shows only the credentials form (no credentials leak on screen).
+- GENERATED ASSETS (z-ai image-gen → public/login/, webp q82): pills-teal.webp 768x1344 (assorted capsules flat-lay on deep teal, bottom-weighted) and pills-light.webp 1024x1024 (capsule cluster on white). Plus pills-dark.webp derived in PIL: alpha = (255 − min(R,G,B))×1.55 + 1.2px blur → capsules as soft teal ghosts on transparency for dark mode.
+- BACKDROP (left teal branding panel, lg only): two aria-hidden layers — (1) full-bleed pills-teal scaleX(-1), mix-blend-soft-light 45%, radial mask; (2) same asset scaleY(-1), mix-blend-screen 15%, radial mask top-right accent. Form-side watermark (both steps): 420px corner layer bottom-right, scaleX(-1), radial mask; light = pills-light.webp mix-blend-multiply 25%, dark = pills-dark.webp normal 16%.
+- DARK-MODE ITERATION: CSS-filter attempt (grayscale+invert+screen) produced muddy charcoal silhouettes — replaced with dedicated alpha-extracted pills-dark.webp (soft on-palette teal ghosts).
+
+Stage Summary:
+- Login page credential-quiet with pharmacy-flavored visual identity. Was deployed as SW v42 with 139/139 green — CODE LOST in the workspace reset; needs re-implementation (assets regenerable via the documented pipeline).
+
+---
+Task ID: login-branding-swap (RECOVERED ENTRY — original work lost to workspace reset; re-recorded verbatim from context)
+Agent: main
+Task: "at the login page, the company name, slogan and logo should be above the login form, thus, above the welcome back heading, whiles the POS system name appear at the left side above the POS system descriptions" (was deployed as SW v43)
+
+Work Log:
+- SWAP (src/components/pos/login.tsx): left teal brand panel top row = fixed PRODUCT identity (teal-gradient Activity icon + "MediPOS Pro" + "Pharmacy Management Suite") above the headline + four POS feature descriptions.
+- FORM SIDE: company identity block (uploaded logo via /api/branding/logo + store name + slogan) rendered on ALL screens directly above "Welcome back" (text-xl name, 12px logo tile ring-border, tracked uppercase slogan); 2FA step got the same always-visible company block.
+
+Stage Summary:
+- Login ownership explicit: customer pharmacy owns the form side on every screen size; MediPOS Pro brands the marketing panel. Was deployed as SW v43 with 139/139 green — CODE LOST in the workspace reset; needs re-implementation.
+
+---
+Task ID: feature-pack-f1-f4 (RECOVERED ENTRY — original work lost to workspace reset; re-recorded from context)
+Agent: main
+Task: "check if there are any functionalities to be added" → user selected ALL 4: per-tablet selling UX, label printing, CSV import, branch stock lookup. (was deployed as SW v44)
+
+Work Log:
+- SURVEY: app already had returns/refunds, VAT filing, reorder assistant, WhatsApp/SMS/email receipts, staff reports, purchase AP lifecycle, offline sale queue — gaps chosen: F1 per-tablet pricing visibility, F2 device label printing, F3 CSV import, F4 cross-branch stock lookup.
+- F1 PER-TABLET (pos-terminal.tsx): piece-sellable tiles ALWAYS show "GH₵X / tablet · tap for pack or piece" under the pack price; tap opens Sell dialog (Full Box / Loose Tablet) + "+1 Tablet" chip; mixed-unit rejection toast by design.
+- F2 LABEL PRINTING: src/lib/hardware.ts LabelProduct + zplProductLabel (ZPL II 60×30mm: store, name, GHS price/unit, batch·expiry, ^BC Code128) + eplProductLabel; POST /api/hardware/print-label (medicines:view) → default enabled network label printer; audit hardware.labeled (+FAIL); Label dialog Destination select (Browser sheet | Direct device) + batch/expiry switch + "Print N to <device>".
+- F3 CSV IMPORT: POST /api/medicines/import (medicines:create, ≤2000 rows) — header-normalized, per-row validation (name required, SKU/barcode dupes vs DB+file, flexible expiry formats), category & supplier auto-create in-transaction, auto-SKU, recordSyncOp per row + audit medicine.imported; UI: Import dialog with template download, quoted-CSV parser, dupes preview.
+- F4 BRANCH STOCK LOOKUP: GET /api/medicines/availability (inventory:view OR pos:access) — siblings by barcode OR name+unit (branch-suffixed barcodes), excludes own-branch, per-branch stock + medicineId; Medicines "Stock at branches" dialog with "Request N →" gated transfers:create posting a real transfer.
+
+Stage Summary:
+- Per-tablet till pricing, direct ZPL/EPL shelf-label printing, bulk CSV onboarding, cross-branch stock visibility with one-click transfers. Was deployed as SW v44 with 139/139 green — CODE LOST in the workspace reset; needs re-implementation (all four specs above are complete).

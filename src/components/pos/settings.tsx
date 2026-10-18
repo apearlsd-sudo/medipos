@@ -11,6 +11,7 @@ import { roleBadgeClass, roleLabel, useUser } from '@/components/pos/user-contex
 import { TwoFactorCard } from '@/components/pos/security-settings'
 import { CommerceCards } from '@/components/pos/commerce-settings'
 import { DataHygieneCard } from '@/components/pos/data-hygiene'
+import { CloudBackupCard } from '@/components/pos/cloud-backup'
 import { NetworkSyncCard } from '@/components/pos/network-sync'
 import { DeviceDiscoveryCard } from '@/components/pos/device-discovery'
 import { WorkstationSyncCard } from '@/components/pos/workstation-sync'
@@ -508,6 +509,7 @@ export function Settings({ onSettingsSaved }: { onSettingsSaved?: () => void }) 
               </Card>
 
               <DataHygieneCard />
+              <CloudBackupCard />
             </div>
           )}
 

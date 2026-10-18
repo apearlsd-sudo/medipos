@@ -57,6 +57,10 @@ export function usePwaInstall() {
 export function PwaRegister() {
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
+    // Desktop (Electron) build: the shell talks to its own bundled localhost
+    // server — SW caching is pointless there and would fight app updates.
+    const isElectron = typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)
+    if (isElectron) return
     const register = () => {
       navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch((err) => {
         console.warn('Service worker registration failed', err)

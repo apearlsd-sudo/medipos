@@ -1,0 +1,70 @@
+# MediPOS Pro — desktop packaging (electron-builder)
+# Build:  npm run desktop:pack   (unpacked, validation / Linux)
+#         npm run desktop:dist   (Windows NSIS installer — run on Windows/CI)
+# Shell code lives in electron/ (asar); the Next standalone server and the
+# first-run seed DB ship as plain resources/ trees (the server must be
+# spawnable from disk, never inside asar).
+appId: com.medipospro.desktop
+productName: MediPOS Pro
+executableName: medipos
+
+directories:
+  buildResources: desktop-assets
+  output: desktop-dist
+
+files:
+  - electron/**/*
+  # The shell uses only Electron + Node builtins, so ALL npm dependencies are
+  # kept out of app.asar — EXCEPT the electron-updater closure, which the main
+  # process needs at runtime (keep this list in sync with `electron-updater`
+  # dependency closure; the real server ships its own tree under resources/).
+  - "!node_modules/**/*"
+  - "!node_modules"
+  - "node_modules/electron-updater/**"
+  - "node_modules/builder-util-runtime/**"
+  - "node_modules/fs-extra/**"
+  - "node_modules/graceful-fs/**"
+  - "node_modules/jsonfile/**"
+  - "node_modules/universalify/**"
+  - "node_modules/js-yaml/**"
+  - "node_modules/argparse/**"
+  - "node_modules/lazy-val/**"
+  - "node_modules/lodash.escaperegexp/**"
+  - "node_modules/lodash.isequal/**"
+  - "node_modules/semver/**"
+  - "node_modules/tiny-typed-emitter/**"
+  - "node_modules/sax/**"
+  - "node_modules/debug/**"
+  - "node_modules/ms/**"
+
+asar: true
+compression: maximum
+electronLanguages:
+  - en-US
+
+afterPack: electron/pack-hooks.cjs
+
+# resources/server is populated by electron/pack-hooks.cjs (afterPack) —
+# electron-builder's extraResources copy respects .gitignore and silently
+# drops the server's node_modules, so the copy is done in the hook instead.
+extraResources:
+  - from: desktop-assets/icon.png
+    to: icon.png
+  - from: db/custom.db
+    to: seed/custom.db
+
+win:
+  target:
+    - nsis
+  icon: desktop-assets/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false   # never destroy the pharmacy's data on uninstall
+  artifactName: ${productName}-Setup-${version}.${ext}
+  shortcutName: ${productName}
+
+linux:
+  icon: desktop-assets/icon.png
+  category: Office

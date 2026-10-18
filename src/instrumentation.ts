@@ -110,4 +110,68 @@ export async function register() {
     })
   }
   await guardGlobal.__mediposBootGuard
+
+  startDailyBackupTimer()
+}
+
+// ---------------------------------------------------------------------------
+// Tier 1 cloud backup — daily auto-backup timer.
+// Every 6h tick: if the newest local snapshot is older than 24h, create one
+// (VACUUM INTO); if cloud backup is configured + enabled, upload it. All
+// failures are logged and remembered in the config meta (lastError) — the
+// timer never throws into the server loop. Production only.
+// ---------------------------------------------------------------------------
+const timerGlobal = globalThis as unknown as { __mediposBackupTimer?: NodeJS.Timeout }
+
+function startDailyBackupTimer() {
+  if (process.env.NODE_ENV !== 'production') return
+  if (timerGlobal.__mediposBackupTimer) return
+  timerGlobal.__mediposBackupTimer = setInterval(() => {
+    dailyBackupTick().catch((e) => console.error('[auto-backup] unexpected:', e))
+  }, 6 * 60 * 60 * 1000)
+  // First pass shortly after boot so a machine that only runs during the day
+  // still gets its snapshot (and the 24h guard makes reboots idempotent).
+  setTimeout(() => dailyBackupTick().catch(() => {}), 2 * 60 * 1000)
+  console.log('[auto-backup] daily timer armed (tick 6h, snapshot every ≥24h)')
+}
+
+async function dailyBackupTick() {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const { backupsDir, createLocalBackup } = await import('@/lib/system')
+  const { loadCloudConfig, saveCloudConfig, dailyBackupKey, putObject } = await import('@/lib/cloud-backup')
+  const { logAudit } = await import('@/lib/audit')
+
+  // 24h guard: read newest existing snapshot mtime from the backups dir.
+  const dir = backupsDir()
+  const snaps = fs.readdirSync(dir).filter((f) => f.startsWith('medipos-') && f.endsWith('.db'))
+  const newest = snaps
+    .map((f) => fs.statSync(path.join(dir, f)).mtimeMs)
+    .reduce((a, b) => Math.max(a, b), 0)
+  if (newest && Date.now() - newest < 24 * 60 * 60 * 1000) return
+
+  const local = await createLocalBackup()
+  console.log(`[auto-backup] snapshot created ${local.file} (${(local.sizeBytes / 1024 / 1024).toFixed(2)} MB)`)
+
+  const cfg = loadCloudConfig()
+  if (!cfg || !cfg.enabled) return
+  const key = dailyBackupKey(cfg.prefix)
+  try {
+    const buf = fs.readFileSync(path.join(dir, local.file))
+    await putObject(cfg, key, buf)
+    saveCloudConfig({ ...cfg, lastUploadAt: new Date().toISOString(), lastUploadKey: key, lastUploadBytes: buf.length, lastError: undefined })
+    console.log(`[auto-backup] uploaded ${key}`)
+    await logAudit({
+      actor: null,
+      action: 'system.cloudBackup.uploaded',
+      targetType: 'system',
+      targetName: key,
+      summary: `Auto cloud backup uploaded ${key} (${(buf.length / 1024 / 1024).toFixed(2)} MB)`,
+      changes: { key, bytes: buf.length, auto: true },
+    })
+  } catch (e) {
+    const msg = (e as Error).message
+    saveCloudConfig({ ...cfg, lastError: msg })
+    console.error(`[auto-backup] upload failed: ${msg}`)
+  }
 }
