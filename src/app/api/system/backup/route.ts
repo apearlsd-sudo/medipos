@@ -54,8 +54,12 @@ export async function GET(req: NextRequest) {
       const name = safeBackupName(download)
       if (!name) return NextResponse.json({ error: 'Invalid backup filename' }, { status: 400 })
       const file = path.join(backupsDir(), name)
-      // Defense in depth: resolved path must stay inside the backups dir.
-      if (!path.resolve(file).startsWith(path.resolve(backupsDir()))) {
+      // Defense in depth: resolved path must stay inside the backups dir —
+      // strictly (dir + path.sep), so sibling dirs like `backups-evil` or
+      // `backups.old` can never match a bare startsWith prefix test.
+      const dirResolved = path.resolve(backupsDir())
+      const fileResolved = path.resolve(file)
+      if (fileResolved !== dirResolved && !fileResolved.startsWith(dirResolved + path.sep)) {
         return NextResponse.json({ error: 'Invalid backup path' }, { status: 400 })
       }
       if (!fs.existsSync(file)) return NextResponse.json({ error: 'Backup not found' }, { status: 404 })

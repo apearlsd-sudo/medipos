@@ -36,6 +36,11 @@ export async function GET(req: NextRequest) {
         'Content-Length': String(buf.length),
         'Cache-Control': 'public, max-age=31536000, immutable',
         ETag: `"logo-${version ?? '0'}"`,
+        // Stored-XSS sandbox: the logo is PUBLIC and may be an SVG (which can
+        // carry <script>). This CSP kills script/iframe/remote loads inside a
+        // document served from this endpoint while images still render.
+        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        'X-Content-Type-Options': 'nosniff',
       },
     })
   } catch (e) {
