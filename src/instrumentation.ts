@@ -140,6 +140,20 @@ export async function register() {
   }
   await applyPendingRestore()
 
+  // Schema reconcile BEFORE the boot guard: a desktop database seeded by an
+  // older release is missing newer tables/columns (auto-update never migrates
+  // userData/data/custom.db) — the guard's own queries (medicine.branchRef…)
+  // would throw on such DBs and every endpoint touching the missing shape
+  // answered 500. Additive-only, idempotent, version-gated after first pass.
+  try {
+    const { ensureSchemaReconciled } = await import('@/lib/schema-reconcile')
+    const rec = await ensureSchemaReconciled()
+    if (rec.error) console.error('[boot] schema reconcile reported an error:', rec.error)
+    else if (rec.gate !== 'stamp') console.log(`[boot] schema reconcile: applied=${rec.applied} skipped=${rec.skipped} gate=${rec.gate ?? 'full-pass'}`)
+  } catch (e) {
+    console.error('[boot] schema reconcile failed (server continues):', e)
+  }
+
   await guardGlobal.__mediposBootGuard
 
   startDailyBackupTimer()

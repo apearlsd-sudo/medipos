@@ -42,6 +42,8 @@ interface SyncStatus {
   totalOps: number
   state: { lastPulledSeq: number; lastPushedSeq: number; lastSyncAt: string | null; lastError: string | null } | null
   nodes?: SyncNodeRow[]
+  /** v0.3.10: per-field degradation — endpoints the server could not read (e.g. schema gaps on old desktop DBs) */
+  degraded?: string[]
 }
 
 export function NetworkSyncCard() {
@@ -129,6 +131,17 @@ export function NetworkSyncCard() {
           <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Refreshing network status…</p>
         ) : (
           <>
+            {/* v0.3.10: the status endpoint now degrades per field instead of failing wholesale */}
+            {status.degraded && status.degraded.length > 0 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-3 dark:border-amber-500/20 dark:bg-amber-500/5">
+                <p className="flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Partial data — the server could not read: {status.degraded.join(', ')}. The database is repaired automatically at the next app start; the rest of this page is still live.
+                  </span>
+                </p>
+              </div>
+            )}
             {/* Sync role & pairing (v0.3.4 — designate HQ/branch from the UI) */}
             <SyncRoleCard />
 

@@ -1,0 +1,388 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id               String    @id @default(cuid())
+  username         String    @unique
+  passwordHash     String
+  name             String
+  email            String?
+  phone            String?
+  role             String    @default("cashier") // denormalized role slug (admin | pharmacist | cashier | custom)
+  roleRef          Role?     @relation(fields: [roleId], references: [id])
+  roleId           String?
+  status           String    @default("active") // active | suspended
+  branchRef        Branch?   @relation(fields: [branchId], references: [id])
+  branchId         String?
+  twoFactorEnabled Boolean   @default(false)
+  twoFactorSecret  String? // base32 TOTP secret (stored while setup is in progress or enabled)
+  recoveryCodes    String? // JSON array of hashed recovery codes
+  lastLoginAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model Branch {
+  id               String            @id @default(cuid())
+  name             String
+  code             String            @unique // MAIN, OSU …
+  address          String?
+  city             String?
+  phone            String?
+  isActive         Boolean           @default(true)
+  isDefault        Boolean           @default(false) // the seeded primary branch
+  users            User[]
+  medicines        Medicine[]
+  branchPrices     BranchPrice[]
+  sales            Sale[]
+  purchases        Purchase[]
+  shifts           Shift[]
+  stockTakes       StockTake[]
+  discountRequests DiscountRequest[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+}
+
+model BranchPrice {
+  id            String   @id @default(cuid())
+  branchId      String
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  medicineId    String
+  medicine      Medicine @relation(fields: [medicineId], references: [id], onDelete: Cascade)
+  sellingPrice  Float // branch-level override for the medicine's selling price
+  updatedById   String?
+  updatedByName String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([branchId, medicineId])
+  @@index([medicineId])
+}
+
+model Role {
+  id          String       @id @default(cuid())
+  slug        String       @unique // admin | pharmacist | cashier | inventory-clerk …
+  name        String
+  description String?
+  isSystem    Boolean      @default(false) // system roles cannot be deleted
+  permissions Permission[]
+  users       User[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Permission {
+  id     String @id @default(cuid())
+  key    String @unique // "medicines:create"
+  module String // medicines
+  action String // create
+  roles  Role[]
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  action     String // role.created | role.updated | role.deleted | user.created | user.updated | user.deleted
+  actorId    String?
+  actorName  String
+  actorRole  String? // actor's role name at the time
+  targetType String // role | user
+  targetId   String?
+  targetName String?
+  summary    String // human-readable one-liner
+  changes    String? // JSON snapshot (permission diffs, role/status changes)
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
+}
+
+model Category {
+  id          String     @id @default(cuid())
+  name        String     @unique
+  description String?
+  medicines   Medicine[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+model Supplier {
+  id            String     @id @default(cuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  medicines     Medicine[]
+  purchases     Purchase[]
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+model Medicine {
+  id                   String         @id @default(cuid())
+  name                 String
+  genericName          String?
+  brand                String?
+  branchRef            Branch?        @relation(fields: [branchId], references: [id])
+  branchId             String?
+  sku                  String         @unique
+  barcode              String?
+  categoryId           String
+  category             Category       @relation(fields: [categoryId], references: [id])
+  supplierId           String?
+  supplier             Supplier?      @relation(fields: [supplierId], references: [id])
+  unit                 String         @default("Box")
+  batchNumber          String?
+  expiryDate           DateTime?
+  stockQty             Int            @default(0)
+  reorderLevel         Int            @default(20)
+  costPrice            Float          @default(0)
+  sellingPrice         Float          @default(0)
+  prescriptionRequired Boolean        @default(false)
+  location             String?
+  status               String         @default("active")
+  saleItems            SaleItem[]
+  purchaseItems        PurchaseItem[]
+  logs                 InventoryLog[]
+  branchPrices         BranchPrice[]
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  phone     String?
+  address   String?
+  note      String?
+  sales     Sale[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Sale {
+  id                String     @id @default(cuid())
+  invoiceNo         String     @unique
+  customerId        String?
+  customer          Customer?  @relation(fields: [customerId], references: [id])
+  shiftId           String?
+  shift             Shift?     @relation(fields: [shiftId], references: [id])
+  branchRef         Branch?    @relation(fields: [branchId], references: [id])
+  branchId          String?
+  approvedById      String? // manager who authorized a large-discount sale
+  approvedByName    String?
+  discountRequestId String?
+  subtotal          Float      @default(0)
+  discount          Float      @default(0)
+  tax               Float      @default(0)
+  total             Float      @default(0)
+  paidAmount        Float      @default(0)
+  changeAmount      Float      @default(0)
+  paymentMethod     String     @default("cash")
+  paymentStatus     String     @default("paid")
+  saleStatus        String     @default("completed")
+  cashierName       String     @default("Admin User")
+  note              String?
+  items             SaleItem[]
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+}
+
+model SaleItem {
+  id         String    @id @default(cuid())
+  saleId     String
+  sale       Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  medicineId String?
+  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+  name       String
+  sku        String?
+  qty        Int
+  unitPrice  Float
+  discount   Float     @default(0)
+  total      Float
+}
+
+model Purchase {
+  id           String         @id @default(cuid())
+  referenceNo  String         @unique
+  branchRef    Branch?        @relation(fields: [branchId], references: [id])
+  branchId     String?
+  supplierId   String?
+  supplier     Supplier?      @relation(fields: [supplierId], references: [id])
+  purchaseDate DateTime       @default(now())
+  subtotal     Float          @default(0)
+  tax          Float          @default(0)
+  totalAmount  Float          @default(0)
+  paidAmount   Float          @default(0)
+  status       String         @default("pending")
+  note         String?
+  items        PurchaseItem[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model PurchaseItem {
+  id          String    @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  medicineId  String?
+  medicine    Medicine? @relation(fields: [medicineId], references: [id])
+  name        String
+  qty         Int
+  unitCost    Float
+  batchNumber String?
+  expiryDate  DateTime?
+  total       Float
+}
+
+model Prescription {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  patientName String
+  doctorName  String?
+  phone       String?
+  itemsText   String?
+  notes       String?
+  status      String   @default("pending")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InventoryLog {
+  id         String    @id @default(cuid())
+  medicineId String?
+  medicine   Medicine? @relation(fields: [medicineId], references: [id])
+  type       String
+  quantity   Int
+  reason     String?
+  reference  String?
+  createdAt  DateTime  @default(now())
+}
+
+model StoreSetting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model Shift {
+  id           String         @id @default(cuid())
+  shiftNo      String         @unique
+  branchRef    Branch?        @relation(fields: [branchId], references: [id])
+  branchId     String?
+  userId       String
+  userName     String
+  userRole     String         @default("cashier")
+  openingCash  Float          @default(0)
+  closingCash  Float?
+  expectedCash Float?
+  variance     Float?
+  status       String         @default("open") // open | closed
+  note         String? // opening note
+  closeNote    String?
+  startedAt    DateTime       @default(now())
+  endedAt      DateTime?
+  sales        Sale[]
+  movements    CashMovement[]
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+}
+
+model CashMovement {
+  id        String   @id @default(cuid())
+  shiftId   String
+  shift     Shift    @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  type      String // addition | payout | drop
+  amount    Float
+  reason    String?
+  userName  String
+  createdAt DateTime @default(now())
+}
+
+model StockTake {
+  id              String          @id @default(cuid())
+  stockTakeNo     String          @unique // ST-2026-0001
+  branchRef       Branch?         @relation(fields: [branchId], references: [id])
+  branchId        String?
+  title           String
+  scope           String          @default("all") // all | category
+  scopeCategory   String?
+  status          String          @default("in_progress") // in_progress | completed | cancelled
+  startedById     String
+  startedByName   String
+  completedById   String?
+  completedByName String?
+  note            String?
+  completeNote    String?
+  applyToStock    Boolean         @default(false)
+  totalItems      Int             @default(0) // count lines in session
+  countedItems    Int             @default(0) // lines with a count entered
+  systemQty       Int             @default(0) // snapshot units at session start
+  countedQty      Int             @default(0) // total counted units (live)
+  varianceQty     Int             @default(0) // counted - system (live/final)
+  varianceValue   Float           @default(0) // sum(variance * unitCost)
+  positiveLines   Int             @default(0) // surplus lines
+  negativeLines   Int             @default(0) // shortage lines
+  matchedLines    Int             @default(0)
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  items           StockTakeItem[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model StockTakeItem {
+  id            String    @id @default(cuid())
+  stockTakeId   String
+  stockTake     StockTake @relation(fields: [stockTakeId], references: [id], onDelete: Cascade)
+  medicineId    String
+  medicineName  String
+  sku           String
+  unit          String    @default("Box")
+  category      String?
+  location      String?
+  systemQty     Int // snapshot at session start
+  countedQty    Int? // null = not counted yet
+  varianceQty   Int? // counted - system
+  unitCost      Float     @default(0) // snapshot cost for valuation
+  varianceValue Float?
+  countedById   String?
+  countedByName String?
+  countedAt     DateTime?
+  note          String?
+  createdAt     DateTime  @default(now())
+}
+
+model DiscountRequest {
+  id             String    @id @default(cuid())
+  requestCode    String    @unique // DR-2026-0001
+  status         String    @default("pending") // pending | approved | rejected | used | cancelled
+  cashierId      String
+  cashierName    String
+  subtotal       Float     @default(0)
+  discountValue  Float     @default(0)
+  discountPct    Float     @default(0) // discount as % of subtotal, snapshot
+  itemCount      Int       @default(0)
+  itemsJson      String? // JSON snapshot of cart lines at request time
+  customerId     String?
+  reason         String?
+  reviewedById   String?
+  reviewedByName String?
+  reviewedAt     DateTime?
+  reviewNote     String?
+  saleId         String? // set once the approved draft is completed as a sale
+  branchRef      Branch?   @relation(fields: [branchId], references: [id])
+  branchId       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([status])
+  @@index([cashierId])
+}
