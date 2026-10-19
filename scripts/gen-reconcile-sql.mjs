@@ -27,18 +27,38 @@
 // ---------------------------------------------------------------------------
 
 import { execFileSync } from 'child_process'
-import { writeFileSync } from 'fs'
+import { writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
+import { createRequire } from 'module'
 
 const ROOT = process.cwd()
 const OUT = join(ROOT, 'src', 'lib', 'reconcile-sql.generated.ts')
 
-// 1. full DDL from an empty database to the current datamodel
-const ddl = execFileSync('npx', [
-  'prisma', 'migrate', 'diff',
-  '--from-empty', '--to-schema-datamodel', 'prisma/schema.prisma',
-  '--script',
-], { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+// 1. full DDL from an empty database to the current datamodel.
+// NOTE: the prisma CLI is spawned via its JS entry with process.execPath —
+// `execFileSync('npx', …)` cannot find npx.cmd on Windows CI runners (ENOENT).
+function prismaDiff() {
+  const require = createRequire(join(ROOT, 'package.json'))
+  const prismaCli = require.resolve('prisma/build/index.js')
+  return execFileSync(process.execPath, [
+    prismaCli, 'migrate', 'diff',
+    '--from-empty', '--to-schema-datamodel', 'prisma/schema.prisma',
+    '--script',
+  ], { cwd: ROOT, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 })
+}
+
+let ddl
+try {
+  ddl = prismaDiff()
+} catch (e) {
+  // Release-pipeline insurance: the dataset is committed, so a build must not
+  // die just because the CLI cannot run in this environment — but say it loud.
+  if (existsSync(OUT)) {
+    console.warn(`[gen-reconcile-sql] prisma diff unavailable (${e instanceof Error ? e.message.split('\n')[0] : e}) — keeping the committed dataset at ${OUT}`)
+    process.exit(0)
+  }
+  throw e
+}
 
 // 2. split into statements (prisma script format: blocks ending with ';')
 const statements = []
