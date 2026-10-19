@@ -1556,3 +1556,15 @@ Work Log:
 
 Stage Summary:
 - Branches are now first-class sync entities: create a store on the HQ and every paired device sees it in seconds (before any inventory copy), catalog ops place rows in the right store/category on devices that never saw them, copy-stock reports whether anything is listening, and a key mismatch says exactly that instead of "HQ unreachable". Branches page gets a "Get products" shortcut on empty stores. 139/139 green, deployed SW v57. Release v0.3.7 next: tag → CI → Release assets.
+
+---
+Task ID: branch-provisioning-copy-fix
+Agent: main
+Task: (update) v0.3.7 released.
+
+Work Log:
+- commit 50c45bd, tag v0.3.7 pushed → CI 39279072650 GREEN (~25min total, windows-runner queue ~14min + build) — including the "Verify update-feed consistency" gate.
+- Release verified: v0.3.7 published (not draft/prerelease), 3 assets — MediPOS-Pro-Setup-0.3.7.exe 125,935,097 bytes + latest.yml (version 0.3.7, sha512, size matches byte-for-byte) + .blockmap. Feed invariant holds: latest.yml path == asset name == exact updater URL (anonymous byte-range HTTP 206).
+
+Stage Summary:
+- v0.3.7 live on the auto-update feed. Upgrade path for the user: installs on ≤v0.3.5 still need the ONE manual v0.3.6/v0.3.7 install (their baked updater 404s forever); v0.3.6 installs auto-update to v0.3.7 within the hour. After updating: create the branch on the HQ → every paired device sees it in seconds → Copy stock (or Branches → Get products) → delivery status tells you whether a device is listening.
