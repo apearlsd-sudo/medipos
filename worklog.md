@@ -1631,3 +1631,15 @@ Work Log:
 
 Stage Summary:
 - All three desktop complaints fixed at the root: installs decompress at normal LZMA effort (minutes → well under a minute), a launch is never silent (starting panel + 180s AV-scan-tolerant boot + self-explaining single-instance lock + BOOT_ENV evidence), and Network & Sync can never spin forever again (bounded fetches, visible errors, retry; staff see an admin-only note instead of a guaranteed 403 loop). Release v0.3.9 next: tag → CI → Release assets.
+
+---
+Task ID: desktop-install-launch-syncux-fix
+Agent: main
+Task: (update) v0.3.9 released.
+
+Work Log:
+- commit f280174, tag v0.3.9 pushed → CI 39330533763 GREEN — including the "Verify update-feed consistency" gate. (Anonymous api.github.com rate-limited mid-poll; switched to authenticated run queries.)
+- Release verified: v0.3.9 published (not draft/prerelease), 3 assets — MediPOS-Pro-Setup-0.3.9.exe 126,025,951 bytes + latest.yml (version 0.3.9, path == asset name, size matches byte-for-byte) + .blockmap 124,962 bytes. Anonymous probes: latest.yml 200 / exe byte-range 206 (differential downloads OK) / blockmap 200. NOTE: installer is essentially the same size as v0.3.8 (126.0MB) — compression normal vs maximum barely changed the final NSIS size here; the win is decompression effort at install time.
+
+Stage Summary:
+- v0.3.9 live on the auto-update feed — v0.3.6+ installs pick it up within the hour; ≤v0.3.5 installs still need the ONE manual v0.3.6+ exe. After updating: installs unzip fast, the app shows a starting panel immediately and tolerates slow first boots, "already running" explains itself instead of needing administrator, and Settings → Sync & Devices → Network & Sync loads for staff (admin-only note) and shows retries instead of spinning forever.
