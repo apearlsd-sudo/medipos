@@ -48,6 +48,7 @@ export function SyncRoleCard() {
   const { user } = useUser()
   const [cfg, setCfg] = useState<SyncRoleConfig | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -58,17 +59,30 @@ export function SyncRoleCard() {
   const canManage = !!user && (user.isSuperAdmin || user.role === 'admin')
 
   const load = useCallback(async () => {
+    // The config API requires settings:edit — for staff accounts it returns
+    // 403, and the old code spun "Loading sync role…" forever with no
+    // feedback (the "Network & Sync keeps loading indefinitely" report).
+    // Non-admins get a clear admin-only note instead of a doomed request.
+    if (!canManage) {
+      setLoading(false)
+      return
+    }
+    setError(null)
     try {
-      const res = await fetch('/api/sync/config', { cache: 'no-store' })
+      const res = await fetch('/api/sync/config', { cache: 'no-store', signal: AbortSignal.timeout(15_000) })
       if (res.ok) {
         const json = (await res.json()) as SyncRoleConfig
         setCfg(json)
         setForm({ role: json.role, nodeId: json.nodeId, nodeName: json.nodeName, hqUrl: json.hqUrl ?? '', syncKey: '', branchCode: json.branchCode ?? '' })
+      } else {
+        setError(`Could not load sync role (HTTP ${res.status})`)
       }
+    } catch (e) {
+      setError(e instanceof Error && e.name === 'TimeoutError' ? 'Sync role request timed out — the local server is busy or unreachable.' : 'Sync role request failed — the local server may be restarting.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [canManage])
 
   useEffect(() => {
     load()
@@ -147,7 +161,16 @@ export function SyncRoleCard() {
   if (loading || !cfg) {
     return (
       <div className="rounded-xl border p-3">
-        <p className="flex items-center gap-2 py-1 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading sync role…</p>
+        {!canManage ? (
+          <p className="flex items-center gap-2 py-1 text-sm text-muted-foreground"><Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> Sync role &amp; pairing is managed by an administrator. Log in with an admin account to pair this device with the HQ or change its role.</p>
+        ) : error ? (
+          <div className="rounded-lg border border-red-200 bg-red-50/50 p-3 dark:border-red-500/20 dark:bg-red-500/5">
+            <p className="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}</p>
+            <Button size="sm" variant="outline" className="mt-2 h-7 rounded-full" onClick={load}><RefreshCw className="h-3 w-3" /> Retry</Button>
+          </div>
+        ) : (
+          <p className="flex items-center gap-2 py-1 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading sync role…</p>
+        )}
       </div>
     )
   }

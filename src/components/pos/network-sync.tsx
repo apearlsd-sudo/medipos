@@ -49,12 +49,25 @@ export function NetworkSyncCard() {
   const live = useLive(['sync'])
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
 
   const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
-      const res = await fetch('/api/sync/status', { cache: 'no-store' })
-      if (res.ok) setStatus(await res.json())
+      // Bounded: an unbounded fetch left this card spinning forever with no
+      // feedback whenever the request failed or hung ("Network & Sync keeps
+      // loading indefinitely" reports). Timeout + explicit error state + retry.
+      const res = await fetch('/api/sync/status', { cache: 'no-store', signal: AbortSignal.timeout(15_000) })
+      if (res.ok) {
+        setStatus(await res.json())
+        setError(null)
+      } else {
+        setError(`Could not load network status (HTTP ${res.status})`)
+      }
+    } catch (e) {
+      setError(e instanceof Error && e.name === 'TimeoutError' ? 'Network status request timed out — the local server is busy or unreachable.' : 'Network status request failed — the local server may be restarting.')
     } finally {
       setLoading(false)
     }
@@ -72,7 +85,7 @@ export function NetworkSyncCard() {
   const syncNow = async () => {
     setSyncing(true)
     try {
-      const res = await fetch('/api/sync/status', { method: 'POST' })
+      const res = await fetch('/api/sync/status', { method: 'POST', signal: AbortSignal.timeout(60_000) })
       const json = await res.json()
       if (!res.ok) {
         toast({ title: 'Sync failed', description: json.error ?? json.summary, variant: 'destructive' })
@@ -80,6 +93,8 @@ export function NetworkSyncCard() {
       }
       toast({ title: json.ok ? 'Sync complete' : 'Sync issue', description: json.summary })
       load()
+    } catch {
+      toast({ title: 'Sync failed', description: 'The request timed out or the local server is unreachable.', variant: 'destructive' })
     } finally {
       setSyncing(false)
     }
@@ -103,8 +118,15 @@ export function NetworkSyncCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {loading || !status ? (
+        {loading && !status ? (
           <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading network status…</p>
+        ) : error && !status ? (
+          <div className="rounded-xl border border-red-200 bg-red-50/50 p-3 dark:border-red-500/20 dark:bg-red-500/5">
+            <p className="flex items-start gap-1.5 text-sm text-red-600 dark:text-red-400"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}</p>
+            <Button size="sm" variant="outline" className="mt-2 h-7 rounded-full" onClick={load}><RefreshCw className="h-3 w-3" /> Retry</Button>
+          </div>
+        ) : !status ? (
+          <p className="flex items-center gap-2 py-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Refreshing network status…</p>
         ) : (
           <>
             {/* Sync role & pairing (v0.3.4 — designate HQ/branch from the UI) */}

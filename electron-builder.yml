@@ -38,7 +38,12 @@ files:
   - "node_modules/ms/**"
 
 asar: true
-compression: maximum
+# compression "normal" (electron-builder default) instead of "maximum":
+# the LZMA-ultra payload made NSIS extraction take many minutes on pharmacy
+# PCs (266MB of app decompressed at ultra effort). "normal" cuts install
+# time to well under a minute for a modest installer-size increase —
+# differential updates (blockmap) still keep auto-update downloads small.
+compression: normal
 electronLanguages:
   - en-US
 

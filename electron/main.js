@@ -185,11 +185,25 @@ function scheduleRespawn() {
   }, delay)
 }
 
-function waitReady(timeoutMs = 30000) {
+// First start after installing (and the first start after every update) can
+// take well over 30s on pharmacy PCs: Windows Defender real-time scans the
+// ~15k freshly extracted files the moment the server reads them, on top of
+// cold disk caches. A 30s readiness cap made those boots hit BOOT_FAILED and
+// quit — the user saw "the app does not open" and reached for "Run as
+// administrator" (which only made things worse, see the lock dialog below).
+// 180s + heartbeat logs keep the boot alive through first-scan storms.
+function waitReady(timeoutMs = 180_000) {
   const started = Date.now()
   return new Promise((resolve, reject) => {
+    let lastBeat = -1
     const probe = () => {
       if (isQuitting) return reject(new Error('quitting'))
+      const waited = Date.now() - started
+      const beat = Math.floor(waited / 5000)
+      if (beat > lastBeat && waited > 0) {
+        lastBeat = beat
+        log(`SERVER_STARTING waited=${Math.round(waited / 1000)}s`)
+      }
       const req = http.get(`${APP_ORIGIN}/`, { timeout: 2000 }, (res) => {
         res.resume()
         if (res.statusCode === 200) return resolve()
@@ -234,6 +248,53 @@ function startHub() {
   })
 }
 
+// --- boot environment diagnostics ----------------------------------------------
+// One compact evidence line per boot: elevation and write access to every
+// directory the app touches. When users report "only opens as administrator",
+// this line distinguishes an ACL problem (elevated install locked the dirs)
+// from a lock/zombie problem (dirs fine) in seconds.
+function isElevatedWindows() {
+  if (process.platform !== 'win32') return false
+  try {
+    require('child_process').execSync('net.exe session', { timeout: 2000, stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function writable(dir) {
+  try { fs.mkdirSync(dir, { recursive: true }); fs.accessSync(dir, fs.constants.W_OK); return true } catch { return false }
+}
+
+function logBootEnvironment() {
+  const elevated = isElevatedWindows()
+  const results = {
+    elevated,
+    serverDir: writable(SERVER_DIR),
+    dataDir: writable(DATA_DIR),
+    logsDir: writable(LOGS_DIR),
+    secretsDir: writable(SECRETS_DIR),
+  }
+  log(`BOOT_ENV elevated=${elevated} writable=${JSON.stringify(results)}`)
+  if (!results.serverDir || !results.dataDir) {
+    dialog.showErrorBox(
+      'MediPOS Pro — installation folder is restricted',
+      'This Windows account cannot write to the folders MediPOS Pro needs.\n\nThis usually happens when the installer was run with "Run as administrator". MediPOS Pro does not need administrator rights.\n\nTo fix: quit MediPOS Pro, uninstall it, then run the downloaded Setup file with a NORMAL double-click (no right-click → Run as administrator). Your data is kept.',
+    )
+  }
+}
+
+// Local starting panel shown in the window while the embedded server boots.
+function startingPanelUrl() {
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>MediPOS Pro</title><style>
+    html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;background:#0f172a;color:#e2e8f0;font-family:system-ui,Segoe UI,sans-serif;text-align:center}
+    .spin{width:34px;height:34px;margin:0 auto 18px;border-radius:50%;border:3px solid #14b8a6;border-top-color:transparent;animation:s 1s linear infinite}@keyframes s{to{transform:rotate(360deg)}}
+    h1{font-size:20px;margin:0 0 8px}p{font-size:13px;color:#94a3b8;margin:4px 24px;line-height:1.5}
+  </style></head><body><div><div class="spin"></div><h1>Starting MediPOS Pro\u2026</h1><p>The first start after installing or updating can take a minute while Windows finishes security scanning the new files.</p></div></body></html>`
+  return 'data:text/html;charset=utf-8,' + encodeURIComponent(html)
+}
+
 // --- window + tray -------------------------------------------------------------
 let mainWindow = null
 let tray = null
@@ -245,7 +306,7 @@ function showWindow() {
   mainWindow.focus()
 }
 
-function createWindow() {
+function createWindow(initialUrl) {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -265,7 +326,7 @@ function createWindow() {
   })
 
   mainWindow.once('ready-to-show', () => showWindow())
-  mainWindow.loadURL(APP_ORIGIN + '/')
+  mainWindow.loadURL(initialUrl || APP_ORIGIN + '/')
 
   // Lock navigation to the local app origin; external links go to the browser.
   mainWindow.webContents.on('will-navigate', (e, url) => {
@@ -528,6 +589,16 @@ function initDesktopBridge() {
 
 // --- lifecycle -------------------------------------------------------------------
 if (!app.requestSingleInstanceLock()) {
+  // A second launch while one copy is already running. Historically this exited
+  // SILENTLY — the user saw "nothing opens", assumed a broken install and
+  // reached for right-click → Run as administrator. Elevated launches then
+  // created tray-resident admin instances that ate every later normal launch:
+  // the exact "app only opens as administrator" trap. Make the state visible.
+  log('SINGLE_INSTANCE already running — showing guidance dialog')
+  dialog.showErrorBox(
+    'MediPOS Pro is already running',
+    'Another copy of MediPOS Pro is open on this PC.\n\nLook for the MediPOS icon in the system tray (bottom-right corner near the clock — it may be hidden under the ^ chevron) and double-click it to bring the window up.\n\nIf you cannot find it: right-click the tray icon → Quit, or close MediPOS Pro in Task Manager, then start it again.\n\nNote: "Run as administrator" is NOT required — if the app only opens that way, an administrator-launched copy is still running in the tray. Quit it and start normally.',
+  )
   app.quit()
 } else {
   app.on('second-instance', showWindow)
@@ -561,18 +632,24 @@ if (!app.requestSingleInstanceLock()) {
       return
     }
 
+    logBootEnvironment()
     prepareData()
     serverChild = forkServer()
     startHub()
     initDesktopBridge()
 
+    // Show the app shell IMMEDIATELY with a starting panel — never a silent
+    // desktop while the embedded server boots (slow first starts used to look
+    // exactly like "the app does not open"). The real UI loads when ready.
+    createWindow(startingPanelUrl())
+    createTray()
+
     try {
-      await waitReady()
+      await waitReady(180_000)
       serverReady = true
       respawnAttempts = 0
       log('SERVER_READY ' + APP_ORIGIN)
-      createWindow()
-      createTray()
+      mainWindow?.loadURL(APP_ORIGIN + '/')
       if (!SMOKE) initUpdater()
       if (SMOKE) {
         log(`DESKTOP_SMOKE_OK port=${PORT} db=${DB_PATH}`)
@@ -580,7 +657,10 @@ if (!app.requestSingleInstanceLock()) {
       }
     } catch (err) {
       log(`BOOT_FAILED: ${err.message}`)
-      dialog.showErrorBox('MediPOS Pro — startup failed', `Server did not become ready.\nLogs: ${LOGS_DIR}`)
+      dialog.showErrorBox(
+        'MediPOS Pro — still starting',
+        `The internal server has not become ready.\n\nThis is most common on the FIRST start after installing or updating: Windows security is still scanning the new files — quit MediPOS Pro, wait a minute, and start it again. Subsequent starts are fast.\n\nTechnical details: ${err.message}\nLogs: ${LOGS_DIR}`,
+      )
       app.quit()
     }
   })
