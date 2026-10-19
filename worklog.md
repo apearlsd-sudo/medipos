@@ -1587,3 +1587,15 @@ Work Log:
 
 Stage Summary:
 - The "cannot copy stock to newly created branches" report was a silent data-path starvation: any HQ database restore/rebuild re-numbered the op-log below every device's pull cursor forever, and a ws-link race could kill the workstation's whole sync server on top. Both are now self-healing (rollback detection via head identity + cursor reset + full idempotent replay; crash-proof socket teardown + process guards), big replays drain in seconds, the HQ can push its stock to ALL branches in one action, and the copy report finally says per device whether — and why — the stock has or has not landed. 139/139 green, deployed SW v58. Release v0.3.8 next: tag → CI → Release assets.
+
+---
+Task ID: stock-push-cursor-selfheal
+Agent: main
+Task: (update) v0.3.8 released.
+
+Work Log:
+- commit 401d75a, tag v0.3.8 pushed → CI 39323319022 GREEN (~5min) — including the "Verify update-feed consistency" gate.
+- Release verified: v0.3.8 published (not draft/prerelease), 3 assets — MediPOS-Pro-Setup-0.3.8.exe 126,017,404 bytes + latest.yml (version 0.3.8, path == asset name) + .blockmap. Anonymous probes: latest.yml 200 / exe byte-range 206 (differential download OK) / blockmap 200.
+
+Stage Summary:
+- v0.3.8 live on the auto-update feed — v0.3.6/v0.3.7 installs pick it up within the hour (installs on ≤v0.3.5 still need the ONE manual v0.3.6+ install). After updating: HQ Stock Control → Copy stock → "All branches — push to every store" pushes names/prices/stock/batch to every active store in one action; the report now says per device whether the copy landed (online + bound to the right store = arriving in seconds; bound elsewhere = exact rebind instructions). Workstations that were starved by an earlier HQ backup restore re-align automatically on their first sync after updating.
