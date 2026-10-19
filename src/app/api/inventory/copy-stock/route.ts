@@ -143,6 +143,8 @@ async function copyIntoBranch(
         sellingPrice: src.sellingPrice,
         prescriptionRequired: src.prescriptionRequired,
         insuranceCovered: src.insuranceCovered,
+        innerUnit: src.innerUnit,
+        innerQty: src.innerQty,
         location: src.location,
         status: 'active',
         branchId: targetBranch.id,
@@ -154,6 +156,8 @@ async function copyIntoBranch(
       sku: finalSku, barcode: src.barcode, category: src.category?.name ?? null,
       unit: src.unit, costPrice: src.costPrice, sellingPrice: src.sellingPrice,
       prescriptionRequired: src.prescriptionRequired, insuranceCovered: src.insuranceCovered,
+      // pack-size selling (F1) must reach the receiving device too
+      innerUnit: src.innerUnit, innerQty: src.innerQty,
       reorderLevel: src.reorderLevel, location: src.location,
       initialQty: qty,
       ...(batch !== undefined ? { batchNumber: batch } : {}),

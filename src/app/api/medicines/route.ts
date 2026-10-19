@@ -129,6 +129,8 @@ export async function POST(req: NextRequest) {
       expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
       prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
       status: med.status, stockQty: med.stockQty,
+      // pack-size selling (F1) must survive replication
+      innerUnit: med.innerUnit, innerQty: med.innerQty,
       // receiver-side row placement (branch resolved by CODE, not node-local id)
       ...branchCtx,
     })

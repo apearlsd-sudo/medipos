@@ -72,6 +72,8 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
       prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
       status: med.status,
+      // pack-size selling (F1) must survive replication
+      innerUnit: med.innerUnit, innerQty: med.innerQty,
       // receiver-side row placement (branch resolved by CODE, not node-local id)
       ...branchCtx,
     })

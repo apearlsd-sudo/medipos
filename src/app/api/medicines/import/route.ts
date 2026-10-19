@@ -75,9 +75,15 @@ export async function POST(req: NextRequest) {
 
     const branchId = await branchIdForWrite(gate.user, body?.branchId ?? null)
 
-    const existingMeds = await db.medicine.findMany({ select: { sku: true, barcode: true } })
+    const existingMeds = await db.medicine.findMany({ select: { id: true, sku: true, barcode: true, innerUnit: true, innerQty: true } })
     const skuSet = new Set(existingMeds.map((m) => m.sku.toLowerCase()))
     const barcodeSet = new Set(existingMeds.map((m) => (m.barcode ?? '').toLowerCase()).filter(Boolean))
+    // v0.3.11: existing rows are no longer a dead end for pack sizes — a row
+    // that matches by SKU/barcode AND carries innerUnit/innerQty updates the
+    // pack fields in place (per-tablet selling bulk-enable), everything else
+    // about the row stays untouched and unmatched rows still hard-reject.
+    const skuToId = new Map(existingMeds.map((m) => [m.sku.toLowerCase(), m.id]))
+    const barcodeToId = new Map(existingMeds.filter((m) => m.barcode).map((m) => [m.barcode!.toLowerCase(), m.id]))
 
     const categoryCache = new Map<string, string>()
     const supplierCache = new Map<string, string>()
@@ -85,7 +91,34 @@ export async function POST(req: NextRequest) {
     let suppliersCreated = 0
 
     const created: Array<{ id: string; sku: string; name: string }> = []
+    const packUpdated: Array<{ sku: string; name: string }> = []
     const rejected: Array<{ row: number; reason: string }> = []
+
+    /** Pack-size bulk update for an existing row (pack fields ONLY). */
+    const updatePackFields = async (existingId: string, label: string, r: ImportRow): Promise<boolean> => {
+      const innerUnitRaw = String(r.innerUnit ?? '').trim()
+      const innerQtyRaw = String(r.innerQty ?? '').trim()
+      if (!innerUnitRaw && !innerQtyRaw) return false
+      const med = await db.medicine.update({
+        where: { id: existingId },
+        data: {
+          ...(innerUnitRaw ? { innerUnit: innerUnitRaw } : {}),
+          ...(innerQtyRaw ? { innerQty: Math.max(1, Math.floor(Number(innerQtyRaw) || 1)) } : {}),
+        },
+        include: { category: true },
+      })
+      void recordSyncOp('medicine.updated', med.sku, {
+        id: med.id, name: med.name, genericName: med.genericName, brand: med.brand, sku: med.sku, barcode: med.barcode,
+        categoryId: med.categoryId, category: med.category?.name ?? null, supplierId: med.supplierId, unit: med.unit, batchNumber: med.batchNumber,
+        expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
+        prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
+        status: med.status,
+        // pack-size selling (F1) must survive replication
+        innerUnit: med.innerUnit, innerQty: med.innerQty,
+      })
+      packUpdated.push({ sku: med.sku, name: label })
+      return true
+    }
 
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i]
@@ -94,9 +127,13 @@ export async function POST(req: NextRequest) {
       if (!name) { rejected.push({ row: rowNo, reason: 'Name is required' }); continue }
 
       let sku = String(r.sku ?? '').trim()
-      if (sku && (skuSet.has(sku.toLowerCase()))) { rejected.push({ row: rowNo, reason: `Duplicate SKU "${sku}"` }); continue }
+      if (sku && (skuSet.has(sku.toLowerCase()))) {
+        if (await updatePackFields(skuToId.get(sku.toLowerCase())!, name, r)) continue
+        rejected.push({ row: rowNo, reason: `Duplicate SKU "${sku}"` }); continue
+      }
       const barcode = String(r.barcode ?? '').trim()
       if (barcode && barcodeSet.has(barcode.toLowerCase())) {
+        if (await updatePackFields(barcodeToId.get(barcode.toLowerCase())!, name, r)) continue
         rejected.push({ row: rowNo, reason: `Duplicate barcode "${barcode}"` }); continue
       }
 
@@ -174,6 +211,8 @@ export async function POST(req: NextRequest) {
           expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
           prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
           status: med.status, stockQty: med.stockQty,
+          // pack-size selling (F1) must survive replication
+          innerUnit: med.innerUnit, innerQty: med.innerQty,
         })
 
         skuSet.add(sku.toLowerCase())
@@ -189,11 +228,11 @@ export async function POST(req: NextRequest) {
       action: 'medicine.imported',
       targetType: 'medicine',
       targetName: `${created.length} medicine(s)`,
-      summary: `CSV import: ${created.length} created, ${rejected.length} rejected (${categoriesCreated} category / ${suppliersCreated} supplier auto-created)`,
-      changes: { created: created.length, rejected: rejected.length, categoriesCreated, suppliersCreated },
+      summary: `CSV import: ${created.length} created, ${packUpdated.length} pack-size update(s), ${rejected.length} rejected (${categoriesCreated} category / ${suppliersCreated} supplier auto-created)`,
+      changes: { created: created.length, packSizesUpdated: packUpdated.length, rejected: rejected.length, categoriesCreated, suppliersCreated },
     })
 
-    return NextResponse.json({ ok: true, created: created.length, rejected: rejected.length, rejectedRows: rejected.slice(0, 25) })
+    return NextResponse.json({ ok: true, created: created.length, packSizesUpdated: packUpdated.length, rejected: rejected.length, rejectedRows: rejected.slice(0, 25) })
   } catch (e) {
     console.error('Medicines import error', e)
     return NextResponse.json({ error: `Import failed: ${(e as Error).message}` }, { status: 500 })

@@ -272,7 +272,7 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
   // F3 — CSV import
   const [importOpen, setImportOpen] = useState(false)
   const [importBusy, setImportBusy] = useState(false)
-  const [importReport, setImportReport] = useState<{ created: number; rejected: number; rejectedRows: Array<{ row: number; reason: string }> } | null>(null)
+  const [importReport, setImportReport] = useState<{ created: number; packSizesUpdated: number; rejected: number; rejectedRows: Array<{ row: number; reason: string }> } | null>(null)
 
   /** RFC-ish quoted CSV parser (handles quoted fields with commas/escapes). */
   const parseCSV = (text: string): string[][] => {
@@ -313,8 +313,8 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
       const res = await fetch('/api/medicines/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows }) })
       const j = await res.json()
       if (res.ok) {
-        setImportReport({ created: j.created, rejected: j.rejected, rejectedRows: j.rejectedRows ?? [] })
-        toast({ title: `Imported ${j.created} medicine(s)`, description: j.rejected > 0 ? `${j.rejected} row(s) need attention.` : 'Everything parsed cleanly.' })
+        setImportReport({ created: j.created, packSizesUpdated: j.packSizesUpdated ?? 0, rejected: j.rejected, rejectedRows: j.rejectedRows ?? [] })
+        toast({ title: `Imported ${j.created} medicine(s)`, description: [j.packSizesUpdated > 0 ? `${j.packSizesUpdated} pack size(s) updated on existing products` : null, j.rejected > 0 ? `${j.rejected} row(s) need attention.` : 'Everything parsed cleanly.'].filter(Boolean).join(' — ') })
         load()
       } else {
         toast({ title: 'Import failed', description: j.error, variant: 'destructive' })
@@ -497,6 +497,9 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
                       <TableCell className="text-right">
                         <p className={`font-bold tabular-nums ${m.stockQty === 0 ? 'text-red-500' : m.stockQty <= m.reorderLevel ? 'text-amber-600 dark:text-amber-400' : ''}`}>{m.stockQty} <span className="text-xs font-normal text-muted-foreground">{m.unit}</span></p>
                         <StockBadge stock={m.stockQty} reorderLevel={m.reorderLevel} className="hidden sm:inline-flex" />
+                        <p className="text-[11px] text-muted-foreground tabular-nums" title={(m.innerQty ?? 1) > 1 ? `Per-tablet selling is on: the POS asks pack vs loose ${m.innerUnit} for this product` : 'No pack size set — the POS sells this product per pack only. Edit the product to enable per-tablet selling.'}>
+                          {(m.innerQty ?? 1) > 1 && m.innerUnit ? `${m.innerQty} ${m.innerUnit}/pack` : 'no pack size'}
+                        </p>
                       </TableCell>
                       <TableCell className="text-right">
                         <p className="font-semibold tabular-nums">{fmtMoney(m.sellingPrice)}</p>
@@ -860,13 +863,14 @@ export function Medicines({ initialCategoryId, onCategoryConsumed }: { initialCa
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Upload className="h-5 w-5 text-teal-500" /> Import medicines from CSV</DialogTitle>
             <DialogDescription>
-              Header row required — recognized columns: name/product, category, supplier, unit, innerUnit, innerQty, stockQty/qty, costPrice, sellingPrice/price, barcode, sku, batch, expiry, location, rx, insurance. Categories &amp; suppliers are auto-created by name.
+              Header row required — recognized columns: name/product, category, supplier, unit, innerUnit, innerQty, stockQty/qty, costPrice, sellingPrice/price, barcode, sku, batch, expiry, location, rx, insurance. Categories &amp; suppliers are auto-created by name. A row whose SKU/barcode already exists updates that product's pack size (per-tablet selling) instead of being imported again — nothing else on it changes.
             </DialogDescription>
           </DialogHeader>
           {importReport ? (
             <div className="space-y-3">
               <div className="rounded-xl border bg-muted/40 p-3 text-sm">
                 <p className="font-semibold text-emerald-600 dark:text-emerald-400">{importReport.created} created</p>
+                {importReport.packSizesUpdated > 0 && <p className="font-semibold text-teal-600 dark:text-teal-400">{importReport.packSizesUpdated} pack size(s) updated on existing products</p>}
                 <p className={importReport.rejected > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}>{importReport.rejected} row(s) rejected</p>
               </div>
               {importReport.rejectedRows.length > 0 && (

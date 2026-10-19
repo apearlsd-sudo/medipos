@@ -307,6 +307,11 @@ async function applyMedicineUpsert(
     insuranceCovered: p.insuranceCovered === true,
     location: str(p.location) || null,
     status: str(p.status, existing?.status ?? 'active'),
+    // Pack-size selling (F1): travels with the catalog. Absent key = older
+    // emitter (ops recorded before v0.3.11 / stock-only ops) → keep whatever
+    // the row already has, so idempotent replays can never wipe pack sizes.
+    innerQty: p.innerQty !== undefined ? Math.max(1, Math.floor(num(p.innerQty, 1)) || 1) : (existing?.innerQty ?? 1),
+    innerUnit: p.innerUnit !== undefined ? (str(p.innerUnit) || null) : (existing?.innerUnit ?? null),
   }
   if (!existing) {
     const createData: Record<string, unknown> = {
@@ -402,6 +407,10 @@ async function applyCatalogUpsertBySku(
     location: str(p.location) || existing?.location || null,
     // Formulary flag only travels when the emitter sent it — never false-reset
     ...(p.insuranceCovered !== undefined ? { insuranceCovered: p.insuranceCovered === true } : {}),
+    // Pack-size selling (F1) travels with the catalog copy the same way:
+    // absent key = emitter predates it → keep the row's current pack size.
+    ...(p.innerQty !== undefined ? { innerQty: Math.max(1, Math.floor(num(p.innerQty, 1)) || 1) } : {}),
+    ...(p.innerUnit !== undefined ? { innerUnit: str(p.innerUnit) || null } : {}),
   }
   const note = `Catalog update from ${opts.asHQ ? 'branch' : 'HQ'} applied`
   if (existing) {

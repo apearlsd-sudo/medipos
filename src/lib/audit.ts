@@ -118,6 +118,7 @@ export interface AuditChanges {
   device?: string
   // CSV import
   created?: number
+  packSizesUpdated?: number
   rejected?: number
   categoriesCreated?: number
   suppliersCreated?: number
