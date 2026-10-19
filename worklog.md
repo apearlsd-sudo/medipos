@@ -1687,3 +1687,15 @@ Work Log:
 
 Stage Summary:
 - Per-tablet selling is no longer trapped on one device: pack size travels with the catalog across every op, copy and import path (and old op-log replays can never erase it), pharmacies can bulk-enable it over their existing catalog in one CSV pass, and the medicines list shows exactly which products can prompt pack-vs-loose. Release v0.3.11 next: tag → CI → Release assets.
+
+---
+Task ID: pack-loose-prompt-replication-fix
+Agent: main
+Task: (update) v0.3.11 released.
+
+Work Log:
+- commit 03203f9, tag v0.3.11 pushed → CI 39341893015 GREEN on the first try (~5.5min), including the update-feed consistency gate.
+- Release verified: v0.3.11 published (not draft/prerelease), 3 assets — MediPOS-Pro-Setup-0.3.11.exe 126,060,338 bytes + latest.yml (version 0.3.11, url == asset name, sha512 present) + .blockmap 124,660 bytes. Anonymous probes: latest.yml 200 / exe byte-range 206 (differential downloads OK) / blockmap 200.
+
+Stage Summary:
+- v0.3.11 live on the auto-update feed — v0.3.6+ installs pick it up within the hour (≤v0.3.5 still need the ONE manual v0.3.6+ exe). After updating: set pack sizes on the HQ (edit products "Units per Pack + Inner Unit", or one CSV pass over existing SKUs), then Copy stock → All branches re-ships the catalog WITH pack sizes; the POS prompt (Full Box vs Loose Tablet) fires on every device where a product has a pack size, and future edits replicate it everywhere automatically.
