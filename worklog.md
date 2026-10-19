@@ -1599,3 +1599,18 @@ Work Log:
 
 Stage Summary:
 - v0.3.8 live on the auto-update feed — v0.3.6/v0.3.7 installs pick it up within the hour (installs on ≤v0.3.5 still need the ONE manual v0.3.6+ install). After updating: HQ Stock Control → Copy stock → "All branches — push to every store" pushes names/prices/stock/batch to every active store in one action; the report now says per device whether the copy landed (online + bound to the right store = arriving in seconds; bound elsewhere = exact rebind instructions). Workstations that were starved by an earlier HQ backup restore re-align automatically on their first sync after updating.
+
+---
+Task ID: v038-postrelease-verify
+Agent: main
+Task: (continuation session) verify v0.3.8 post-release state after context compaction — workspace, runtime, feed, feature endpoints.
+
+Work Log:
+- WORKSPACE: clean tree at canonical 746c50d (v0.3.8 worklog commit); package.json 0.3.8; public/sw.js medipos-v58; .next/standalone/public/sw.js carries medipos-v58 (deployed build == release build). No code drift.
+- RUNTIME: all relaunch checkpoints green — HTTP:200 (/), LOGIN_CHECK:200 (admin login), HUB_CHECK:200 (:3003/hub/health). NOTE: earlier "404" probes were wrong paths — this app serves login at / (no /login route) and hub health at :3003/hub/health (not /api/hub/health); no defect.
+- FEED (anonymous, exactly what electron-updater does): v0.3.8 latest.yml HTTP 200, version 0.3.8, path == asset name == MediPOS-Pro-Setup-0.3.8.exe (feed invariant holds), size 126,017,404.
+- FEATURE ENDPOINTS (authenticated cookie smoke): /api/branches → MADINA / MAIN / OSU all isActive:true — the exact target list Copy-stock "All branches" pushes to; /api/health → role hq, pendingOps:48 (ops awaiting device pickup; no real branch devices online in sandbox — expected).
+- CLEANUP: 4 zombie next-server instances from the v0.3.8 debug session (pids 1724/4369/5305/6479, started 19:52–20:38, held NO ports, ~170MB each) SIGKILLed — OOM headroom restored on the 4GB sandbox; only the canonical :3000 server + hub remain. SIGTERM was ignored by Next 16 workers — kill -9 required.
+
+Stage Summary:
+- v0.3.8 post-release state fully verified after continuation: workspace canonical, runtime green (HTTP/LOGIN/HUB 200), feed live with the naming invariant, branches API serving the 3 active copy-stock targets, debug zombies swept. No code changes needed — the release stands; next user-visible milestone is only triggered by a new report.
