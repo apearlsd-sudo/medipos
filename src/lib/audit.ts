@@ -53,6 +53,7 @@ export type AuditAction =
   | 'inventory.imported'
   | 'medicine.imported'
   | 'inventory.catalog_copied'
+  | 'inventory.stock_copied'
   // branding
   | 'branding.updated'
   // hardware console
@@ -109,6 +110,8 @@ export interface AuditChanges {
   deleted?: Record<string, number>
   backupFile?: string
   retentionDays?: Record<string, number>
+  // inventory copy (stock replication between stores)
+  stock?: { created: number; updated: number; unitsCopied: number }
   // branding
   brandingKey?: string
   // hardware

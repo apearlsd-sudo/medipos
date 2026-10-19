@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { slugifyRoleName } from '@/lib/permissions'
 import { logAudit } from '@/lib/audit'
+import { recordSyncOp } from '@/lib/sync'
 
 /** GET /api/branches — list branches with per-branch stats. */
 export async function GET(req: NextRequest) {
@@ -75,6 +76,15 @@ export async function POST(req: NextRequest) {
       targetName: branch.name,
       summary: `${gate.user.name} created branch ${branch.name} (code ${branch.code})`,
       changes: { name: { from: '', to: branch.name } },
+    })
+
+    // Propagate the branch row itself — without this, peer devices never learn
+    // the new store exists (their Branch table has no row), so copy dialogs on
+    // those devices cannot target it and branch-scoped views stay empty.
+    void recordSyncOp('branch.created', branch.code, {
+      id: branch.id, code: branch.code, name: branch.name,
+      address: branch.address, city: branch.city, phone: branch.phone,
+      isActive: branch.isActive,
     })
 
     return NextResponse.json({ branch }, { status: 201 })

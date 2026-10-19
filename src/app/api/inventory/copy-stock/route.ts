@@ -201,6 +201,16 @@ export async function POST(req: NextRequest) {
       publishLive(['stock', 'catalog', 'sync'], `Inventory copied ${sourceBranch.name} → ${targetBranch.name}: ${report.created} new product(s), ${report.updated} stock update(s)`, 'sync')
     }
 
+    // Delivery awareness — the copy only moves over the sync once a device
+    // for the target store pulls it. Tell the operator whether anything is
+    // actually listening, so a queued-forever copy is never a surprise.
+    const now = Date.now()
+    const nodes = await db.syncNode.findMany({ select: { id: true, name: true, lastSeenAt: true } })
+    const devices = {
+      registered: nodes.length,
+      online: nodes.filter((n) => n.lastSeenAt && now - n.lastSeenAt.getTime() < 2 * 60_000).length,
+    }
+
     await logAudit({
       actor: { id: user.id, name: user.name, roleName: user.roleName },
       action: 'inventory.stock_copied',
@@ -211,7 +221,7 @@ export async function POST(req: NextRequest) {
       changes: { stock: { created: report.created, updated: report.updated, unitsCopied: report.unitsCopied } },
     })
 
-    return NextResponse.json({ report: { created: report.created, updated: report.updated, existing: report.existing, unitsCopied: report.unitsCopied, total: report.total, mode }, sourceBranch, targetBranch, copyBatch })
+    return NextResponse.json({ report: { created: report.created, updated: report.updated, existing: report.existing, unitsCopied: report.unitsCopied, total: report.total, mode }, sourceBranch, targetBranch, copyBatch, devices })
   } catch (e) {
     console.error('Inventory copy error', e)
     return NextResponse.json({ error: 'Failed to copy inventory' }, { status: 500 })

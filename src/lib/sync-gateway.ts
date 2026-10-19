@@ -41,6 +41,7 @@ const FANOUT_OPS = new Set([
   'ledger.entry', 'loyalty.entry',
   'medicine.updated', 'medicine.created', 'medicine.upsert',
   'transfer.created', 'transfer.completed', 'transfer.cancelled',
+  'branch.created', 'branch.updated',
 ])
 
 export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> {

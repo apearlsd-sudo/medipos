@@ -118,12 +118,19 @@ export async function POST(req: NextRequest) {
       })
     }
 
+    let branchCtx: Record<string, unknown> = {}
+    if (med.branchId) {
+      const b = await db.branch.findUnique({ where: { id: med.branchId }, select: { code: true, name: true } })
+      if (b) branchCtx = { branchCode: b.code, branchName: b.name ?? undefined }
+    }
     void recordSyncOp('medicine.created', med.sku, {
       id: med.id, name: med.name, genericName: med.genericName, brand: med.brand, sku: med.sku, barcode: med.barcode,
-      categoryId: med.categoryId, supplierId: med.supplierId, unit: med.unit, batchNumber: med.batchNumber,
+      categoryId: med.categoryId, category: med.category?.name ?? null, supplierId: med.supplierId, unit: med.unit, batchNumber: med.batchNumber,
       expiryDate: med.expiryDate?.toISOString() ?? null, costPrice: med.costPrice, sellingPrice: med.sellingPrice,
       prescriptionRequired: med.prescriptionRequired, insuranceCovered: med.insuranceCovered, location: med.location,
       status: med.status, stockQty: med.stockQty,
+      // receiver-side row placement (branch resolved by CODE, not node-local id)
+      ...branchCtx,
     })
 
     return NextResponse.json({ medicine: med }, { status: 201 })

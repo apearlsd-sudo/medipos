@@ -67,7 +67,15 @@ python3 -c "import sqlite3; c=sqlite3.connect('db/custom.db'); c.execute('UPDATE
 # multi-unit credit test (qty 40) after a few suite runs. Price-guarded too:
 # branch price tests have drifted clone prices up (109.06), which would push
 # the 2-unit credit sale past Kofi's 200 limit — only consider affordable stock.
-MED=$(curl -s -b $H "http://localhost:3000/api/medicines?search=Paracetamol" | jqpy "(lambda m: m['id'] + '|' + str(m['sellingPrice']) + '|' + (m.get('branchId') or ''))(max((x for x in d['medicines'] if x['sellingPrice'] * 2 <= 190), key=lambda x: x['stockQty']))")
+# AND the 40-unit sale must actually BREECH the remaining limit (40P + 2P > 200,
+# i.e. P > 4.76) — a cheap high-stock clone (P=2.50) fits inside the limit and
+# the over-limit assertion 201s instead of 402ing (seen after a platform reset
+# restored an older catalog backup). Some catalog vintages have NO qualifying
+# Paracetamol at all — fall back to any affordable in-stock product.
+MED=$(curl -s -b $H "http://localhost:3000/api/medicines?search=Paracetamol" | jqpy "(lambda m: m['id'] + '|' + str(m['sellingPrice']) + '|' + (m.get('branchId') or ''))(max((x for x in d['medicines'] if x['sellingPrice'] * 2 <= 190 and x['sellingPrice'] * 42 > 200 and x['stockQty'] >= 60), key=lambda x: x['stockQty'], default={'id':'','sellingPrice':'','branchId':''}))")
+if [ -z "$(echo "$MED" | cut -d'|' -f1)" ]; then
+  MED=$(curl -s -b $H "http://localhost:3000/api/medicines?limit=500" | jqpy "(lambda m: m['id'] + '|' + str(m['sellingPrice']) + '|' + (m.get('branchId') or ''))(max((x for x in d['medicines'] if x.get('status','active') == 'active' and x.get('insuranceCovered') and x['sellingPrice'] * 2 <= 190 and x['sellingPrice'] * 42 > 200 and x['stockQty'] >= 60), key=lambda x: x['stockQty'], default={'id':'','sellingPrice':'','branchId':''}))")
+fi
 MEDID=$(echo "$MED" | cut -d'|' -f1); MEDP=$(echo "$MED" | cut -d'|' -f2); MAINBR=$(echo "$MED" | cut -d'|' -f3)
 echo "  (customer $AMA/$KOFI, med $MEDID @ $MEDP)"
 [ -n "$AMA" ] && [ -n "$MEDID" ] && ok "fixtures found" || { bad "fixtures missing"; exit 1; }
@@ -160,7 +168,7 @@ T0=$(date +%s)
 curl -s -b $H -X PUT "http://localhost:3000/api/medicines/$MEDID" -H 'Content-Type: application/json' -d "{\"sellingPrice\": $NP}" -o /dev/null
 GOT=""
 for i in $(seq 1 20); do
-  CUR=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?search=Paracetamol" | jqpy "[m['sellingPrice'] for m in d['medicines'] if m['id']=='$MEDID'][0]")
+  CUR=$(curl -s -b $B "http://localhost:$BRPORT/api/medicines?limit=500" | jqpy "[m['sellingPrice'] for m in d['medicines'] if m['id']=='$MEDID'][0]")
   [ "$CUR" = "$NP" ] && { GOT=yes; break; }; sleep 0.25
 done
 T1=$(date +%s)

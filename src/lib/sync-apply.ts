@@ -77,6 +77,9 @@ export async function applySyncOp(
       return applySaleCreated(op, p, opts)
     case 'sale.verified':
       return applySaleVerified(op, p)
+    case 'branch.created':
+    case 'branch.updated':
+      return applyBranchUpsert(op, p, opts)
     case 'medicine.updated':
     case 'medicine.created':
       return applyMedicineUpsert(op, p, opts)
@@ -216,6 +219,39 @@ async function applySaleCreated(
   return 'ok'
 }
 
+// --- branch.created / branch.updated ---------------------------------------------
+// The Branch table is replicated by CODE (the natural key every applier,
+// binding and copy op already uses) — ids are node-local and must never be
+// copied across devices. Renames carry previousCode so an existing row under
+// the old code is migrated instead of duplicated.
+async function applyBranchUpsert(
+  op: WireOp,
+  p: Record<string, unknown>,
+  opts: { asHQ: boolean; peerName?: string },
+): Promise<ApplyResult> {
+  const code = str(p.code).trim().toUpperCase()
+  if (!code) return 'skipped'
+  const prevCode = str(p.previousCode).trim().toUpperCase()
+  const data = {
+    name: str(p.name, code),
+    address: str(p.address) || null,
+    city: str(p.city) || null,
+    phone: str(p.phone) || null,
+    isActive: p.isActive !== false,
+  }
+  let existing = await db.branch.findUnique({ where: { code } })
+  if (!existing && prevCode && prevCode !== code) {
+    existing = await db.branch.findUnique({ where: { code: prevCode } })
+  }
+  if (existing) {
+    await db.branch.update({ where: { id: existing.id }, data: { ...data, code } })
+  } else {
+    await db.branch.create({ data: { code, ...data } })
+  }
+  publishLive(['sync'], `Branch ${data.name} (${code}) ${op.op === 'branch.created' ? 'created' : 'updated'} by ${opts.peerName ?? 'peer'}`, 'sync')
+  return 'ok'
+}
+
 // --- medicine upsert -----------------------------------------------------------
 
 async function applySaleVerified(op: WireOp, p: Record<string, unknown>): Promise<ApplyResult> {
@@ -243,11 +279,24 @@ async function applyMedicineUpsert(
   const id = str(p.id) || op.targetKey || ''
   if (!id) return 'skipped'
   const existing = await db.medicine.findUnique({ where: { id } })
+  // Category: the emitter's categoryId is node-local. Trust it only when the
+  // row exists here too; otherwise resolve by the category NAME that travels
+  // in the payload (auto-provisioned), falling back to General — a foreign
+  // id used to FK-violate and silently drop every replicated catalog edit.
+  let categoryId = str(p.categoryId, existing?.categoryId ?? '')
+  const catExists = categoryId ? await db.category.findUnique({ where: { id: categoryId }, select: { id: true } }) : null
+  if (!catExists) {
+    categoryId = await categoryFor(str(p.category) || 'General')
+  }
+  // Branch context: ops emitted with branchCode land in that store (created
+  // by code when the receiver has not seen it yet) — never a ghost row with
+  // a foreign branchId.
+  const branchId = await branchIdForCode(p)
   const data = {
     name: str(p.name, existing?.name ?? 'Unnamed'),
     genericName: str(p.genericName) || null,
     brand: str(p.brand) || null,
-    categoryId: str(p.categoryId, existing?.categoryId ?? ''),
+    categoryId,
     supplierId: str(p.supplierId) || null,
     unit: str(p.unit, existing?.unit ?? 'Box'),
     batchNumber: str(p.batchNumber) || null,
@@ -260,11 +309,20 @@ async function applyMedicineUpsert(
     status: str(p.status, existing?.status ?? 'active'),
   }
   if (!existing) {
-    if (!data.categoryId) return 'skipped'
-    await db.medicine.create({ data: { id, sku: str(p.sku) || `SYNC-${id.slice(-8)}`, ...data, stockQty: num(p.stockQty, 0) } })
+    const createData: Record<string, unknown> = {
+      id,
+      sku: str(p.sku) || `SYNC-${id.slice(-8)}`,
+      ...data,
+      stockQty: num(p.stockQty, 0),
+    }
+    if (branchId) createData.branchId = branchId
+    await db.medicine.create({ data: createData as never })
   } else {
     // Never let a replicated op reduce local stock (stock is node-local).
-    await db.medicine.update({ where: { id }, data })
+    const updateData: Record<string, unknown> = { ...data }
+    // Keep the row's store unless the op explicitly re-homes it by code.
+    if (branchId) updateData.branchId = branchId
+    await db.medicine.update({ where: { id }, data: updateData })
   }
   publishLive(['medicine', 'sync'], `Catalog update from ${opts.asHQ ? 'branch' : 'HQ'} applied`, 'sync')
   return 'ok'

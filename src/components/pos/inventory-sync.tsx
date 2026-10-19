@@ -553,7 +553,7 @@ interface StockCopyReport {
   mode: string
 }
 
-export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
+export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, label }: { onChanged?: () => void; presetTargetId?: string; presetTargetName?: string; label?: string }) {
   const { user } = useUser()
   const isSuper = user.isSuperAdmin
 
@@ -566,9 +566,11 @@ export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
   const [preview, setPreview] = useState<StockCopyPreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [copying, setCopying] = useState(false)
-  const [report, setReport] = useState<{ report: StockCopyReport; sourceBranch: { name: string }; targetBranch: { name: string } } | null>(null)
+  const [report, setReport] = useState<{ report: StockCopyReport; sourceBranch: { name: string }; targetBranch: { name: string }; devices?: { registered: number; online: number } } | null>(null)
 
-  const effectiveTarget = isSuper ? targetBranchId : (user.branchId ?? '')
+  // A preset target (Branches page "Get products" action) locks the destination.
+  const lockedTarget = presetTargetId ?? ''
+  const effectiveTarget = lockedTarget || (isSuper ? targetBranchId : (user.branchId ?? ''))
   const sourceOptions = branches.filter((b) => b.id !== effectiveTarget)
 
   const openDialog = async () => {
@@ -583,7 +585,7 @@ export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
         const json = await res.json()
         const active: BranchLite[] = (json?.branches ?? []).filter((b: BranchLite) => b.isActive)
         setBranches(active)
-        setSourceBranchId((cur) => cur || active.find((b) => b.id !== (isSuper ? '' : user.branchId))?.id || active[0]?.id || '')
+        setSourceBranchId((cur) => cur || active.find((b) => b.id !== (lockedTarget || (isSuper ? '' : user.branchId)))?.id || active[0]?.id || '')
       } catch {
         /* branch list unavailable — selects show a loading/error state */
       }
@@ -618,7 +620,13 @@ export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
         return
       }
       setReport(json)
-      toast({ title: 'Inventory copied', description: `${json.report.created} created · ${json.report.updated} stock set · ${json.report.unitsCopied} units.` })
+      const dv = json.devices as { registered: number; online: number } | undefined
+      const dvNote = !dv || dv.registered === 0
+        ? 'No branch device has connected to this HQ yet — the copy is queued until a device pairs and comes online.'
+        : dv.online === 0
+          ? 'Registered device(s) are offline right now — the copy will be delivered when they reconnect.'
+          : `${dv.online} device(s) online — arriving within seconds.`
+      toast({ title: 'Inventory copied', description: `${json.report.created} created · ${json.report.updated} stock set · ${json.report.unitsCopied} units. ${dvNote}` })
       onChanged?.()
     } finally {
       setCopying(false)
@@ -630,7 +638,7 @@ export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
   return (
     <>
       <Button variant="outline" onClick={openDialog} className="rounded-full">
-        <Boxes className="h-4 w-4" /> <span className="hidden sm:inline">Copy stock</span>
+        <Boxes className="h-4 w-4" /> <span className="hidden sm:inline">{label ?? 'Copy stock'}</span>
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -653,8 +661,24 @@ export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
                 <div className="rounded-xl border bg-teal-50 p-3 dark:bg-teal-500/10"><p className="text-2xl font-bold">{report.report.updated}</p><p className="text-xs text-muted-foreground">stock set</p></div>
                 <div className="rounded-xl border bg-muted p-3"><p className="text-2xl font-bold">{report.report.unitsCopied}</p><p className="text-xs text-muted-foreground">units copied</p></div>
               </div>
+              <div className="flex items-start gap-2 rounded-xl border p-3 text-sm">
+                {report.devices && report.devices.online > 0 ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                ) : (
+                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                )}
+                <p className="text-muted-foreground">
+                  {!report.devices || report.devices.registered === 0 ? (
+                    <><span className="font-semibold text-amber-600 dark:text-amber-400">No device connected yet.</span>{' '}The copy is queued — pair the branch device (Settings → Network &amp; Sync → Sync role &amp; pairing); it receives everything on first connect.</>
+                  ) : report.devices.online === 0 ? (
+                    <><span className="font-semibold text-amber-600 dark:text-amber-400">Devices offline.</span>{' '}The copy is queued and will be delivered the moment a device reconnects.</>
+                  ) : (
+                    <><span className="font-semibold text-emerald-600 dark:text-emerald-400">{report.devices.online} device(s) online.</span>{' '}Arriving within seconds — products appear on the branch device automatically.</>
+                  )}
+                </p>
+              </div>
               <p className="text-xs text-muted-foreground">
-                {report.report.total} product(s) reviewed. Quantities sync to the branch device within seconds when it is online (queued otherwise).
+                {report.report.total} product(s) reviewed · {report.sourceBranch.name} → {report.targetBranch.name}.
               </p>
               <div className="flex gap-2">
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setReport(null)}>Copy again</Button>
@@ -679,7 +703,11 @@ export function CopyStockButton({ onChanged }: { onChanged?: () => void }) {
 
               <div className="space-y-1.5">
                 <Label>Destination branch</Label>
-                {isSuper ? (
+                {lockedTarget ? (
+                  <div className="flex h-9 items-center gap-2 rounded-md border bg-muted/40 px-3 text-sm">
+                    <Building2 className="h-3.5 w-3.5 text-teal-600" /> {presetTargetName ?? 'Selected branch'}
+                  </div>
+                ) : isSuper ? (
                   <Select value={targetBranchId} onValueChange={setTargetBranchId}>
                     <SelectTrigger><SelectValue placeholder="Select destination branch" /></SelectTrigger>
                     <SelectContent>

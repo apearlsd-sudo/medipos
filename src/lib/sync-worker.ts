@@ -180,6 +180,17 @@ export async function runSyncCycle(): Promise<{ ok: boolean; summary: string; vi
       return { ok: true, summary: summary(cycle.pending.length, a.applied), via: url === eps.primary ? 'lan' : 'tunnel', error: a.error ?? undefined }
     }
     lastError = r.error ?? 'unreachable'
+    // 401/403 = the HQ IS reachable but the pairing key does not match —
+    // reporting "HQ unreachable" here sent operators chasing network ghosts.
+    if (r.status === 401 || r.status === 403) {
+      const msg = `Pairing key rejected by HQ (HTTP ${r.status}) — re-copy the key from the HQ's Settings → Network & Sync card`
+      await db.syncState.upsert({
+        where: { id: HQ_NODE_ID },
+        create: { id: HQ_NODE_ID, lastError: msg },
+        update: { lastError: msg },
+      })
+      return { ok: false, summary: 'Pairing key rejected', error: msg }
+    }
   }
 
   await db.syncState.upsert({

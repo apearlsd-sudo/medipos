@@ -54,10 +54,10 @@ export async function deriveSkuForBranch(baseSku: string, branchCode: string, ex
 // Returns null when the destination has never seen the product.
 // ---------------------------------------------------------------------------
 
-export async function findDestMedicine(tx: Tx, toBranchId: string, name: string, batchNumber: string | null): Promise<{ id: string } | null> {
+export async function findDestMedicine(tx: Tx, toBranchId: string, name: string, batchNumber: string | null): Promise<{ id: string; batchNumber: string | null; sku: string } | null> {
   const sameName = await tx.medicine.findMany({
     where: { branchId: toBranchId, name: { equals: name.trim() } },
-    select: { id: true, batchNumber: true },
+    select: { id: true, batchNumber: true, sku: true },
     take: 25,
   })
   if (sameName.length === 0) return null

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { requirePermission } from '@/lib/auth'
 import { logAudit } from '@/lib/audit'
+import { recordSyncOp } from '@/lib/sync'
 
 /**
  * PUT /api/branches/[id] — update a branch (super admin).
@@ -52,6 +53,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         name: updated.name !== branch.name ? { from: branch.name, to: updated.name } : undefined,
         status: updated.isActive !== branch.isActive ? { from: branch.isActive ? 'active' : 'inactive', to: updated.isActive ? 'active' : 'inactive' } : undefined,
       },
+    })
+
+    // Propagate renames/code changes/deactivations to every peer device.
+    void recordSyncOp('branch.updated', updated.code, {
+      id: updated.id, code: updated.code, name: updated.name,
+      address: updated.address, city: updated.city, phone: updated.phone,
+      isActive: updated.isActive,
+      previousCode: code !== branch.code ? branch.code : undefined,
     })
 
     return NextResponse.json({ branch: updated })

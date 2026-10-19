@@ -15,6 +15,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { PageHeader } from '@/components/pos/shared'
+import { CopyStockButton } from '@/components/pos/inventory-sync'
 import { useUser } from '@/components/pos/user-context'
 import { fmtMoney } from '@/lib/format'
 import { Building2, Loader2, MapPin, Pencil, Phone, Plus, RefreshCcw, Save, Search, Tags, Trash2, Users } from 'lucide-react'
@@ -276,6 +277,9 @@ export function Branches() {
                   </div>
                   {canEdit && (
                     <div className="flex gap-1">
+                      {b.stats.medicines === 0 && b.isActive && (
+                        <CopyStockButton presetTargetId={b.id} presetTargetName={b.name} label="Get products" onChanged={load} />
+                      )}
                       <Button variant="outline" size="sm" className="h-8 rounded-full px-3 text-xs" onClick={() => openPricing(b)} aria-label={`Pricing for ${b.name}`}>
                         <Tags className="h-3.5 w-3.5" /> Prices
                         {b.stats.priceOverrides > 0 && (

@@ -240,6 +240,29 @@ otherwise). Every row is idempotent on replay — re-copying is safe.
 
 ---
 
+## 6e. Branch provisioning over sync (v0.3.7+)
+
+Creating a branch is itself a synced operation now. `branch.created` /
+`branch.updated` ops propagate the Branch row (keyed by CODE, never by the
+node-local id) to every paired device within seconds of creation — before any
+inventory is copied. That means the copy dialogs on ANY device can target a
+newly created store immediately, and branch-scoped views on a device bound to
+the new store resolve it locally.
+
+Catalog ops (`medicine.created` / `medicine.updated`) now travel with the
+category NAME and the owning branch CODE, so a device that has never seen the
+product can place it in the right store and category (foreign node-local ids
+no longer drop the row).
+
+Copy stock / Copy catalog report delivery status: how many devices are
+registered and currently online. A copy made while no device has ever
+connected stays queued and lands on the device the first time it pairs and
+syncs — the report now says so explicitly.
+
+The sync status on a branch distinguishes a down HQ ("HQ unreachable") from a
+key mismatch ("Pairing key rejected — re-copy the key from the HQ's Sync role
+card").
+
 ## 7. Troubleshooting
 
 | Symptom | Check |
