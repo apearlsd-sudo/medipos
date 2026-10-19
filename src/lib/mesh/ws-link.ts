@@ -145,6 +145,13 @@ function closeSock(): void {
   if (!sock) return
   try {
     sock.removeAllListeners()
+    // ws emits an 'error' event ("WebSocket was closed before the connection
+    // was established") when terminate() lands on a CONNECTING socket. With
+    // the listeners just stripped that error is UNHANDLED and — as an
+    // uncaughtException — kills the entire Next server process. A stray
+    // reconnect must never be able to take the sync worker (let alone the
+    // whole branch server) down: neutralize the event before terminating.
+    sock.on('error', () => {})
     sock.terminate()
   } catch {
     /* already gone */
@@ -284,6 +291,7 @@ function dropSilent(): void {
     s.sock = null
     try {
       sock.removeAllListeners()
+      sock.on('error', () => {}) // same unhandled-error crash guard as closeSock
       sock.terminate()
     } catch {
       /* noop */

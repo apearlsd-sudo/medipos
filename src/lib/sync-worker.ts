@@ -33,6 +33,10 @@ interface PushResponse {
   skipped?: number
   ops?: WireOp[]
   hqSeq?: number
+  /** HQ log head minus what this device has seen — >0 means more batches to pull. */
+  backlog?: number
+  /** Identity of the HQ log's HEAD op — the rollback/re-number signal. */
+  logHead?: { seq: number; id: string } | null
   hqTunnelUrl?: string | null
   hqHubUrl?: string | null
   hqLanUrls?: string[]
@@ -45,13 +49,26 @@ interface CycleBody {
   nodeId: string
   nodeName: string
   pullSince: number
+  /** this device's store binding — the HQ records it for delivery diagnostics */
+  branchCode?: string
   ops: WireOp[]
 }
 
 async function collectCycle(maxOps: number): Promise<{ pending: Array<{ id: string }>; body: CycleBody }> {
   const cfg = syncConfig()
   const state = await db.syncState.findUnique({ where: { id: HQ_NODE_ID } })
-  const lastPushedSeq = state?.lastPushedSeq ?? 0
+
+  // Push-cursor self-heal: the watermark indexes into THIS device's own op-log,
+  // which is mutable — a backup restore / reseed rewinds it below the stored
+  // watermark, and every re-allocated op would sit below `seq > lastPushedSeq`
+  // forever (new sales never reach the HQ, silently). On an intact log the
+  // watermark can never exceed the head, so this only fires on a real rollback.
+  let lastPushedSeq = state?.lastPushedSeq ?? 0
+  const localHead = await db.syncOp.findFirst({ where: { nodeId: cfg.nodeId }, orderBy: { seq: 'desc' }, select: { seq: true } })
+  if (lastPushedSeq > (localHead?.seq ?? 0)) {
+    console.warn(`[sync] local op-log rolled back (head ${localHead?.seq ?? 0} < push watermark ${lastPushedSeq}) — resetting push cursor; pending ops will re-ship (HQ dedupes by id)`)
+    lastPushedSeq = 0
+  }
 
   const pending = await db.syncOp.findMany({
     where: { nodeId: cfg.nodeId, appliedAt: null, seq: { gt: lastPushedSeq } },
@@ -63,6 +80,7 @@ async function collectCycle(maxOps: number): Promise<{ pending: Array<{ id: stri
     nodeId: cfg.nodeId,
     nodeName: cfg.nodeName,
     pullSince: state?.lastPulledSeq ?? 0,
+    ...(cfg.branchCode ? { branchCode: cfg.branchCode } : {}),
     ops: pending.map((o) => ({ id: o.id, nodeId: o.nodeId, seq: o.seq, op: o.op, targetKey: o.targetKey, payload: JSON.parse(o.payload || '{}') as Record<string, unknown> & { id?: string }, createdAt: o.createdAt.toISOString() })),
   }
   return { pending, body }
@@ -72,6 +90,32 @@ async function applyAck(json: PushResponse, pending: Array<{ id: string }>): Pro
   const ackSeq = json.ackSeq ?? 0
   if (pending.length > 0) {
     await db.syncOp.updateMany({ where: { id: { in: pending.map((o) => o.id) } }, data: { appliedAt: new Date() } })
+  }
+
+  // Pull-cursor self-heal: the cursor indexes into the HQ's op-log, which is
+  // mutable — a backup restore / reseed on the HQ rewinds (and re-numbers!) the
+  // log. Every re-allocated op (new branches, copy-stock pushes…) then sits
+  // AT or BELOW this device's stored cursor — never pulled again, no error on
+  // either side. Two certain signals, since seq numbers alone can't see a
+  // re-numbered log when the new head equals the cursor:
+  //   1. head seq moved BELOW the cursor (log shrank / rolled back), or
+  //   2. the reported head sits at-or-below the cursor but its op ID differs
+  //      from the one remembered — the log was RE-CREATED (new cuids).
+  const prev = await db.syncState.findUnique({ where: { id: HQ_NODE_ID } })
+  const prevPulled = prev?.lastPulledSeq ?? 0
+  const hqSeq = json.hqSeq ?? 0
+  const logHead = json.logHead ?? null
+  const headBelowCursor = prevPulled > 0 && (logHead ? logHead.seq : hqSeq) < prevPulled
+  const headRenumbered =
+    prevPulled > 0 &&
+    !!logHead &&
+    logHead.seq <= prevPulled &&
+    !!prev?.hqHeadId &&
+    prev.hqHeadId !== logHead.id
+  const rolledBack = headBelowCursor || headRenumbered
+  if (rolledBack) {
+    console.warn(`[sync] HQ op-log rollback detected (head ${logHead ? `${logHead.seq}/${logHead.id.slice(-6)}` : hqSeq} vs cursor ${prevPulled}${headRenumbered ? `, remembered head ${prev.hqHeadId?.slice(-6)}` : ''}) — HQ restore/rebuild; pull cursor reset to 0 for a full idempotent replay`)
+    publishLive(['sync'], 'HQ database rollback detected — re-syncing full history automatically', 'sync')
   }
 
   // Apply HQ ops (force — HQ takes precedence over concurrent local edits)
@@ -91,8 +135,27 @@ async function applyAck(json: PushResponse, pending: Array<{ id: string }>): Pro
 
   await db.syncState.upsert({
     where: { id: HQ_NODE_ID },
-    create: { id: HQ_NODE_ID, lastPulledSeq: json.hqSeq ?? 0, lastPushedSeq: ackSeq, lastSyncAt: new Date(), lastError: errors[0] ?? null },
-    update: { lastPulledSeq: json.hqSeq ?? 0, lastPushedSeq: ackSeq, lastSyncAt: new Date(), lastError: errors[0] ?? null },
+    // After a rollback the cursor goes to 0 (not to the new head): the replay
+    // must re-cover seqs 1..head, which the idempotent appliers dedupe. The
+    // remembered head identity refreshes on every ack (it is the rollback
+    // signal for the NEXT restore).
+    create: {
+      id: HQ_NODE_ID,
+      lastPulledSeq: rolledBack ? 0 : hqSeq,
+      lastPushedSeq: ackSeq,
+      hqHeadSeq: logHead?.seq ?? 0,
+      hqHeadId: logHead?.id ?? null,
+      lastSyncAt: new Date(),
+      lastError: errors[0] ?? null,
+    },
+    update: {
+      lastPulledSeq: rolledBack ? 0 : hqSeq,
+      lastPushedSeq: ackSeq,
+      hqHeadSeq: logHead?.seq ?? 0,
+      hqHeadId: logHead?.id ?? null,
+      lastSyncAt: new Date(),
+      lastError: errors[0] ?? null,
+    },
   })
 
   // Learn the HQ internet/hub endpoints once (advertised by every sync ack)
@@ -130,7 +193,7 @@ async function tryHttpPush(hqUrl: string, body: CycleBody): Promise<{ ok: boolea
   }
 }
 
-export async function runSyncCycle(): Promise<{ ok: boolean; summary: string; via?: SyncVia; error?: string }> {
+export async function runSyncCycle(): Promise<{ ok: boolean; summary: string; via?: SyncVia; error?: string; more?: boolean }> {
   const cfg = syncConfig()
   if (cfg.role !== 'branch') {
     return { ok: false, summary: 'This node is not configured as a branch (need SYNC_ROLE=branch).' }
@@ -177,7 +240,11 @@ export async function runSyncCycle(): Promise<{ ok: boolean; summary: string; vi
     const r = await tryHttpPush(url, cycle.body)
     if (r.ok && r.json) {
       const a = await applyAck(r.json, cycle.pending)
-      return { ok: true, summary: summary(cycle.pending.length, a.applied), via: url === eps.primary ? 'lan' : 'tunnel', error: a.error ?? undefined }
+      // more = the HQ still holds ops above what this batch handed over — a
+      // big backlog (fresh pairing, post-restore replay) must NOT wait for
+      // the next interval tick between every 500-op batch.
+      const more = (r.json.backlog ?? 0) > 0
+      return { ok: true, summary: summary(cycle.pending.length, a.applied), via: url === eps.primary ? 'lan' : 'tunnel', error: a.error ?? undefined, more }
     }
     lastError = r.error ?? 'unreachable'
     // 401/403 = the HQ IS reachable but the pairing key does not match —
@@ -205,6 +272,35 @@ function summary(pushes: number, applied: number): string {
   return pushes || applied ? `↑${pushes} pushed · ↓${applied} applied` : 'in sync'
 }
 
+/**
+ * Run one sync cycle, then — while the HQ still holds a backlog — keep cycling
+ * back-to-back (bounded) so a large replay (fresh pairing, post-restore
+ * realignment, copy-stock to a new workstation) drains in seconds instead of
+ * one 500-op batch per interval tick.
+ */
+export async function runSyncDrain(maxBatches = 60): Promise<{ ok: boolean; batches: number; applied: number; summary: string; error?: string }> {
+  let batches = 0
+  let applied = 0
+  let last: Awaited<ReturnType<typeof runSyncCycle>> | null = null
+  while (batches < maxBatches) {
+    last = await runSyncCycle()
+    if (!last.ok) break
+    batches++
+    // Re-count applied from the summary (↑n pushed · ↓m applied)
+    const m = /↓(\d+)/.exec(last.summary)
+    applied += m ? Number(m[1]) : 0
+    if (!last.more) break
+    await new Promise((res) => setTimeout(res, 200))
+  }
+  return {
+    ok: !!last?.ok,
+    batches,
+    applied,
+    summary: last?.summary ?? 'not attempted',
+    error: last?.error,
+  }
+}
+
 /** Start the interval worker + live link once per process (branch nodes). */
 export function ensureSyncWorker(): void {
   if (g.__mediposSyncWorker) return
@@ -227,8 +323,9 @@ export function ensureSyncWorker(): void {
         }
         return
       }
-      const r = await runSyncCycle()
+      const r = await runSyncDrain()
       if (!r.ok) console.warn('[sync]', r.summary, r.error ?? '')
+      else if (r.summary !== 'in sync') console.log(`[sync] cycle: ${r.summary} (${r.batches} batch(es))`)
     } catch (e) {
       console.warn('[sync] cycle failed', e)
     }
@@ -253,7 +350,7 @@ export function pokeSyncCycle(): void {
     void (async () => {
       pokeG.__mediposPokeRunning = true
       try {
-        const r = await runSyncCycle()
+        const r = await runSyncDrain()
         if (r.ok && r.summary !== 'in sync') console.log('[sync] poke push:', r.summary)
       } catch {
         /* runSyncCycle logs its own failures */

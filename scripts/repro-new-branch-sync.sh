@@ -37,6 +37,19 @@ hc=$(curl -s -c /tmp/tema-hq.txt -X POST http://localhost:3000/api/auth/login -H
 ok "HQ login"
 
 # --- 1. create the new branch ------------------------------------------------
+# Purge leftovers from earlier runs first — this repro must always exercise
+# the TRUE "newly created branch" path (fresh branch, zero products).
+python3 - << 'PYEOF'
+import sqlite3
+s = sqlite3.connect('db/custom.db'); c = s.cursor()
+row = c.execute("SELECT id FROM Branch WHERE code='TEMAT'").fetchone()
+if row:
+    c.execute('DELETE FROM Medicine WHERE branchId=?', (row[0],))
+    c.execute('DELETE FROM Branch WHERE id=?', (row[0],))
+c.execute("DELETE FROM SyncOp WHERE payload LIKE '%TEMAT%'")
+s.commit(); s.close()
+print('  TEMAT leftovers purged')
+PYEOF
 BR=$(curl -s -b /tmp/tema-hq.txt http://localhost:3000/api/branches)
 TEMA_ID=$(echo "$BR" | jqpy "[b['id'] for b in d['branches'] if b['code']=='TEMAT'][0] if any(b['code']=='TEMAT' for b in d['branches']) else ''")
 if [ -z "$TEMA_ID" ]; then
@@ -138,6 +151,21 @@ if [ -n "$TEMAT_LOCAL" ]; then
     echo "  device /api/$ep (TEMAT scope): $N"
   done
 fi
+
+# --- 8. cleanup ---------------------------------------------------------------
+kill "$(cat /tmp/tema-branch.pid 2>/dev/null)" 2>/dev/null; kill_port $PORT
+python3 - << 'PYEOF'
+import sqlite3
+s = sqlite3.connect('db/custom.db'); c = s.cursor()
+row = c.execute("SELECT id FROM Branch WHERE code='TEMAT'").fetchone()
+if row:
+    c.execute('DELETE FROM Medicine WHERE branchId=?', (row[0],))
+    c.execute('DELETE FROM Branch WHERE id=?', (row[0],))
+c.execute("DELETE FROM SyncOp WHERE payload LIKE '%TEMAT%'")
+c.execute("DELETE FROM SyncNode WHERE id='TEMA-1'")
+s.commit(); s.close()
+print('  TEMAT + TEMA-1 cleaned from HQ')
+PYEOF
 
 echo
 echo "RESULT: PASS=$PASS FAIL=$FAIL"

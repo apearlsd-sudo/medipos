@@ -158,6 +158,23 @@ export async function PUT(req: NextRequest) {
     const after = syncConfig()
     effects.push(`Saved to ${syncConfigFilePath()}`)
 
+    // (Re)pairing / re-binding self-heal: whenever this device becomes a
+    // branch, changes identity, or binds to a DIFFERENT store, reset the pull
+    // cursor to 0. The next cycle replays the HQ's ENTIRE op-log idempotently
+    // (every applier dedupes by stable ids), which guarantees a fresh or
+    // newly-bound workstation receives the HQ's full catalog + stock — and
+    // repairs any historical cursor/log misalignment (e.g. the HQ database
+    // was restored from a backup at some point) at exactly the moment the
+    // operator sets the device up.
+    const identityChanged =
+      before.role !== after.role ||
+      before.nodeId !== after.nodeId ||
+      before.branchCode !== after.branchCode
+    if (after.role === 'branch' && identityChanged) {
+      await db.syncState.updateMany({ where: { id: 'HQ' }, data: { lastPulledSeq: 0 } })
+      effects.push('Pull cursor reset — the next sync replays the full HQ history for this device (idempotent)')
+    }
+
     // --- hot-apply the role flip -------------------------------------------
     if (after.role === 'branch') {
       const w = await import('@/lib/sync-worker')

@@ -551,6 +551,17 @@ interface StockCopyReport {
   unitsCopied: number
   total: number
   mode: string
+  pushedAll?: boolean
+  perBranch?: Array<{ branchId: string; branchName: string; branchCode: string; created: number; updated: number; existing: number; unitsCopied: number; total: number }>
+}
+
+interface DeviceDelivery {
+  id: string
+  name: string
+  online: boolean
+  boundBranchCode: string | null
+  pullLag: number
+  status: 'target' | 'other-store' | 'unbound'
 }
 
 export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, label }: { onChanged?: () => void; presetTargetId?: string; presetTargetName?: string; label?: string }) {
@@ -566,12 +577,14 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
   const [preview, setPreview] = useState<StockCopyPreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [copying, setCopying] = useState(false)
-  const [report, setReport] = useState<{ report: StockCopyReport; sourceBranch: { name: string }; targetBranch: { name: string }; devices?: { registered: number; online: number } } | null>(null)
+  const [report, setReport] = useState<{ report: StockCopyReport; sourceBranch: { name: string }; targetBranch: { name: string }; devices?: { registered: number; online: number; list?: DeviceDelivery[] } } | null>(null)
 
   // A preset target (Branches page "Get products" action) locks the destination.
   const lockedTarget = presetTargetId ?? ''
+  const ALL_TARGET = '__ALL__'
   const effectiveTarget = lockedTarget || (isSuper ? targetBranchId : (user.branchId ?? ''))
-  const sourceOptions = branches.filter((b) => b.id !== effectiveTarget)
+  const pushAll = !lockedTarget && isSuper && effectiveTarget === ALL_TARGET
+  const sourceOptions = branches.filter((b) => b.id !== effectiveTarget || pushAll)
 
   const openDialog = async () => {
     setOpen(true)
@@ -594,7 +607,7 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
 
   useEffect(() => {
     setPreview(null)
-    if (!open || !sourceBranchId || !effectiveTarget || sourceBranchId === effectiveTarget) return
+    if (!open || !sourceBranchId || !effectiveTarget || pushAll || sourceBranchId === effectiveTarget) return
     let cancelled = false
     setPreviewing(true)
     fetch(`/api/inventory/copy-stock?sourceBranchId=${encodeURIComponent(sourceBranchId)}&targetBranchId=${encodeURIComponent(effectiveTarget)}`, { cache: 'no-store' })
@@ -603,7 +616,7 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
       .catch(() => {})
       .finally(() => { if (!cancelled) setPreviewing(false) })
     return () => { cancelled = true }
-  }, [open, sourceBranchId, effectiveTarget])
+  }, [open, sourceBranchId, effectiveTarget, pushAll])
 
   const doCopy = async () => {
     if (!sourceBranchId || !effectiveTarget) return
@@ -620,12 +633,20 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
         return
       }
       setReport(json)
-      const dv = json.devices as { registered: number; online: number } | undefined
+      const dv = json.devices as { registered: number; online: number; list?: DeviceDelivery[] } | undefined
+      const list = dv?.list ?? []
+      const wrongStore = list.find((d) => d.status === 'other-store')
+      const unbound = list.find((d) => d.status === 'unbound')
+      const ready = list.find((d) => d.status === 'target' && d.online)
       const dvNote = !dv || dv.registered === 0
         ? 'No branch device has connected to this HQ yet — the copy is queued until a device pairs and comes online.'
-        : dv.online === 0
-          ? 'Registered device(s) are offline right now — the copy will be delivered when they reconnect.'
-          : `${dv.online} device(s) online — arriving within seconds.`
+        : wrongStore
+          ? `⚠ ${wrongStore.name} is bound to another store — rebind it in Settings → Sync role & pairing or the stock stays invisible there.`
+          : unbound
+            ? `⚠ ${unbound.name} has no store binding reported — bind it to ${json.targetBranch?.name ?? 'the branch'} once it appears in the device's store list.`
+            : ready
+              ? `${dv?.online ?? 0} device(s) online — arriving within seconds.`
+              : 'Registered device(s) are offline right now — the copy will be delivered when they reconnect.'
       toast({ title: 'Inventory copied', description: `${json.report.created} created · ${json.report.updated} stock set · ${json.report.unitsCopied} units. ${dvNote}` })
       onChanged?.()
     } finally {
@@ -633,7 +654,7 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
     }
   }
 
-  const canCopy = !!sourceBranchId && !!effectiveTarget && sourceBranchId !== effectiveTarget
+  const canCopy = !!sourceBranchId && !!effectiveTarget && (pushAll || sourceBranchId !== effectiveTarget)
 
   return (
     <>
@@ -661,21 +682,45 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
                 <div className="rounded-xl border bg-teal-50 p-3 dark:bg-teal-500/10"><p className="text-2xl font-bold">{report.report.updated}</p><p className="text-xs text-muted-foreground">stock set</p></div>
                 <div className="rounded-xl border bg-muted p-3"><p className="text-2xl font-bold">{report.report.unitsCopied}</p><p className="text-xs text-muted-foreground">units copied</p></div>
               </div>
-              <div className="flex items-start gap-2 rounded-xl border p-3 text-sm">
-                {report.devices && report.devices.online > 0 ? (
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+              {report.report.perBranch && report.report.perBranch.length > 1 && (
+                <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-xl border p-2">
+                  {report.report.perBranch.map((r) => (
+                    <div key={r.branchId} className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-1.5 text-sm">
+                      <span className="font-medium">{r.branchName}</span>
+                      <span className="text-xs text-muted-foreground">{r.created} created · {r.updated} stock set · {r.unitsCopied} units</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-1.5 rounded-xl border p-3 text-sm">
+                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Delivery</p>
+                {!report.devices || report.devices.registered === 0 ? (
+                  <p className="flex items-start gap-2 text-muted-foreground"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" /><span><span className="font-semibold text-amber-600 dark:text-amber-400">No device connected yet.</span> The copy is queued — pair the branch device (Settings → Network &amp; Sync → Sync role &amp; pairing); it receives everything on first connect.</span></p>
+                ) : (report.devices.list ?? []).length === 0 ? (
+                  <p className="flex items-start gap-2 text-muted-foreground"><TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" /><span><span className="font-semibold text-amber-600 dark:text-amber-400">{report.devices.online > 0 ? `${report.devices.online} device(s) online` : 'Devices offline'}</span> — running an older build, so delivery detail is unavailable. Update the workstations for binding diagnostics.</span></p>
                 ) : (
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                  (report.devices.list ?? []).map((d) => (
+                    <div key={d.id} className="flex items-start gap-2 text-muted-foreground">
+                      {d.status === 'target' && d.online ? (
+                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                      ) : (
+                        <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                      )}
+                      <span>
+                        <span className="font-semibold text-foreground">{d.name}</span>{' '}
+                        {d.status === 'target' ? (
+                          d.online
+                            ? <>is bound to this store and online — arriving within seconds{d.pullLag > 0 ? ` (replaying ${d.pullLag} change(s) of history first)` : ''}.</>
+                            : <>is bound to this store but offline — delivered the moment it reconnects.</>
+                        ) : d.status === 'other-store' ? (
+                          <>is bound to <span className="font-semibold">another store</span> — it files this stock under the right store, but nobody will see it there. Rebind it: Settings → Network &amp; Sync → This device&apos;s store.</>
+                        ) : (
+                          <>has no store binding reported (unbound or older build) — it still files the stock under the right store; bind it to see it in its scoped views.</>
+                        )}
+                      </span>
+                    </div>
+                  ))
                 )}
-                <p className="text-muted-foreground">
-                  {!report.devices || report.devices.registered === 0 ? (
-                    <><span className="font-semibold text-amber-600 dark:text-amber-400">No device connected yet.</span>{' '}The copy is queued — pair the branch device (Settings → Network &amp; Sync → Sync role &amp; pairing); it receives everything on first connect.</>
-                  ) : report.devices.online === 0 ? (
-                    <><span className="font-semibold text-amber-600 dark:text-amber-400">Devices offline.</span>{' '}The copy is queued and will be delivered the moment a device reconnects.</>
-                  ) : (
-                    <><span className="font-semibold text-emerald-600 dark:text-emerald-400">{report.devices.online} device(s) online.</span>{' '}Arriving within seconds — products appear on the branch device automatically.</>
-                  )}
-                </p>
               </div>
               <p className="text-xs text-muted-foreground">
                 {report.report.total} product(s) reviewed · {report.sourceBranch.name} → {report.targetBranch.name}.
@@ -712,6 +757,7 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
                     <SelectTrigger><SelectValue placeholder="Select destination branch" /></SelectTrigger>
                     <SelectContent>
                       {branches.map((b) => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                      <SelectItem value="__ALL__" className="font-semibold text-teal-700 dark:text-teal-400">All branches — push to every store</SelectItem>
                     </SelectContent>
                   </Select>
                 ) : (
@@ -720,6 +766,14 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
                   </div>
                 )}
               </div>
+
+              {canCopy && pushAll && (
+                <div className="rounded-xl border border-teal-200 bg-teal-50 p-3 text-sm dark:border-teal-500/30 dark:bg-teal-500/10">
+                  <p className="text-muted-foreground">
+                    <span className="font-semibold text-foreground">Push to all branches:</span> every active store receives {sourceBranchId ? 'this store\'s' : 'the source'} products, prices and stock — newly created branches included. Per-branch results are listed after the copy.
+                  </p>
+                </div>
+              )}
 
               {canCopy && (
                 <div className="rounded-xl border p-3 text-sm">
@@ -762,7 +816,7 @@ export function CopyStockButton({ onChanged, presetTargetId, presetTargetName, l
                 <Button variant="outline" className="flex-1 rounded-full" onClick={() => setOpen(false)}>Cancel</Button>
                 <Button onClick={doCopy} disabled={!canCopy || copying || previewing} className="flex-1 rounded-full bg-teal-600 hover:bg-teal-700">
                   {copying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Boxes className="h-4 w-4" />}
-                  {preview ? `Copy ${preview.totalUnits} unit(s)` : 'Copy stock'}
+                  {pushAll ? 'Push to all branches' : preview ? `Copy ${preview.totalUnits} unit(s)` : 'Copy stock'}
                 </Button>
               </div>
             </div>

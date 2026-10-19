@@ -354,16 +354,24 @@ function BranchPanel({ cfg, form, setForm, canManage, testResult, testing, onTes
   const [stores, setStores] = useState<StoreLite[]>([])
   const bound = !!form.branchCode
 
-  useEffect(() => {
-    let alive = true
+  // Stores can LEARN themselves into this list: a freshly paired device pulls
+  // the HQ's Branch rows (branch.created ops) within seconds, and a branch
+  // created on the HQ AFTER this device paired arrives the same way. Fetch on
+  // mount, refetch every time the picker opens, and poll lightly while the
+  // device is still unbound so the store shows up without a page reload.
+  const loadStores = useCallback(() => {
     fetch('/api/branches', { cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (alive) setStores((j?.branches ?? []).filter((b: StoreLite) => b.isActive))
-      })
+      .then((j) => setStores((j?.branches ?? []).filter((b: StoreLite) => b.isActive)))
       .catch(() => {})
-    return () => { alive = false }
   }, [])
+
+  useEffect(() => {
+    loadStores()
+    if (bound) return
+    const t = setInterval(loadStores, 10_000)
+    return () => clearInterval(t)
+  }, [loadStores, bound])
 
   const boundName = stores.find((b) => b.code === form.branchCode)?.name ?? cfg.branchName ?? form.branchCode
 
@@ -371,7 +379,7 @@ function BranchPanel({ cfg, form, setForm, canManage, testResult, testing, onTes
     <div className="mt-3 space-y-3 rounded-lg border bg-muted/20 p-3">
       <div className="space-y-1">
         <Label htmlFor="sync-branch-store" className="text-xs text-muted-foreground">This device&apos;s store</Label>
-        <Select value={form.branchCode || 'none'} onValueChange={(v) => setForm((f) => ({ ...f, branchCode: v === 'none' ? '' : v }))} disabled={!canManage}>
+        <Select value={form.branchCode || 'none'} onValueChange={(v) => setForm((f) => ({ ...f, branchCode: v === 'none' ? '' : v }))} onOpenChange={(o) => { if (o) loadStores() }} disabled={!canManage}>
           <SelectTrigger id="sync-branch-store" className="h-8 text-sm" data-testid="sync-branch-store">
             <SelectValue placeholder="Which store does this device belong to?" />
           </SelectTrigger>
@@ -390,7 +398,7 @@ function BranchPanel({ cfg, form, setForm, canManage, testResult, testing, onTes
             <span>Locked to <span className="font-semibold">{boundName}</span> — this device shows only its own store&apos;s sales, expenses and quotations. Other stores&apos; documents stay on the HQ.</span>
           </p>
         ) : (
-          <p className="text-[11px] text-muted-foreground">Optional but recommended: pick the store this device runs so it only sees its own data. Staff accounts were always limited to their branch — this also isolates admin views on the device.</p>
+          <p className="text-[11px] text-muted-foreground">Optional but recommended: pick the store this device runs so it only sees its own data. Stores created on the HQ appear here automatically once this device syncs (within seconds of pairing). Staff accounts were always limited to their branch — this also isolates admin views on the device.</p>
         )}
       </div>
       <div className="space-y-1">

@@ -112,6 +112,25 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return
   if (process.env.NEXT_PHASE === 'phase-production-build') return
 
+  // Resilience net: a stray uncaught error (a WebSocket race in a background
+  // link, a plugin timer, anything async outside a request) used to TERMINATE
+  // the whole server process — on branch workstations that silently killed
+  // the sync worker until the desktop shell happened to respawn it, which
+  // looked exactly like "stock never arrives at this branch". The sync stack
+  // is a resilience component (like the sync hub): log and keep serving.
+  // Request-scoped errors were already contained by Next; this covers the
+  // timers/sockets outside it.
+  const g2 = globalThis as unknown as { __mediposProcessGuard?: boolean }
+  if (!g2.__mediposProcessGuard) {
+    g2.__mediposProcessGuard = true
+    process.on('uncaughtException', (e) => {
+      console.error('[process-guard] uncaughtException (server continues):', e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : e)
+    })
+    process.on('unhandledRejection', (e) => {
+      console.error('[process-guard] unhandledRejection (server continues):', e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : e)
+    })
+  }
+
   // Run exactly once per process, even if register() is called twice.
   if (!guardGlobal.__mediposBootGuard) {
     guardGlobal.__mediposBootGuard = runBootGuard().catch((e) => {

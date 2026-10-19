@@ -439,6 +439,11 @@ model SyncNode {
   lastSeenAt  DateTime?
   lastPushSeq Int       @default(0)
   opsApplied  Int       @default(0)
+  // Delivery diagnostics (v0.3.8): the pull cursor and store binding the
+  // device last REPORTED about itself, so the HQ can tell an operator WHY a
+  // copy has not landed on a workstation (wrong store bound vs offline vs lag).
+  lastPullSeq Int       @default(0)
+  boundBranchCode String?
   createdAt   DateTime  @default(now())
 }
 
@@ -446,6 +451,12 @@ model SyncState {
   id            String    @id // HQ_NODE_ID - cursor row per branch<->HQ pair
   lastPulledSeq Int       @default(0)
   lastPushedSeq Int       @default(0)
+  // v0.3.8 rollback detection: the HEAD of the HQ log as the device last saw
+  // it. A restored/rebuilt HQ log re-numbers ops from low seqs; when the
+  // reported head sits at-or-below the cursor but its op ID differs from the
+  // remembered one, the log was re-created and the pull cursor must reset.
+  hqHeadSeq     Int       @default(0)
+  hqHeadId      String?
   lastSyncAt    DateTime?
   lastError     String?
 }

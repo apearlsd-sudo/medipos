@@ -111,7 +111,7 @@ export interface AuditChanges {
   backupFile?: string
   retentionDays?: Record<string, number>
   // inventory copy (stock replication between stores)
-  stock?: { created: number; updated: number; unitsCopied: number }
+  stock?: { created: number; updated: number; unitsCopied: number; branches?: number }
   // branding
   brandingKey?: string
   // hardware

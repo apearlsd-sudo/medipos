@@ -16,6 +16,8 @@ export interface SyncPushBody {
   nodeId: string
   nodeName: string
   pullSince: number
+  /** the device's store binding (v0.3.8) — recorded for delivery diagnostics */
+  branchCode?: string
   ops: WireOp[]
 }
 
@@ -25,6 +27,14 @@ export interface SyncPushAck {
   skipped: number
   errors: Array<{ op: string; error: string }>
   hqSeq: number
+  /** HQ log head minus what this device has seen — >0 tells the device to
+   *  keep cycling instead of waiting for the next interval tick. */
+  backlog: number
+  /** Identity of the HQ log's HEAD op (seq + id). Devices remember it: a
+   *  head at-or-below their cursor with a DIFFERENT id means the log was
+   *  re-numbered (HQ database restore/rebuild) and the pull cursor must
+   *  reset — seq numbers alone cannot see that when head == cursor. */
+  logHead: { seq: number; id: string } | null
   ops: WireOp[]
   hqTunnelUrl: string | null
   hqHubUrl: string | null
@@ -69,11 +79,22 @@ export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> 
     }
   }
 
-  // Register / refresh the peer node
+  // Register / refresh the peer node — including what the device REPORTS about
+  // itself (pull cursor + store binding) so the HQ can explain delivery: a
+  // copy that has not landed is "offline", "bound to another store", or
+  // "lagging behind" — never a mysterious silence.
   const node = await db.syncNode.upsert({
     where: { id: body.nodeId },
-    create: { id: body.nodeId, name: body.nodeName, lastSeenAt: new Date(), lastPushSeq: maxSeq, opsApplied: applied },
-    update: { name: body.nodeName, lastSeenAt: new Date(), lastPushSeq: { increment: 0 }, opsApplied: { increment: applied } },
+    create: {
+      id: body.nodeId, name: body.nodeName, lastSeenAt: new Date(), lastPushSeq: maxSeq, opsApplied: applied,
+      lastPullSeq: Math.max(0, Number(body.pullSince) || 0),
+      boundBranchCode: body.branchCode?.trim().toUpperCase() || null,
+    },
+    update: {
+      name: body.nodeName, lastSeenAt: new Date(), lastPushSeq: { increment: 0 }, opsApplied: { increment: applied },
+      lastPullSeq: Math.max(0, Number(body.pullSince) || 0),
+      boundBranchCode: body.branchCode?.trim().toUpperCase() || null,
+    },
   })
   if (maxSeq > node.lastPushSeq) {
     await db.syncNode.update({ where: { id: body.nodeId }, data: { lastPushSeq: maxSeq } })
@@ -109,7 +130,7 @@ export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> 
   // HQ outbox → the branch's pull cursor. Ops this branch itself emitted are
   // dropped from its view (its data is already local) — only fanout echoes
   // carry __originNode, so a plain `includes` check is exact.
-  const hqHead = await db.syncOp.findFirst({ where: { nodeId: HQ_NODE_ID }, orderBy: { seq: 'desc' }, select: { seq: true } })
+  const hqHead = await db.syncOp.findFirst({ where: { nodeId: HQ_NODE_ID }, orderBy: { seq: 'desc' }, select: { seq: true, id: true } })
   const outboxAll = await db.syncOp.findMany({
     where: { nodeId: HQ_NODE_ID, seq: { gt: body.pullSince } },
     orderBy: { seq: 'asc' },
@@ -126,6 +147,7 @@ export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> 
       ? outboxAll[outboxAll.length - 1].seq
       : body.pullSince
   const hqSeq = outboxAll.length === 500 ? lastSeenSeq : hqHead?.seq ?? 0
+  const backlog = Math.max(0, (hqHead?.seq ?? 0) - lastSeenSeq)
 
   if (applied > 0) {
     publishLive(['sync', 'sale', 'stock', 'medicine'], `${body.nodeName} synced ${applied} change(s) into HQ`, 'sync')
@@ -140,6 +162,8 @@ export async function processSyncPush(body: SyncPushBody): Promise<SyncPushAck> 
     skipped,
     errors: errors.slice(0, 10),
     hqSeq,
+    backlog,
+    logHead: hqHead ? { seq: hqHead.seq, id: hqHead.id } : null,
     ops: outbox.map((o) => ({ id: o.id, nodeId: o.nodeId, seq: o.seq, op: o.op, targetKey: o.targetKey, payload: JSON.parse(o.payload || '{}') as Record<string, unknown> & { id?: string }, createdAt: o.createdAt.toISOString() })),
     hqTunnelUrl: selfTunnelUrl,
     hqHubUrl: selfHubUrl,
