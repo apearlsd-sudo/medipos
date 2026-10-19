@@ -1522,3 +1522,19 @@ Work Log:
 
 Stage Summary:
 - v0.3.6 live on the auto-update feed. USER ACTION REQUIRED (one-time): installs on v0.3.5 or older can never self-update — their baked updater 404s on every check. Download MediPOS-Pro-Setup-0.3.6.exe from the releases page and run it over the existing install (data preserved in %APPDATA%\MediPOSPro). From v0.3.6 on, updates are hourly, self-installing on quit/restart, and visible in Settings → App & Data → Software updates.
+
+---
+Task ID: autoupdate-verify-resync
+Agent: main
+Task: (post-release session, after context continuation) verify the v0.3.6 auto-update delivery end-to-end + resync the stale local workspace to the canonical remote.
+
+Work Log:
+- CONTINUATION STATE: local workspace was 117 commits behind a rewritten canonical history (pre-v0.3.5 content, no electron/ dir, no v0.3.5 features) while remote main carried the full v0.3.1→v0.3.6 desktop era ending at 2bc910c. Local divergence was stale pre-rewrite history (the 271k-line diff was junk PNGs the rewrite had stripped).
+- ROOT CAUSE EVIDENCE (independent re-verification): v0.3.5 latest.yml names path/url "MediPOS-Pro-Setup-0.3.5.exe" (dash) while the published asset is "MediPOS.Pro-Setup-0.3.5.exe" (dot) — the dash URL returns HTTP 404, the dot URL HTTP 200. Every installed app's updater downloaded the latest.yml path → 404 → silent failure on all ≤v0.3.5 releases. ProductName "MediPOS Pro" space sanitized 3 different ways (disk space / GitHub dot / latest.yml dash).
+- FEED INVARIANT RE-VERIFIED LIVE for v0.3.6 (anonymous, exactly what electron-updater does): latest.yml HTTP 200 (351B), exe byte-range HTTP 206 (differential downloads supported), blockmap HTTP 200; latest.yml version 0.3.6 + path MediPOS-Pro-Setup-0.3.6.exe + size 125,923,459 == GitHub asset size byte-for-byte; repo public (private-repo hypothesis ruled out).
+- CODE AUDIT of 817d2a9 from the synced tree: electron/main.js initUpdater (feed resolution order MEDIPOS_UPDATE_URL/update-feed.json → baked app-update.yml → disabled; 30s boot check + hourly interval + powerMonitor resume; sticky generic-feed fallback to releases/latest/download/ when api.github.com fails; autoDownload + autoInstallOnAppQuit; full event surface → setUpdateStatus → renderer push medipos:update-status; update-downloaded → native dialog when window visible else system Notification); electron/preload.js contextBridge (getInfo/getUpdateStatus/onUpdateStatus/checkForUpdates/installUpdate/openReleases); electron-builder.yml space-free literal artifactName + publish github/apearlsd-sudo/medipos/releaseType release; pack-hooks.cjs app-update.yml verification + canonical fallback write; CI desktop-release.yml "Verify update-feed consistency" gate (fails release on latest.yml-path/artifact mismatch or missing app-update.yml); src/components/pos/software-updates.tsx wired into settings.tsx (App & Data); docs/auto-update.md present.
+- node --check on main.js/preload.js/pack-hooks.cjs all green; SW v56 confirmed in public/sw.js; package.json 0.3.6.
+- WORKSPACE SYNC: git reset --hard to remote main 2bc910c (canonical history with the full desktop era + auto-update fix + v0.3.5/v0.3.6 worklog entries). No code changes this session — verification and resync only.
+
+Stage Summary:
+- v0.3.6 auto-update delivery independently re-verified from a fresh continuation session: broken-feed 404 root cause proven with live HTTP probes on both the broken v0.3.5 feed and the fixed v0.3.6 feed, updater code/CI/pack-hook/UI/docs all audited green, local workspace resynced to canonical remote main. No code changes needed — the fix and release from the prior session stand. User action unchanged: ONE manual install of MediPOS-Pro-Setup-0.3.6.exe on ≤v0.3.5 machines (their baked updater 404s forever), after which hourly auto-updates flow and are visible in Settings → App & Data → Software updates.
